@@ -1,3 +1,5 @@
+import Dashboard from '../Dashboard'
+
 export default function Page() {
-  return <h1>MonBudget</h1>
+  return <Dashboard transactions={[]} />
 }
