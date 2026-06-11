@@ -43,10 +43,10 @@ export default function Page() {
       {/* Offset pour sidebar desktop */}
       <main className="md:ml-56 pb-20 md:pb-0 p-4 md:p-8 max-w-4xl">
         {tab === 'dashboard' && <Dashboard transactions={transactions} />}
-        {tab === 'transactions' && <Transactions transactions={transactions} onchange={refresh} />}
-        {tab === 'budget' && <Budget transactions={transactions} budgets={budgets} onchange={refresh} />}
-        {tab === 'savings' && <Savings savings={savings} onchange={refresh} />}
-        {tab === 'debts' && <Debts debts={debts} onchange={refresh} />}
+        {tab === 'transactions' && <Transactions transactions={transactions} onChange={refresh} />}
+{tab === 'budget' && <Budget transactions={transactions} budgets={budgets} onChange={refresh} />}
+{tab === 'savings' && <Savings savings={savings} onChange={refresh} />}
+{tab === 'debts' && <Debts debts={debts} onChange={refresh} />}
       </main>
     </div>
   )
