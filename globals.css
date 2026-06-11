@@ -1,0 +1,42 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * { box-sizing: border-box; }
+  body {
+    @apply bg-mist text-ink antialiased;
+  }
+  input:focus, textarea:focus, select:focus {
+    outline: none;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-white rounded-2xl border border-mist-dark p-5;
+  }
+  .btn-primary {
+    @apply bg-accent text-white px-4 py-2 rounded-xl font-medium text-sm hover:bg-blue-700 transition-colors;
+  }
+  .btn-ghost {
+    @apply bg-transparent text-ink-soft px-4 py-2 rounded-xl font-medium text-sm hover:bg-mist transition-colors;
+  }
+  .btn-danger {
+    @apply bg-danger-light text-danger px-3 py-1.5 rounded-lg text-sm hover:bg-red-200 transition-colors;
+  }
+  .input {
+    @apply w-full bg-mist border border-mist-dark rounded-xl px-4 py-2.5 text-sm text-ink placeholder:text-gray-400 focus:border-accent focus:ring-1 focus:ring-accent transition-colors;
+  }
+  .label {
+    @apply block text-xs font-medium text-ink-soft mb-1.5 uppercase tracking-wide;
+  }
+  .amount-positive {
+    @apply font-mono text-positive;
+  }
+  .amount-negative {
+    @apply font-mono text-danger;
+  }
+}
