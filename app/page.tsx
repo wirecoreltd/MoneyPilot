@@ -7,9 +7,10 @@ import Transactions from '../Transactions'
 import Budget from '../Budget'
 import Savings from '../Savings'
 import Debts from '../Debts'
+import Coach from '../Coach'
 import { getTransactions, Transaction } from '@/lib/storage'
 
-type Tab = 'dashboard' | 'transactions' | 'budget' | 'savings' | 'debts'
+type Tab = 'dashboard' | 'transactions' | 'budget' | 'savings' | 'debts' | 'coach'
 
 export default function Page() {
   const [tab, setTab] = useState<Tab>('dashboard')
@@ -19,9 +20,7 @@ export default function Page() {
     setTransactions(getTransactions())
   }, [])
 
-  const refresh = () => {
-    setTransactions(getTransactions())
-  }
+  const refresh = () => setTransactions(getTransactions())
 
   return (
     <div className="min-h-screen bg-mist">
@@ -32,6 +31,7 @@ export default function Page() {
         {tab === 'budget' && <Budget transactions={transactions} />}
         {tab === 'savings' && <Savings />}
         {tab === 'debts' && <Debts />}
+        {tab === 'coach' && <Coach />}
       </main>
     </div>
   )
