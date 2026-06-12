@@ -13,6 +13,8 @@ export default function Debts() {
     type: 'owe' as 'owe' | 'owed',
     person: '',
     amount: '',
+    minimumPayment: '',
+    interestRate: '',
     note: '',
     dueDate: '',
   })
@@ -25,6 +27,8 @@ export default function Debts() {
       person: form.person,
       amount: Number(form.amount),
       remaining: Number(form.amount),
+      minimumPayment: Number(form.minimumPayment) || 0,
+      interestRate: form.interestRate ? Number(form.interestRate) : undefined,
       note: form.note,
       dueDate: form.dueDate || undefined,
       createdAt: new Date().toISOString(),
@@ -32,17 +36,16 @@ export default function Debts() {
     const updated = [...debts, debt]
     setDebts(updated)
     saveDebts(updated)
-    setForm({ type: 'owe', person: '', amount: '', note: '', dueDate: '' })
+    setForm({ type: 'owe', person: '', amount: '', minimumPayment: '', interestRate: '', note: '', dueDate: '' })
     setShowForm(false)
   }
 
   function handlePayment(id: string) {
     const amt = Number(payAmount)
     if (!amt || amt <= 0) return
-    const updated = debts.map(d => {
-      if (d.id !== id) return d
-      return { ...d, remaining: Math.max(0, d.remaining - amt) }
-    }).filter(d => d.remaining > 0)
+    const updated = debts
+      .map(d => d.id !== id ? d : { ...d, remaining: Math.max(0, d.remaining - amt) })
+      .filter(d => d.remaining > 0)
     setDebts(updated)
     saveDebts(updated)
     setPayingId(null)
@@ -51,7 +54,6 @@ export default function Debts() {
 
   const owe = debts.filter(d => d.type === 'owe')
   const owed = debts.filter(d => d.type === 'owed')
-
   const totalOwe = owe.reduce((s, d) => s + d.remaining, 0)
   const totalOwed = owed.reduce((s, d) => s + d.remaining, 0)
 
@@ -80,7 +82,7 @@ export default function Debts() {
 
       {showForm && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-end md:items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-md p-6 space-y-4">
+          <div className="bg-white rounded-2xl w-full max-w-md p-6 space-y-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between">
               <h2 className="font-semibold text-ink">Nouvelle dette / prêt</h2>
               <button onClick={() => setShowForm(false)} className="text-ink-soft"><X size={20} /></button>
@@ -99,28 +101,34 @@ export default function Debts() {
 
             <div>
               <label className="label">{form.type === 'owe' ? 'À qui je dois ?' : 'Qui me doit ?'}</label>
-              <input className="input" placeholder="Nom" value={form.person}
+              <input className="input" placeholder="Nom / institution" value={form.person}
                 onChange={e => setForm(f => ({ ...f, person: e.target.value }))} />
             </div>
-
             <div>
-              <label className="label">Montant (Rs)</label>
+              <label className="label">Montant total (Rs)</label>
               <input className="input" type="number" placeholder="0" value={form.amount}
                 onChange={e => setForm(f => ({ ...f, amount: e.target.value }))} />
             </div>
-
+            <div>
+              <label className="label">Minimum mensuel obligatoire (Rs)</label>
+              <input className="input" type="number" placeholder="0" value={form.minimumPayment}
+                onChange={e => setForm(f => ({ ...f, minimumPayment: e.target.value }))} />
+            </div>
+            <div>
+              <label className="label">Taux d'intérêt annuel % (optionnel)</label>
+              <input className="input" type="number" placeholder="Ex: 12" value={form.interestRate}
+                onChange={e => setForm(f => ({ ...f, interestRate: e.target.value }))} />
+            </div>
             <div>
               <label className="label">Note</label>
-              <input className="input" placeholder="Ex: Prêt pour voiture" value={form.note}
+              <input className="input" placeholder="Ex: Crédit voiture" value={form.note}
                 onChange={e => setForm(f => ({ ...f, note: e.target.value }))} />
             </div>
-
             <div>
               <label className="label">Échéance (optionnel)</label>
               <input className="input" type="date" value={form.dueDate}
                 onChange={e => setForm(f => ({ ...f, dueDate: e.target.value }))} />
             </div>
-
             <button className="btn-primary w-full py-3" onClick={handleAdd}>Enregistrer</button>
           </div>
         </div>
@@ -137,6 +145,7 @@ export default function Debts() {
           {[...owe, ...owed].map(d => {
             const isOverdue = d.dueDate && new Date(d.dueDate) < new Date()
             const paidPct = Math.round(((d.amount - d.remaining) / d.amount) * 100)
+            const monthsLeft = d.minimumPayment > 0 ? Math.ceil(d.remaining / d.minimumPayment) : null
 
             return (
               <div key={d.id} className={`card space-y-3 border-l-4 ${d.type === 'owe' ? 'border-l-danger' : 'border-l-positive'}`}>
@@ -149,6 +158,12 @@ export default function Debts() {
                       <span className="font-medium text-sm text-ink">{d.person}</span>
                     </div>
                     {d.note && <p className="text-xs text-ink-soft mt-1">{d.note}</p>}
+                    {d.minimumPayment > 0 && (
+                      <p className="text-xs text-ink-soft mt-1">
+                        Min. {formatAmount(d.minimumPayment)}/mois
+                        {monthsLeft && <span className="ml-2 text-warning font-medium">· ~{monthsLeft} mois restants</span>}
+                      </p>
+                    )}
                     {d.dueDate && (
                       <p className={`text-xs mt-1 font-medium ${isOverdue ? 'text-danger' : 'text-ink-soft'}`}>
                         {isOverdue ? '⚠️ En retard · ' : 'Échéance : '}
@@ -170,14 +185,8 @@ export default function Debts() {
 
                 {payingId === d.id ? (
                   <div className="flex gap-2">
-                    <input
-                      className="input flex-1"
-                      type="number"
-                      placeholder="Montant remboursé"
-                      value={payAmount}
-                      onChange={e => setPayAmount(e.target.value)}
-                      autoFocus
-                    />
+                    <input className="input flex-1" type="number" placeholder="Montant remboursé"
+                      value={payAmount} onChange={e => setPayAmount(e.target.value)} autoFocus />
                     <button className="btn-primary px-3" onClick={() => handlePayment(d.id)}>OK</button>
                     <button className="btn-ghost px-3" onClick={() => setPayingId(null)}>✕</button>
                   </div>
