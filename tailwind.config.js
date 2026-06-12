@@ -2,7 +2,7 @@
 module.exports = {
   content: [
     './app/**/*.{js,ts,jsx,tsx,mdx}',
-    './*.{js,ts,jsx,tsx}',        // Dashboard.tsx, Sidebar.tsx, etc. à la racine
+    './*.{js,ts,jsx,tsx}',
   ],
   theme: {
     extend: {
@@ -12,7 +12,7 @@ module.exports = {
       },
       colors: {
         ink: '#0F0F0F',
-        'ink-soft': '#3A3A3A',
+        'ink-soft': '#6B7280',
         mist: '#F5F6F8',
         'mist-dark': '#E8EAF0',
         accent: '#2563EB',
@@ -23,6 +23,17 @@ module.exports = {
         'warning-light': '#FEF3C7',
         danger: '#DC2626',
         'danger-light': '#FEE2E2',
+        surface: '#FFFFFF',
+      },
+      borderRadius: {
+        '2xl': '1rem',
+        '3xl': '1.5rem',
+      },
+      minHeight: {
+        touch: '48px',
+      },
+      fontSize: {
+        'input': ['16px', '24px'],
       },
     },
   },
