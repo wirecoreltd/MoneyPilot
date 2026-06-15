@@ -477,13 +477,13 @@ function DettesSection() {
   }
 
   function handleAdd() {
-    if (!form.person || !form.amount) return
+    if (!form.person) return
 
     if (editingId) {
       // Mode édition : on met à jour la dette existante en conservant les remboursements déjà effectués
       const updated = debts.map(d => {
         if (d.id !== editingId) return d
-        const newAmount    = Number(form.amount)
+        const newAmount    = Number(form.amount) || d.amount
         const paidSoFar    = d.amount - d.remaining
         const newRemaining = Math.max(0, newAmount - paidSoFar)
         return {
@@ -503,8 +503,8 @@ function DettesSection() {
       // Mode création
       const updated = [...debts, {
         id: crypto.randomUUID(), type: form.type,
-        person: form.person, amount: Number(form.amount),
-        remaining: Number(form.amount),
+        person: form.person, amount: Number(form.amount) || 0,
+        remaining: Number(form.amount) || 0,
         minimumPayment: Number(form.minimumPayment) || 0,
         interestRate: form.interestRate ? Number(form.interestRate) : undefined,
         note: form.note, dueDate: form.dueDate || undefined,
@@ -569,7 +569,7 @@ function DettesSection() {
           </p>
         </div>
       ) : debts.map(d => {
-        const paidPct    = Math.round(((d.amount - d.remaining) / d.amount) * 100)
+        const paidPct = d.amount > 0 ? Math.round(((d.amount - d.remaining) / d.amount) * 100) : 0
         const monthsLeft = d.minimumPayment > 0 ? Math.ceil(d.remaining / d.minimumPayment) : null
         const isOverdue  = d.dueDate && new Date(d.dueDate) < new Date()
         const isSnowball = plan.snowballTarget?.id === d.id
