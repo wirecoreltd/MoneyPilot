@@ -395,11 +395,11 @@ async function fetchHistory(debtId: string): Promise<DebtPaymentHistory[]> {
   }))
 }
 
-async function logPayment(debtId: string, amount: number): Promise<void> {
+async function logPayment(debtId: string, amount: number, date: string): Promise<void> {
   await supabase.from('debt_payment_history').insert({
     debt_id: debtId,
     amount,
-    paid_at: new Date().toISOString().slice(0, 10),
+    paid_at: date,
   })
 }
 
@@ -410,12 +410,17 @@ function DettesSection() {
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
+
+  // FIX: état du remboursement avec date
   const [payingId, setPayingId] = useState<string | null>(null)
   const [payAmount, setPayAmount] = useState('')
+  const [payDate, setPayDate] = useState(new Date().toISOString().slice(0, 10))
+
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
-  // Feature: history panel per debt
-  const [historyDebtId, setHistoryDebtId] = useState<string | null>(null)
-  const [history, setHistory] = useState<DebtPaymentHistory[]>([])
+
+  // FIX: historique par dette — Map<debtId, items[]>
+  const [openHistoryId, setOpenHistoryId] = useState<string | null>(null)
+  const [historyMap, setHistoryMap] = useState<Record<string, DebtPaymentHistory[]>>({})
   const [historyLoading, setHistoryLoading] = useState(false)
 
   const [form, setForm] = useState({
@@ -454,16 +459,29 @@ function DettesSection() {
     setShowForm(true)
   }
 
-  async function openHistory(debtId: string) {
-    if (historyDebtId === debtId) {
-      setHistoryDebtId(null)
+  // FIX: chaque dette a son propre historique stocké dans historyMap
+  async function toggleHistory(debtId: string) {
+    if (openHistoryId === debtId) {
+      setOpenHistoryId(null)
       return
     }
-    setHistoryDebtId(debtId)
-    setHistoryLoading(true)
-    const h = await fetchHistory(debtId)
-    setHistory(h)
-    setHistoryLoading(false)
+    setOpenHistoryId(debtId)
+    // Charger seulement si pas déjà en cache
+    if (!historyMap[debtId]) {
+      setHistoryLoading(true)
+      const h = await fetchHistory(debtId)
+      setHistoryMap(prev => ({ ...prev, [debtId]: h }))
+      setHistoryLoading(false)
+    }
+  }
+
+  // Invalider le cache d'historique après un paiement
+  function invalidateHistory(debtId: string) {
+    setHistoryMap(prev => {
+      const next = { ...prev }
+      delete next[debtId]
+      return next
+    })
   }
 
   async function handleAdd() {
@@ -507,13 +525,14 @@ function DettesSection() {
     const debt = debts.find(d => d.id === id)!
     const isRecurring = (debt as any).recurring ?? false
 
-    // Log to history
-    await logPayment(id, amt)
+    // FIX: utilise payDate au lieu de new Date()
+    await logPayment(id, amt, payDate)
+    // Invalider le cache pour forcer rechargement de l'historique
+    invalidateHistory(id)
 
     if (debt.amount === 0) {
-      // No total defined — ask to delete
       setConfirmDeleteId(id)
-      setPayingId(null); setPayAmount('')
+      setPayingId(null); setPayAmount(''); setPayDate(new Date().toISOString().slice(0, 10))
       return
     }
 
@@ -521,19 +540,20 @@ function DettesSection() {
 
     if (newRemaining === 0) {
       if (isRecurring) {
-        // Reset remaining to amount for recurring debts
         await updateDebt(id, { remaining: debt.amount })
         setDebts(prev => prev.map(d => d.id !== id ? d : { ...d, remaining: debt.amount }))
       } else {
-        // Non-recurring: ask if they want to delete
         setConfirmDeleteId(id)
+        // Mettre à jour le remaining à 0 sans supprimer encore
+        await updateDebt(id, { remaining: 0 })
+        setDebts(prev => prev.map(d => d.id !== id ? d : { ...d, remaining: 0 }))
       }
     } else {
       await updateDebt(id, { remaining: newRemaining })
       setDebts(prev => prev.map(d => d.id !== id ? d : { ...d, remaining: newRemaining }))
     }
 
-    setPayingId(null); setPayAmount('')
+    setPayingId(null); setPayAmount(''); setPayDate(new Date().toISOString().slice(0, 10))
   }
 
   if (loading) return <div className="card text-center py-8 text-ink-soft">Chargement...</div>
@@ -572,14 +592,15 @@ function DettesSection() {
           <p className="text-sm text-ink-soft mt-1">Crédit voiture, prêt bancaire, argent dû à un ami...</p>
         </div>
       ) : debts.map(d => {
-        const paidPct    = d.amount > 0 ? Math.round(((d.amount - d.remaining) / d.amount) * 100) : 0
-        const monthsLeft = d.minimumPayment > 0 ? Math.ceil(d.remaining / d.minimumPayment) : null
-        const isOverdue  = d.dueDate && new Date(d.dueDate) < new Date()
-        const isSnowball = plan.snowballTarget?.id === d.id
+        const paidPct     = d.amount > 0 ? Math.round(((d.amount - d.remaining) / d.amount) * 100) : 0
+        const monthsLeft  = d.minimumPayment > 0 ? Math.ceil(d.remaining / d.minimumPayment) : null
+        const isSnowball  = plan.snowballTarget?.id === d.id
         const isRecurring = (d as any).recurring ?? false
-        const endDate    = projectedEndDate(d.remaining, d.minimumPayment)
+        const endDate     = projectedEndDate(d.remaining, d.minimumPayment)
+        const showHistory = openHistoryId === d.id
+        const debtHistory = historyMap[d.id] ?? []
 
-        // Due date badge
+        // Badge échéance
         let dueBadge: React.ReactNode = null
         if (d.dueDate) {
           const days = daysUntil(d.dueDate)
@@ -593,8 +614,6 @@ function DettesSection() {
             dueBadge = <span className="text-xs bg-amber-50 text-amber-600 px-2 py-0.5 rounded-full font-bold">📅 Dans {days} jours</span>
           }
         }
-
-        const showHistory = historyDebtId === d.id
 
         return (
           <div key={d.id} className={`card space-y-3 border-l-4
@@ -623,14 +642,12 @@ function DettesSection() {
                   </p>
                 )}
 
-                {/* Feature 3: Projected end date */}
                 {endDate && !isRecurring && (
                   <p className="text-xs text-ink-soft mt-0.5">
                     📅 Terminé en <span className="font-semibold text-ink">{endDate}</span>
                   </p>
                 )}
 
-                {/* Feature 4: Due date badges */}
                 {dueBadge && <div className="mt-1">{dueBadge}</div>}
               </div>
 
@@ -638,10 +655,10 @@ function DettesSection() {
                 <p className="font-mono font-bold text-ink">{formatAmount(d.remaining)}</p>
                 {paidPct > 0 && !isRecurring && <p className="text-xs text-positive font-semibold">{paidPct}% remboursé</p>}
                 <div className="flex gap-1">
-                  {/* Feature 5: History toggle */}
                   <button
-                    className="w-8 h-8 rounded-xl bg-mist hover:bg-blue-50 text-ink-soft hover:text-blue-600 flex items-center justify-center"
-                    onClick={() => openHistory(d.id)}
+                    className={`w-8 h-8 rounded-xl flex items-center justify-center transition-colors
+                      ${showHistory ? 'bg-blue-100 text-blue-600' : 'bg-mist hover:bg-blue-50 text-ink-soft hover:text-blue-600'}`}
+                    onClick={() => toggleHistory(d.id)}
                     title="Historique des remboursements">
                     <History size={14}/>
                   </button>
@@ -662,35 +679,54 @@ function DettesSection() {
               </div>
             )}
 
-            {/* Feature 5: History panel */}
+            {/* Historique inline — FIX: données propres par dette */}
             {showHistory && (
               <div className="bg-mist rounded-2xl p-3 space-y-2">
-                <p className="text-xs font-bold text-ink-soft uppercase">Historique des remboursements</p>
-                {historyLoading ? (
+                <p className="text-xs font-bold text-ink-soft uppercase tracking-wide">Historique des remboursements</p>
+                {historyLoading && !historyMap[d.id] ? (
                   <p className="text-xs text-ink-soft">Chargement...</p>
-                ) : history.length === 0 ? (
+                ) : debtHistory.length === 0 ? (
                   <p className="text-xs text-ink-soft italic">Aucun remboursement enregistré</p>
-                ) : history.map(h => (
-                  <div key={h.id} className="flex items-center justify-between">
-                    <span className="text-xs text-ink-soft">
-                      {new Date(h.paidAt).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })}
-                    </span>
-                    <span className="text-xs font-mono font-bold text-positive">−{formatAmount(h.amount)}</span>
-                  </div>
-                ))}
+                ) : (
+                  <>
+                    {debtHistory.map(h => (
+                      <div key={h.id} className="flex items-center justify-between">
+                        <span className="text-xs text-ink-soft">
+                          {new Date(h.paidAt).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })}
+                        </span>
+                        <span className="text-xs font-mono font-bold text-positive">−{formatAmount(h.amount)}</span>
+                      </div>
+                    ))}
+                    <div className="border-t border-mist-dark pt-2 flex justify-between">
+                      <span className="text-xs font-bold text-ink-soft">Total remboursé</span>
+                      <span className="text-xs font-mono font-bold text-positive">
+                        {formatAmount(debtHistory.reduce((s, h) => s + h.amount, 0))}
+                      </span>
+                    </div>
+                  </>
+                )}
               </div>
             )}
 
+            {/* Zone remboursement — FIX: champ date ajouté */}
             {payingId === d.id ? (
-              <div className="flex gap-2">
-                <input className="input flex-1" type="number" placeholder="Montant remboursé"
-                  value={payAmount} onChange={e => setPayAmount(e.target.value)} autoFocus/>
-                <button className="btn-primary px-4" onClick={() => handlePay(d.id)}>OK</button>
-                <button className="btn-ghost px-3" onClick={() => { setPayingId(null); setPayAmount('') }}>✕</button>
+              <div className="space-y-2">
+                <div className="flex gap-2">
+                  <input className="input flex-1" type="number" placeholder="Montant remboursé"
+                    value={payAmount} onChange={e => setPayAmount(e.target.value)} autoFocus/>
+                  <button className="btn-ghost px-3" onClick={() => { setPayingId(null); setPayAmount(''); setPayDate(new Date().toISOString().slice(0, 10)) }}>✕</button>
+                </div>
+                <div>
+                  <label className="label">Date du remboursement</label>
+                  <input className="input" type="date" value={payDate} onChange={e => setPayDate(e.target.value)}/>
+                </div>
+                <button className="btn-primary w-full" onClick={() => handlePay(d.id)}>
+                  Enregistrer
+                </button>
               </div>
             ) : (
               <button className="w-full py-3 text-sm font-bold text-danger bg-danger-light rounded-2xl active:scale-95 transition-all"
-                onClick={() => { setPayingId(d.id); setPayAmount(String(d.minimumPayment || '')) }}>
+                onClick={() => { setPayingId(d.id); setPayAmount(String(d.minimumPayment || '')); setPayDate(new Date().toISOString().slice(0, 10)) }}>
                 Enregistrer un remboursement
               </button>
             )}
@@ -698,7 +734,6 @@ function DettesSection() {
         )
       })}
 
-      {/* Feature 2: Confirm delete after full repayment (non-recurring) */}
       {confirmDeleteId && (
         <div className="bottom-sheet bg-black/40">
           <div className="bottom-sheet-content">
@@ -766,8 +801,6 @@ function DettesSection() {
               <label className="label">Échéance finale (optionnel)</label>
               <input className="input" type="date" value={form.dueDate} onChange={e => setForm(f => ({...f, dueDate: e.target.value}))}/>
             </div>
-
-            {/* Feature 1: Recurring toggle */}
             <div className="flex items-center justify-between p-3 bg-blue-50 rounded-2xl border border-blue-200">
               <div>
                 <p className="text-sm font-bold text-blue-800">🔄 Paiement récurrent</p>
@@ -779,7 +812,6 @@ function DettesSection() {
                 <span className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-all ${form.recurring ? 'left-7' : 'left-1'}`}/>
               </button>
             </div>
-
             <button className="btn-primary w-full py-4" onClick={handleAdd} style={{ backgroundColor: '#DC2626' }}>
               {editingId ? 'Enregistrer les modifications' : 'Enregistrer'}
             </button>
