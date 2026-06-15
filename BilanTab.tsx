@@ -39,17 +39,16 @@ export default function BilanTab({ transactions }: Props) {
   })
 
   const reload = useCallback(async () => {
-    const [inc, items, debts, rec] = await Promise.all([
-      getMonthlyIncomes(month),
-      getMonthlyChecklist(month),
-      getDebts(),
-      getMonthlyChecklist(month).then(() => []), // placeholder, removed below
-    ])
-    setIncomes(inc)
-    setChecklist(items)
-    setPlan(computeCoachPlan(debts, [], inc, month))
-    setProjection(computeYearlyProjection(transactions, [], inc))
-  }, [month, transactions])
+  const [inc, items, debts] = await Promise.all([
+    getMonthlyIncomes(month),
+    getMonthlyChecklist(month),
+    getDebts(),
+  ])
+  setIncomes(inc)
+  setChecklist(items)
+  setPlan(computeCoachPlan(debts, [], inc, month))
+  setProjection(computeYearlyProjection(transactions, [], inc))
+}, [month, transactions])
 
   useEffect(() => { reload() }, [reload])
 
