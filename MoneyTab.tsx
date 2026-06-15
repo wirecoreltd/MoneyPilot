@@ -22,7 +22,7 @@ interface Props {
 
 const COLORS = ['#F59E0B','#3B82F6','#8B5CF6','#EF4444','#10B981','#F97316']
 const EMOJIS = ['🏖️','🚗','🏠','💻','📱','✈️','🎓','💍','💰','🎮','👶']
-const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+
 const SUBTABS = [
   {
     id: 'transactions' as SubTab,
@@ -100,6 +100,7 @@ function TransactionsSection({ transactions, onUpdate }: Props) {
   const [showForm, setShowForm] = useState(false)
   const [loading, setLoading] = useState(false)
   const [filter, setFilter] = useState<'all' | 'income' | 'expense'>('all')
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [form, setForm] = useState({
     type: 'expense' as 'income' | 'expense',
     amount: '', category: EXPENSE_CATEGORIES[0], note: '',
