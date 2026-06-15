@@ -99,8 +99,7 @@ export default function MoneyTab({ transactions, onUpdate }: Props) {
 function TransactionsSection({ transactions, onUpdate }: Props) {
   const [showForm, setShowForm] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [filter, setFilter] = useState<'all' | 'income' | 'expense'>('all')
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const [filter, setFilter] = useState<'all' | 'income' | 'expense'>('all')  
   const [form, setForm] = useState({
     type: 'expense' as 'income' | 'expense',
     amount: '', category: EXPENSE_CATEGORIES[0], note: '',
@@ -367,6 +366,7 @@ function DettesSection() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [payingId, setPayingId] = useState<string | null>(null)
   const [payAmount, setPayAmount] = useState('')
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [form, setForm] = useState({
     type: 'owe' as 'owe' | 'owed',
     person: '', amount: '', minimumPayment: '', interestRate: '', note: '', dueDate: '',
