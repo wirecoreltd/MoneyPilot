@@ -12,6 +12,7 @@ const TYPE_OPTIONS = [
   { id: 'savings',    emoji: '🐖', label: 'Épargne' },
   { id: 'investment', emoji: '📈', label: 'Investissement' },
   { id: 'purchase',   emoji: '🛒', label: 'Achat' },
+  { id: 'upcoming',   emoji: '🔔', label: 'Charges à venir' },
 ] as const
 
 const EMOJIS = ['✈️','🚗','🏠','📱','💻','🎓','💍','🏖️','🎮','👶','📈','🐖','🏋️','🎸','⛵']
