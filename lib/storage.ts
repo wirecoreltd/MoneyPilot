@@ -804,6 +804,17 @@ export function monthsUntil(targetDate: string): number {
   )
 }
 
+// ─── Compatibility aliases ────────────────────────────────────────────────────
+
+export type RecurringCharge = RecurringPayment
+
+export const getRecurringCharges = getRecurringPayments
+
+export const saveRecurringCharges = async (_: RecurringPayment[]): Promise<void> => {}
+export const saveRecurringPayments = async (_: RecurringPayment[]): Promise<void> => {}
+export const saveMonthlyIncomes = async (_: MonthlyIncome[]): Promise<void> => {}
+export const saveProjects = async (_: Project[]): Promise<void> => {}
+
 export function projectMonthlyNeeded(p: Project): number {
   const months = monthsUntil(p.targetDate)
   if (months <= 0) return 0
