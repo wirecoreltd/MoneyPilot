@@ -439,6 +439,7 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
 function DettesSection() {
   const [debts, setDebts] = useState<Debt[]>(getDebts)
   const [showForm, setShowForm] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
   const [payingId, setPayingId] = useState<string | null>(null)
   const [payAmount, setPayAmount] = useState('')
   const [form, setForm] = useState({
@@ -456,19 +457,63 @@ function DettesSection() {
   const totalOwe  = debts.filter(d => d.type === 'owe').reduce((s, d) => s + d.remaining, 0)
   const totalOwed = debts.filter(d => d.type === 'owed').reduce((s, d) => s + d.remaining, 0)
 
+  function resetForm() {
+    setForm({ type:'owe', person:'', amount:'', minimumPayment:'', interestRate:'', note:'', dueDate:'' })
+    setEditingId(null)
+  }
+
+  function openEdit(d: Debt) {
+    setForm({
+      type: d.type,
+      person: d.person,
+      amount: String(d.amount),
+      minimumPayment: d.minimumPayment ? String(d.minimumPayment) : '',
+      interestRate: d.interestRate !== undefined ? String(d.interestRate) : '',
+      note: d.note || '',
+      dueDate: d.dueDate || '',
+    })
+    setEditingId(d.id)
+    setShowForm(true)
+  }
+
   function handleAdd() {
     if (!form.person || !form.amount) return
-    const updated = [...debts, {
-      id: crypto.randomUUID(), type: form.type,
-      person: form.person, amount: Number(form.amount),
-      remaining: Number(form.amount),
-      minimumPayment: Number(form.minimumPayment) || 0,
-      interestRate: form.interestRate ? Number(form.interestRate) : undefined,
-      note: form.note, dueDate: form.dueDate || undefined,
-      createdAt: new Date().toISOString(),
-    }]
-    setDebts(updated); saveDebts(updated)
-    setForm({ type:'owe', person:'', amount:'', minimumPayment:'', interestRate:'', note:'', dueDate:'' })
+
+    if (editingId) {
+      // Mode édition : on met à jour la dette existante
+      const updated = debts.map(d => {
+        if (d.id !== editingId) return d
+        const newAmount = Number(form.amount)
+        const paidSoFar = d.amount - d.remaining
+        const newRemaining = Math.max(0, newAmount - paidSoFar)
+        return {
+          ...d,
+          type: form.type,
+          person: form.person,
+          amount: newAmount,
+          remaining: newRemaining,
+          minimumPayment: Number(form.minimumPayment) || 0,
+          interestRate: form.interestRate ? Number(form.interestRate) : undefined,
+          note: form.note,
+          dueDate: form.dueDate || undefined,
+        }
+      })
+      setDebts(updated); saveDebts(updated)
+    } else {
+      // Mode création
+      const updated = [...debts, {
+        id: crypto.randomUUID(), type: form.type,
+        person: form.person, amount: Number(form.amount),
+        remaining: Number(form.amount),
+        minimumPayment: Number(form.minimumPayment) || 0,
+        interestRate: form.interestRate ? Number(form.interestRate) : undefined,
+        note: form.note, dueDate: form.dueDate || undefined,
+        createdAt: new Date().toISOString(),
+      }]
+      setDebts(updated); saveDebts(updated)
+    }
+
+    resetForm()
     setShowForm(false)
   }
 
@@ -510,7 +555,7 @@ function DettesSection() {
         </div>
       </div>
 
-      <button onClick={() => setShowForm(true)} className="btn-primary w-full gap-2"
+      <button onClick={() => { resetForm(); setShowForm(true) }} className="btn-primary w-full gap-2"
         style={{ backgroundColor: '#DC2626' }}>
         <Plus size={18}/> Ajouter une dette / prêt
       </button>
@@ -560,11 +605,28 @@ function DettesSection() {
                   <p className="text-xs text-danger font-bold mt-1">⚠️ Échéance dépassée</p>
                 )}
               </div>
-              <div className="text-right flex-shrink-0">
+              <div className="text-right flex-shrink-0 flex flex-col items-end gap-1">
                 <p className="font-mono font-bold text-ink">{formatAmount(d.remaining)}</p>
                 {paidPct > 0 && (
                   <p className="text-xs text-positive font-semibold">{paidPct}% remboursé</p>
                 )}
+                <div className="flex gap-1">
+                  <button
+                    className="w-8 h-8 rounded-xl bg-mist hover:bg-accent-light text-ink-soft
+                               hover:text-accent flex items-center justify-center"
+                    onClick={() => openEdit(d)}>
+                    <Pencil size={14}/>
+                  </button>
+                  <button
+                    className="w-8 h-8 rounded-xl bg-mist hover:bg-danger-light text-ink-soft
+                               hover:text-danger flex items-center justify-center"
+                    onClick={() => {
+                      const u = debts.filter(x => x.id !== d.id)
+                      setDebts(u); saveDebts(u)
+                    }}>
+                    <Trash2 size={14}/>
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -599,8 +661,10 @@ function DettesSection() {
         <div className="bottom-sheet bg-black/40">
           <div className="bottom-sheet-content">
             <div className="flex items-center justify-between mb-2">
-              <h2 className="text-lg font-bold text-ink">Nouvelle dette / prêt</h2>
-              <button className="btn-icon bg-mist" onClick={() => setShowForm(false)}><X size={20}/></button>
+              <h2 className="text-lg font-bold text-ink">
+                {editingId ? 'Modifier la dette / prêt' : 'Nouvelle dette / prêt'}
+              </h2>
+              <button className="btn-icon bg-mist" onClick={() => { setShowForm(false); resetForm() }}><X size={20}/></button>
             </div>
             <p className="text-sm text-ink-soft">
               Enregistre le montant total (pas le mensuel). Tu ajouteras les remboursements au fur et à mesure.
@@ -619,9 +683,14 @@ function DettesSection() {
                 value={form.person} onChange={e => setForm(f => ({...f, person: e.target.value}))}/>
             </div>
             <div>
-              <label className="label">Montant total restant (Rs)</label>
+              <label className="label">Montant total {editingId ? '' : 'restant '}(Rs)</label>
               <input className="input" type="number" placeholder="Ex: 150000"
                 value={form.amount} onChange={e => setForm(f => ({...f, amount: e.target.value}))}/>
+              {editingId && (
+                <p className="text-xs text-ink-soft mt-1">
+                  Le montant restant sera ajusté automatiquement selon ce qui a déjà été remboursé.
+                </p>
+              )}
             </div>
             <div>
               <label className="label">Remboursement minimum / mois (Rs)</label>
@@ -650,7 +719,7 @@ function DettesSection() {
             </div>
             <button className="btn-primary w-full py-4" onClick={handleAdd}
               style={{ backgroundColor: '#DC2626' }}>
-              Enregistrer
+              {editingId ? 'Enregistrer les modifications' : 'Enregistrer'}
             </button>
           </div>
         </div>
