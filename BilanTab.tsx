@@ -23,7 +23,7 @@ interface Props { transactions: Transaction[] }
 export default function BilanTab({ transactions }: Props) {
   const month = currentYearMonth()
   const plan = computeCoachPlan([], [], [], month)
-  const projection = computeYearlyProjection(transactions)
+  const projection = computeYearlyProjection(transactions, [], [])
 
   const [charges,    setCharges]    = useState<RecurringCharge[]>(getRecurringCharges)
   const [incomes,    setIncomes]    = useState<MonthlyIncome[]>(() =>
