@@ -1,6 +1,6 @@
 'use client'
 import { useState } from 'react'
-import { Plus, Trash2, X, Info } from 'lucide-react'
+import { Plus, Trash2, X, Info, Pencil } from 'lucide-react'
 import {
   Transaction, BudgetCategory, SavingsGoal, Debt,
   EXPENSE_CATEGORIES, INCOME_CATEGORIES,
@@ -480,11 +480,11 @@ function DettesSection() {
     if (!form.person || !form.amount) return
 
     if (editingId) {
-      // Mode édition : on met à jour la dette existante
+      // Mode édition : on met à jour la dette existante en conservant les remboursements déjà effectués
       const updated = debts.map(d => {
         if (d.id !== editingId) return d
-        const newAmount = Number(form.amount)
-        const paidSoFar = d.amount - d.remaining
+        const newAmount    = Number(form.amount)
+        const paidSoFar    = d.amount - d.remaining
         const newRemaining = Math.max(0, newAmount - paidSoFar)
         return {
           ...d,
