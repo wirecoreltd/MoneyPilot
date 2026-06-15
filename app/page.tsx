@@ -7,6 +7,7 @@ import MoneyTab from '../MoneyTab'
 import BilanTab from '../BilanTab'
 import ProjectsTab from '../ProjectsTab'
 import { getTransactions, Transaction, getUserProfile, UserProfile } from '@/lib/storage'
+import { supabase } from '@/lib/supabase'
 
 export default function Page() {
   const [profile,      setProfile]      = useState<UserProfile | null>(null)
@@ -21,6 +22,12 @@ export default function Page() {
 
   useEffect(() => {
     async function init() {
+      // Vérifier si l'utilisateur est connecté
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) {
+        window.location.href = '/login'
+        return
+      }
       const [p, txs] = await Promise.all([getUserProfile(), getTransactions()])
       setProfile(p)
       setTransactions(txs)
