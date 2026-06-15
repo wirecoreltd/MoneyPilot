@@ -401,6 +401,7 @@ async function logPayment(debtId: string, amount: number, date: string): Promise
     amount,
     paid_at: date,
   })
+    console.log('logPayment result:', { data, error })
 }
 
 // ─── Dettes ───────────────────────────────────────────────────────────────────
