@@ -1,18 +1,49 @@
 'use client'
 import { useState, useEffect } from 'react'
+import Onboarding from '../Onboarding'
 import BottomNav, { Tab } from '../BottomNav'
 import HomeTab from '../HomeTab'
 import MoneyTab from '../MoneyTab'
 import BilanTab from '../BilanTab'
 import ProjectsTab from '../ProjectsTab'
-import { getTransactions, Transaction } from '@/lib/storage'
+import { getTransactions, Transaction, getUserProfile, UserProfile } from '@/lib/storage'
 
 export default function Page() {
-  const [tab, setTab] = useState<Tab>('home')
+  const [profile,      setProfile]      = useState<UserProfile | null>(null)
+  const [tab,          setTab]          = useState<Tab>('home')
   const [transactions, setTransactions] = useState<Transaction[]>([])
+  const [loading,      setLoading]      = useState(true)
 
-  useEffect(() => { setTransactions(getTransactions()) }, [])
+  useEffect(() => {
+    const p = getUserProfile()
+    setProfile(p)
+    setTransactions(getTransactions())
+    setLoading(false)
+  }, [])
+
   const refresh = () => setTransactions(getTransactions())
+
+  function handleOnboardingComplete(p: UserProfile) {
+    setProfile(p)
+  }
+
+  // Splash pendant chargement
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-accent to-blue-800
+                      flex items-center justify-center">
+        <div className="text-center text-white">
+          <div className="text-5xl mb-4 animate-pulse">💰</div>
+          <p className="font-bold text-xl">MonBudget</p>
+        </div>
+      </div>
+    )
+  }
+
+  // Onboarding si pas de profil
+  if (!profile?.completed) {
+    return <Onboarding onComplete={handleOnboardingComplete} />
+  }
 
   return (
     <div className="min-h-screen bg-mist">
@@ -24,11 +55,13 @@ export default function Page() {
         <span className="text-lg font-bold text-ink tracking-tight">
           Mon<span className="text-accent">Budget</span>
         </span>
-        <span className="text-xs text-ink-soft font-medium">🇲🇺 Mauritius</span>
+        <span className="text-xs text-ink-soft font-medium">
+          👋 {profile.firstName}
+        </span>
       </header>
 
       <main className="md:ml-60 pb-28 md:pb-8 px-4 py-4 md:px-8 md:py-8 max-w-2xl mx-auto md:mx-0">
-        {tab === 'home'    && <HomeTab     transactions={transactions} onUpdate={refresh} />}
+        {tab === 'home'    && <HomeTab     transactions={transactions} onUpdate={refresh} profile={profile} />}
         {tab === 'money'   && <MoneyTab    transactions={transactions} onUpdate={refresh} />}
         {tab === 'bilan'   && <BilanTab    transactions={transactions} />}
         {tab === 'projets' && <ProjectsTab />}
