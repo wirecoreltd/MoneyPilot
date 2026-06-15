@@ -1,15 +1,13 @@
 'use client'
-import { useState, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Plus, Trash2, X, Check, Pencil } from 'lucide-react'
 import {
-  Transaction, RecurringCharge, MonthlyIncome,
-  RecurringPayment,
-  getRecurringCharges, saveRecurringCharges,
-  getMonthlyIncomes, saveMonthlyIncomes,
-  getRecurringPayments, saveRecurringPayments,
+  Transaction, MonthlyIncome, RecurringPayment,
+  getMonthlyIncomes, addMonthlyIncome, deleteMonthlyIncome,
+  getRecurringPayments, addRecurringPayment, deleteRecurringPayment,
   toggleRecurringPayment, getPaymentForMonth,
-  computeCoachPlan, computeYearlyProjection,
-  currentYearMonth, getMonthLabel, formatAmount,
+  getDebts, computeCoachPlan, computeYearlyProjection,
+  currentYearMonth, formatAmount,
   RECURRING_CATEGORIES, RECURRING_CATEGORY_EMOJI
 } from '@/lib/storage'
 import CoachTip from './CoachTip'
@@ -22,43 +20,42 @@ interface Props { transactions: Transaction[] }
 
 export default function BilanTab({ transactions }: Props) {
   const month = currentYearMonth()
-  const plan = computeCoachPlan([], [], [], month)
-  const projection = computeYearlyProjection(transactions, [], [])
 
-  const [charges,    setCharges]    = useState<RecurringCharge[]>(getRecurringCharges)
-  const [incomes,    setIncomes]    = useState<MonthlyIncome[]>(() =>
-    getMonthlyIncomes().filter(i => i.month === month))
-  const [recurring,  setRecurring]  = useState<RecurringPayment[]>(getRecurringPayments)
+  const [incomes,   setIncomes]   = useState<MonthlyIncome[]>([])
+  const [recurring, setRecurring] = useState<RecurringPayment[]>([])
+  const [plan,      setPlan]      = useState(computeCoachPlan([], [], [], month))
+  const [projection, setProjection] = useState(computeYearlyProjection(transactions, [], []))
 
-  const [showChargeForm,  setShowChargeForm]  = useState(false)
-  const [showIncomeForm,  setShowIncomeForm]  = useState(false)
-  const [showRecForm,     setShowRecForm]     = useState(false)
-  const [editingId,       setEditingId]       = useState<string | null>(null)
-  const [editAmount,      setEditAmount]      = useState('')
+  const [showIncomeForm, setShowIncomeForm] = useState(false)
+  const [showRecForm,    setShowRecForm]    = useState(false)
+  const [editingId,      setEditingId]      = useState<string | null>(null)
+  const [editAmount,     setEditAmount]     = useState('')
 
-  // Forms
-  const [cf, setCf] = useState({
-    name:'', amount:'', type:'fixed' as 'fixed'|'variable',
-    category: 'logement' as RecurringCharge['category'],
-    frequency: 'monthly' as 'monthly'|'yearly'|'once', note:''
-  })
-  const [inf, setInf] = useState({ label:'', amount:'', isFixed: true })
-  const [rf, setRf]   = useState({
-    name:'', defaultAmount:'',
+  const [inf, setInf] = useState({ label: '', amount: '', isFixed: true })
+  const [rf,  setRf]  = useState({
+    name: '', defaultAmount: '',
     category: 'logement' as RecurringPayment['category'],
-    frequency: 'monthly' as 'monthly'|'yearly', note:''
+    frequency: 'monthly' as 'monthly' | 'yearly', note: ''
   })
 
-  function reload() {
-    setCharges(getRecurringCharges())
-    setIncomes(getMonthlyIncomes().filter(i => i.month === month))
-    setRecurring(getRecurringPayments())
-  }
+  const reload = useCallback(async () => {
+    const [inc, rec, debts] = await Promise.all([
+      getMonthlyIncomes(month),
+      getRecurringPayments(),
+      getDebts(),
+    ])
+    setIncomes(inc)
+    setRecurring(rec)
+    setPlan(computeCoachPlan(debts, rec, inc, month))
+    setProjection(computeYearlyProjection(transactions, rec, inc))
+  }, [month, transactions])
+
+  useEffect(() => { reload() }, [reload])
 
   // ── Recurring payment handlers ──────────────────────────────────────────────
 
-  function handleCheck(id: string) {
-    toggleRecurringPayment(id, month)
+  async function handleCheck(id: string) {
+    await toggleRecurringPayment(id, month)
     reload()
   }
 
@@ -69,56 +66,56 @@ export default function BilanTab({ transactions }: Props) {
     setEditingId(id)
   }
 
-  function handleSaveEdit(id: string) {
+  async function handleSaveEdit(id: string) {
     const amt = Number(editAmount)
     if (amt > 0) {
-      toggleRecurringPayment(id, month, amt)
+      await toggleRecurringPayment(id, month, amt)
       reload()
     }
     setEditingId(null)
     setEditAmount('')
   }
 
-  function addRecurring() {
+  async function addRecurring() {
     if (!rf.name || !rf.defaultAmount) return
-    const updated = [...getRecurringPayments(), {
-      id: crypto.randomUUID(),
-      name: rf.name,
+    await addRecurringPayment({
+      name:          rf.name,
       defaultAmount: Number(rf.defaultAmount),
-      category: rf.category,
-      frequency: rf.frequency,
-      note: rf.note || undefined,
-      payments: [],
-    }]
-    saveRecurringPayments(updated)
-    setRf({ name:'', defaultAmount:'', category:'logement', frequency:'monthly', note:'' })
+      category:      rf.category,
+      frequency:     rf.frequency,
+      note:          rf.note || undefined,
+    })
+    setRf({ name: '', defaultAmount: '', category: 'logement', frequency: 'monthly', note: '' })
     setShowRecForm(false)
     reload()
   }
 
-  // ── Charges / Incomes ───────────────────────────────────────────────────────
-
-  function addCharge() {
-    if (!cf.name || !cf.amount) return
-    const updated = [...getRecurringCharges(), {
-      id: crypto.randomUUID(), name: cf.name, amount: Number(cf.amount),
-      type: cf.type, category: cf.category, frequency: cf.frequency,
-      note: cf.note || undefined
-    }]
-    saveRecurringCharges(updated)
-    setCf({ name:'', amount:'', type:'fixed', category:'logement', frequency:'monthly', note:'' })
-    setShowChargeForm(false); reload()
+  async function handleDeleteRecurring(id: string) {
+    await deleteRecurringPayment(id)
+    reload()
   }
 
-  function addIncome() {
+  // ── Income handlers ─────────────────────────────────────────────────────────
+
+  async function addIncome() {
     if (!inf.label || !inf.amount) return
-    saveMonthlyIncomes([...getMonthlyIncomes(), {
-      id: crypto.randomUUID(), label: inf.label,
-      amount: Number(inf.amount), isFixed: inf.isFixed, month
-    }])
-    setInf({ label:'', amount:'', isFixed: true })
-    setShowIncomeForm(false); reload()
+    await addMonthlyIncome({
+      label:   inf.label,
+      amount:  Number(inf.amount),
+      isFixed: inf.isFixed,
+      month,
+    })
+    setInf({ label: '', amount: '', isFixed: true })
+    setShowIncomeForm(false)
+    reload()
   }
+
+  async function handleDeleteIncome(id: string) {
+    await deleteMonthlyIncome(id)
+    reload()
+  }
+
+  // ── Derived values ──────────────────────────────────────────────────────────
 
   const tip = plan.alerts[0] ??
     (plan.freeMoney > 0
@@ -137,13 +134,9 @@ export default function BilanTab({ transactions }: Props) {
       <div className="card-lg space-y-3">
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-xs font-bold text-ink-soft uppercase tracking-wider">
-              Paiements du mois
-            </p>
+            <p className="text-xs font-bold text-ink-soft uppercase tracking-wider">Paiements du mois</p>
             {totalCount > 0 && (
-              <p className="text-xs text-ink-soft mt-0.5">
-                {paidCount}/{totalCount} payés
-              </p>
+              <p className="text-xs text-ink-soft mt-0.5">{paidCount}/{totalCount} payés</p>
             )}
           </div>
           <button onClick={() => setShowRecForm(true)}
@@ -152,7 +145,6 @@ export default function BilanTab({ transactions }: Props) {
           </button>
         </div>
 
-        {/* Progress bar */}
         {totalCount > 0 && (
           <div className="w-full h-2 bg-mist-dark rounded-full overflow-hidden">
             <div className="h-full bg-positive rounded-full transition-all duration-500"
@@ -167,25 +159,20 @@ export default function BilanTab({ transactions }: Props) {
         ) : (
           <div className="space-y-2">
             {recurring.map(r => {
-              const pay     = getPaymentForMonth(r, month)
+              const pay       = getPaymentForMonth(r, month)
               const isEditing = editingId === r.id
               return (
                 <div key={r.id}
                   className={`flex items-center gap-3 p-3 rounded-2xl transition-all
                     ${pay.paid ? 'bg-positive-light' : 'bg-mist'}`}>
 
-                  {/* Checkbox */}
-                  <button
-                    onClick={() => handleCheck(r.id)}
+                  <button onClick={() => handleCheck(r.id)}
                     className={`w-7 h-7 rounded-xl border-2 flex items-center justify-center
                                 flex-shrink-0 transition-all active:scale-95
-                                ${pay.paid
-                                  ? 'bg-positive border-positive'
-                                  : 'bg-white border-mist-dark'}`}>
+                                ${pay.paid ? 'bg-positive border-positive' : 'bg-white border-mist-dark'}`}>
                     {pay.paid && <Check size={14} className="text-white" strokeWidth={3}/>}
                   </button>
 
-                  {/* Info */}
                   <div className="flex-1 min-w-0">
                     <p className={`text-sm font-semibold truncate
                       ${pay.paid ? 'text-positive line-through opacity-70' : 'text-ink'}`}>
@@ -193,18 +180,11 @@ export default function BilanTab({ transactions }: Props) {
                     </p>
                     {isEditing ? (
                       <div className="flex gap-2 mt-1">
-                        <input
-                          className="input py-1 text-sm flex-1"
-                          type="number"
-                          value={editAmount}
-                          onChange={e => setEditAmount(e.target.value)}
-                          autoFocus
-                        />
-                        <button
-                          className="bg-accent text-white px-3 rounded-xl text-xs font-bold active:scale-95"
+                        <input className="input py-1 text-sm flex-1" type="number"
+                          value={editAmount} onChange={e => setEditAmount(e.target.value)} autoFocus/>
+                        <button className="bg-accent text-white px-3 rounded-xl text-xs font-bold active:scale-95"
                           onClick={() => handleSaveEdit(r.id)}>OK</button>
-                        <button
-                          className="bg-mist text-ink-soft px-3 rounded-xl text-xs font-bold"
+                        <button className="bg-mist text-ink-soft px-3 rounded-xl text-xs font-bold"
                           onClick={() => setEditingId(null)}>✕</button>
                       </div>
                     ) : (
@@ -217,19 +197,13 @@ export default function BilanTab({ transactions }: Props) {
                     )}
                   </div>
 
-                  {/* Actions */}
                   {!isEditing && (
                     <div className="flex gap-1 flex-shrink-0">
-                      <button
-                        onClick={() => handleEditAmount(r.id)}
+                      <button onClick={() => handleEditAmount(r.id)}
                         className="w-8 h-8 rounded-xl bg-white text-ink-soft flex items-center justify-center active:scale-95">
                         <Pencil size={13}/>
                       </button>
-                      <button
-                        onClick={() => {
-                          saveRecurringPayments(getRecurringPayments().filter(x => x.id !== r.id))
-                          reload()
-                        }}
+                      <button onClick={() => handleDeleteRecurring(r.id)}
                         className="w-8 h-8 rounded-xl bg-white text-ink-soft hover:text-danger flex items-center justify-center active:scale-95">
                         <Trash2 size={13}/>
                       </button>
@@ -247,15 +221,15 @@ export default function BilanTab({ transactions }: Props) {
         <div className="card-lg space-y-3">
           <p className="text-xs font-bold text-ink-soft uppercase tracking-wider">Plan du mois</p>
           {[
-            { label: 'Revenus',          amount: plan.totalIncome,       sign: '+', color: 'text-positive' },
-            { label: 'Charges fixes',    amount: plan.fixedCharges,      sign: '−', color: 'text-danger'  },
-            { label: 'Minimums dettes',  amount: plan.debtMinimums,      sign: '−', color: 'text-danger'  },
-            { label: 'Variable (15%)',   amount: plan.variableEstimate,  sign: '−', color: 'text-warning' },
-          ].map((r, i) => (
+            { label: 'Revenus',         amount: plan.totalIncome,      sign: '+', color: 'text-positive' },
+            { label: 'Charges fixes',   amount: plan.fixedCharges,     sign: '−', color: 'text-danger'  },
+            { label: 'Minimums dettes', amount: plan.debtMinimums,     sign: '−', color: 'text-danger'  },
+            { label: 'Variable (15%)',  amount: plan.variableEstimate, sign: '−', color: 'text-warning' },
+          ].map((row, i) => (
             <div key={i} className="flex justify-between items-center py-1.5 border-b border-mist last:border-0">
-              <span className="text-sm text-ink-soft">{r.label}</span>
-              <span className={`font-mono text-sm font-bold ${r.color}`}>
-                {r.sign} {formatAmount(r.amount)}
+              <span className="text-sm text-ink-soft">{row.label}</span>
+              <span className={`font-mono text-sm font-bold ${row.color}`}>
+                {row.sign} {formatAmount(row.amount)}
               </span>
             </div>
           ))}
@@ -309,15 +283,13 @@ export default function BilanTab({ transactions }: Props) {
               contentStyle={{ borderRadius: 12, border: '1px solid #E8EAF0', fontSize: 12 }}/>
             <ReferenceLine y={0} stroke="#DC2626" strokeDasharray="4 4"/>
             <Area type="monotone" dataKey="projectedBalance"
-              stroke="#2563EB" strokeWidth={2} fill="url(#balGrad)"
-              name="Solde projeté"/>
+              stroke="#2563EB" strokeWidth={2} fill="url(#balGrad)" name="Solde projeté"/>
           </AreaChart>
         </ResponsiveContainer>
 
-        {/* Détail mois par mois */}
         <div className="space-y-1 max-h-48 overflow-y-auto">
           {projection.map((m, i) => {
-            const now = new Date()
+            const now    = new Date()
             const isPast = i < now.getMonth()
             return (
               <div key={m.month}
@@ -358,12 +330,8 @@ export default function BilanTab({ transactions }: Props) {
               </div>
               <div className="flex items-center gap-2">
                 <span className="font-mono text-sm font-bold text-positive">+{formatAmount(inc.amount)}</span>
-                <button
-                  className="w-8 h-8 rounded-xl bg-mist hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center"
-                  onClick={() => {
-                    saveMonthlyIncomes(getMonthlyIncomes().filter(i => i.id !== inc.id))
-                    reload()
-                  }}>
+                <button onClick={() => handleDeleteIncome(inc.id)}
+                  className="w-8 h-8 rounded-xl bg-mist hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center">
                   <Trash2 size={14}/>
                 </button>
               </div>
@@ -382,13 +350,13 @@ export default function BilanTab({ transactions }: Props) {
             <BarChart data={(() => {
               const now = new Date()
               return Array.from({ length: 6 }, (_, i) => {
-                const d  = new Date(now.getFullYear(), now.getMonth() - (5 - i), 1)
-                const ym = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`
+                const d   = new Date(now.getFullYear(), now.getMonth() - (5 - i), 1)
+                const ym  = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`
                 const txs = transactions.filter(t => t.date.startsWith(ym))
                 return {
-                  month: d.toLocaleDateString('fr-FR', { month: 'short' }),
-                  Revenus:  txs.filter(t => t.type==='income').reduce((s,t)=>s+t.amount,0),
-                  Dépenses: txs.filter(t => t.type==='expense').reduce((s,t)=>s+t.amount,0),
+                  month:    d.toLocaleDateString('fr-FR', { month: 'short' }),
+                  Revenus:  txs.filter(t => t.type === 'income').reduce((s,t) => s + t.amount, 0),
+                  Dépenses: txs.filter(t => t.type === 'expense').reduce((s,t) => s + t.amount, 0),
                 }
               })
             })()} barGap={4}>
@@ -435,10 +403,10 @@ export default function BilanTab({ transactions }: Props) {
             <div className="flex rounded-2xl overflow-hidden border-2 border-mist-dark">
               <button className={`flex-1 py-3 text-sm font-bold
                 ${rf.frequency === 'monthly' ? 'bg-accent text-white' : 'bg-white text-ink-soft'}`}
-                onClick={() => setRf(f => ({...f, frequency:'monthly'}))}>Mensuel</button>
+                onClick={() => setRf(f => ({...f, frequency: 'monthly'}))}>Mensuel</button>
               <button className={`flex-1 py-3 text-sm font-bold
                 ${rf.frequency === 'yearly' ? 'bg-accent text-white' : 'bg-white text-ink-soft'}`}
-                onClick={() => setRf(f => ({...f, frequency:'yearly'}))}>Annuel</button>
+                onClick={() => setRf(f => ({...f, frequency: 'yearly'}))}>Annuel</button>
             </div>
             <div>
               <label className="label">Note (optionnel)</label>
@@ -477,48 +445,6 @@ export default function BilanTab({ transactions }: Props) {
                 onClick={() => setInf(f => ({...f, isFixed: false}))}>Variable</button>
             </div>
             <button className="btn-primary w-full py-4" onClick={addIncome}>Enregistrer</button>
-          </div>
-        </div>
-      )}
-
-      {/* ── Modal : ajouter charge (Bilan) ───────────────────────────────────── */}
-      {showChargeForm && (
-        <div className="bottom-sheet bg-black/40">
-          <div className="bottom-sheet-content">
-            <div className="flex items-center justify-between mb-2">
-              <h2 className="text-lg font-bold text-ink">Charge récurrente (Bilan)</h2>
-              <button className="btn-icon bg-mist" onClick={() => setShowChargeForm(false)}><X size={20}/></button>
-            </div>
-            <div>
-              <label className="label">Nom</label>
-              <input className="input" placeholder="Ex: Loyer, Assurance..." value={cf.name}
-                onChange={e => setCf(f => ({...f, name: e.target.value}))}/>
-            </div>
-            <div>
-              <label className="label">Montant (Rs)</label>
-              <input className="input" type="number" placeholder="0" value={cf.amount}
-                onChange={e => setCf(f => ({...f, amount: e.target.value}))}/>
-            </div>
-            <div>
-              <label className="label">Catégorie</label>
-              <select className="input" value={cf.category}
-                onChange={e => setCf(f => ({...f, category: e.target.value as RecurringCharge['category']}))}>
-                {RECURRING_CATEGORIES.map(c => (
-                  <option key={c} value={c}>{RECURRING_CATEGORY_EMOJI[c]} {c}</option>
-                ))}
-              </select>
-            </div>
-            <div className="flex rounded-2xl overflow-hidden border-2 border-mist-dark">
-              {(['monthly','yearly','once'] as const).map(f => (
-                <button key={f}
-                  className={`flex-1 py-3 text-xs font-bold
-                    ${cf.frequency === f ? 'bg-accent text-white' : 'bg-white text-ink-soft'}`}
-                  onClick={() => setCf(x => ({...x, frequency: f}))}>
-                  {f === 'monthly' ? 'Mensuel' : f === 'yearly' ? 'Annuel' : 'Unique'}
-                </button>
-              ))}
-            </div>
-            <button className="btn-primary w-full py-4" onClick={addCharge}>Enregistrer</button>
           </div>
         </div>
       )}
