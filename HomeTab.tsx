@@ -43,8 +43,8 @@ export default function HomeTab({ transactions, onUpdate, profile }: Props) {
   const expenses  = monthTxs.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0)
   const balance   = income - expenses
   const recent    = transactions.slice(0, 5)
-  const health    = computeHealthScore(transactions)
-  const plan      = computeCoachPlan(ym)
+  const health    = computeHealthScore(transactions, [], [], [])
+  const plan      = computeCoachPlan([], [], [], ym)
 
   const tip = plan.alerts[0] ??
     (balance > 0
