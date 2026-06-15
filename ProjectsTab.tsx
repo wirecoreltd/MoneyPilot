@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect, useMemo } from 'react'
-import { Plus, X, Trash2 } from 'lucide-react'
+import { Plus, X, Trash2, Pencil } from 'lucide-react'
 import {
   Project, getProjects, addProject, updateProject, deleteProject,
   projectMonthlyNeeded, monthsUntil,
@@ -17,19 +17,21 @@ const TYPE_OPTIONS = [
 
 const EMOJIS = ['✈️','🚗','🏠','📱','💻','🎓','💍','🏖️','🎮','👶','📈','🐖','🏋️','🎸','⛵']
 
-export default function ProjectsTab() {
-  const [projects,  setProjects]  = useState<Project[]>([])
-  const [loading,   setLoading]   = useState(true)
-  const [showForm,  setShowForm]  = useState(false)
-  const [addingTo,  setAddingTo]  = useState<string | null>(null)
-  const [addAmount, setAddAmount] = useState('')
+const EMPTY_FORM = {
+  name: '', emoji: EMOJIS[0],
+  type: 'savings' as Project['type'],
+  targetAmount: '', savedAmount: '0',
+  targetDate: '', monthlyContribution: '', note: '',
+}
 
-  const [form, setForm] = useState({
-    name: '', emoji: EMOJIS[0],
-    type: 'savings' as Project['type'],
-    targetAmount: '', savedAmount: '0',
-    targetDate: '', monthlyContribution: '', note: '',
-  })
+export default function ProjectsTab() {
+  const [projects,   setProjects]  = useState<Project[]>([])
+  const [loading,    setLoading]   = useState(true)
+  const [showForm,   setShowForm]  = useState(false)
+  const [editingId,  setEditingId] = useState<string | null>(null)
+  const [addingTo,   setAddingTo]  = useState<string | null>(null)
+  const [addAmount,  setAddAmount] = useState('')
+  const [form,       setForm]      = useState(EMPTY_FORM)
 
   async function reload() {
     const data = await getProjects()
@@ -40,20 +42,54 @@ export default function ProjectsTab() {
     reload().finally(() => setLoading(false))
   }, [])
 
-  async function handleAdd() {
-    if (!form.name || !form.targetAmount || !form.targetDate) return
-    await addProject({
-      name:                form.name,
-      emoji:               form.emoji,
-      type:                form.type,
-      targetAmount:        Number(form.targetAmount),
-      savedAmount:         Number(form.savedAmount) || 0,
-      targetDate:          form.targetDate,
-      monthlyContribution: Number(form.monthlyContribution) || 0,
-      note:                form.note || undefined,
+  function openAdd() {
+    setForm(EMPTY_FORM)
+    setEditingId(null)
+    setShowForm(true)
+  }
+
+  function openEdit(p: Project) {
+    setForm({
+      name:                p.name,
+      emoji:               p.emoji,
+      type:                p.type,
+      targetAmount:        String(p.targetAmount),
+      savedAmount:         String(p.savedAmount),
+      targetDate:          p.targetDate,
+      monthlyContribution: String(p.monthlyContribution),
+      note:                p.note || '',
     })
-    setForm({ name:'', emoji: EMOJIS[0], type:'savings', targetAmount:'', savedAmount:'0',
-              targetDate:'', monthlyContribution:'', note:'' })
+    setEditingId(p.id)
+    setShowForm(true)
+  }
+
+  async function handleSubmit() {
+    if (!form.name || !form.targetAmount || !form.targetDate) return
+    if (editingId) {
+      await updateProject(editingId, {
+        name:                form.name,
+        emoji:               form.emoji,
+        type:                form.type,
+        targetAmount:        Number(form.targetAmount),
+        savedAmount:         Number(form.savedAmount) || 0,
+        targetDate:          form.targetDate,
+        monthlyContribution: Number(form.monthlyContribution) || 0,
+        note:                form.note || undefined,
+      })
+    } else {
+      await addProject({
+        name:                form.name,
+        emoji:               form.emoji,
+        type:                form.type,
+        targetAmount:        Number(form.targetAmount),
+        savedAmount:         Number(form.savedAmount) || 0,
+        targetDate:          form.targetDate,
+        monthlyContribution: Number(form.monthlyContribution) || 0,
+        note:                form.note || undefined,
+      })
+    }
+    setForm(EMPTY_FORM)
+    setEditingId(null)
     setShowForm(false)
     reload()
   }
@@ -92,7 +128,7 @@ export default function ProjectsTab() {
     <div className="space-y-4">
       <CoachTip message={tip} />
 
-      <button onClick={() => setShowForm(true)} className="btn-primary w-full gap-2 text-base py-4">
+      <button onClick={openAdd} className="btn-primary w-full gap-2 text-base py-4">
         <Plus size={20}/> Nouveau projet
       </button>
 
@@ -132,10 +168,16 @@ export default function ProjectsTab() {
                           </p>
                         </div>
                       </div>
-                      <button onClick={() => handleDelete(p.id)}
-                        className="w-8 h-8 rounded-xl bg-mist hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center flex-shrink-0">
-                        <Trash2 size={14}/>
-                      </button>
+                      <div className="flex gap-1 flex-shrink-0">
+                        <button onClick={() => openEdit(p)}
+                          className="w-8 h-8 rounded-xl bg-mist hover:bg-accent-light text-ink-soft hover:text-accent flex items-center justify-center">
+                          <Pencil size={14}/>
+                        </button>
+                        <button onClick={() => handleDelete(p.id)}
+                          className="w-8 h-8 rounded-xl bg-mist hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center">
+                          <Trash2 size={14}/>
+                        </button>
+                      </div>
                     </div>
 
                     <div className="w-full h-3 bg-mist-dark rounded-full overflow-hidden">
@@ -185,8 +227,12 @@ export default function ProjectsTab() {
         <div className="bottom-sheet bg-black/40">
           <div className="bottom-sheet-content">
             <div className="flex items-center justify-between mb-2">
-              <h2 className="text-lg font-bold text-ink">Nouveau projet</h2>
-              <button className="btn-icon bg-mist" onClick={() => setShowForm(false)}><X size={20}/></button>
+              <h2 className="text-lg font-bold text-ink">
+                {editingId ? 'Modifier le projet' : 'Nouveau projet'}
+              </h2>
+              <button className="btn-icon bg-mist" onClick={() => { setShowForm(false); setEditingId(null) }}>
+                <X size={20}/>
+              </button>
             </div>
 
             <div>
@@ -263,8 +309,8 @@ export default function ProjectsTab() {
                 value={form.note} onChange={e => setForm(f => ({...f, note: e.target.value}))}/>
             </div>
 
-            <button className="btn-primary w-full py-4 text-base" onClick={handleAdd}>
-              Créer le projet
+            <button className="btn-primary w-full py-4 text-base" onClick={handleSubmit}>
+              {editingId ? 'Enregistrer les modifications' : 'Créer le projet'}
             </button>
           </div>
         </div>
