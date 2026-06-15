@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect } from 'react'
-import { Plus, Trash2, X, Info, Pencil } from 'lucide-react'
+import { Plus, Trash2, X, Info, Pencil, History, ChevronDown, ChevronUp } from 'lucide-react'
 import {
   Transaction, BudgetCategory, SavingsGoal, Debt,
   EXPENSE_CATEGORIES, INCOME_CATEGORIES,
@@ -12,12 +12,20 @@ import {
   formatAmount, currentYearMonth,
 } from '@/lib/storage'
 import CoachTip from './CoachTip'
+import { supabase } from '@/lib/supabase'
 
 type SubTab = 'transactions' | 'budget' | 'dettes' | 'epargne'
 
 interface Props {
   transactions: Transaction[]
   onUpdate: () => void
+}
+
+interface DebtPaymentHistory {
+  id: string
+  debtId: string
+  amount: number
+  paidAt: string
 }
 
 const COLORS = ['#F59E0B','#3B82F6','#8B5CF6','#EF4444','#10B981','#F97316']
@@ -99,7 +107,7 @@ export default function MoneyTab({ transactions, onUpdate }: Props) {
 function TransactionsSection({ transactions, onUpdate }: Props) {
   const [showForm, setShowForm] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [filter, setFilter] = useState<'all' | 'income' | 'expense'>('all')  
+  const [filter, setFilter] = useState<'all' | 'income' | 'expense'>('all')
   const [form, setForm] = useState({
     type: 'expense' as 'income' | 'expense',
     amount: '', category: EXPENSE_CATEGORIES[0], note: '',
@@ -357,6 +365,44 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
   )
 }
 
+// ─── Helpers dettes ───────────────────────────────────────────────────────────
+
+function daysUntil(dateStr: string): number {
+  const now = new Date(); now.setHours(0, 0, 0, 0)
+  const target = new Date(dateStr); target.setHours(0, 0, 0, 0)
+  return Math.round((target.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+}
+
+function projectedEndDate(remaining: number, minimumPayment: number): string | null {
+  if (!minimumPayment || minimumPayment <= 0 || remaining <= 0) return null
+  const months = Math.ceil(remaining / minimumPayment)
+  const d = new Date()
+  d.setMonth(d.getMonth() + months)
+  return d.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })
+}
+
+async function fetchHistory(debtId: string): Promise<DebtPaymentHistory[]> {
+  const { data } = await supabase
+    .from('debt_payment_history')
+    .select('*')
+    .eq('debt_id', debtId)
+    .order('paid_at', { ascending: false })
+  return (data ?? []).map(r => ({
+    id: r.id,
+    debtId: r.debt_id,
+    amount: r.amount,
+    paidAt: r.paid_at,
+  }))
+}
+
+async function logPayment(debtId: string, amount: number): Promise<void> {
+  await supabase.from('debt_payment_history').insert({
+    debt_id: debtId,
+    amount,
+    paid_at: new Date().toISOString().slice(0, 10),
+  })
+}
+
 // ─── Dettes ───────────────────────────────────────────────────────────────────
 
 function DettesSection() {
@@ -367,9 +413,15 @@ function DettesSection() {
   const [payingId, setPayingId] = useState<string | null>(null)
   const [payAmount, setPayAmount] = useState('')
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  // Feature: history panel per debt
+  const [historyDebtId, setHistoryDebtId] = useState<string | null>(null)
+  const [history, setHistory] = useState<DebtPaymentHistory[]>([])
+  const [historyLoading, setHistoryLoading] = useState(false)
+
   const [form, setForm] = useState({
     type: 'owe' as 'owe' | 'owed',
     person: '', amount: '', minimumPayment: '', interestRate: '', note: '', dueDate: '',
+    recurring: false,
   })
 
   useEffect(() => {
@@ -386,7 +438,7 @@ function DettesSection() {
   const totalOwed = debts.filter(d => d.type === 'owed').reduce((s, d) => s + d.remaining, 0)
 
   function resetForm() {
-    setForm({ type:'owe', person:'', amount:'', minimumPayment:'', interestRate:'', note:'', dueDate:'' })
+    setForm({ type:'owe', person:'', amount:'', minimumPayment:'', interestRate:'', note:'', dueDate:'', recurring: false })
     setEditingId(null)
   }
 
@@ -396,9 +448,22 @@ function DettesSection() {
       minimumPayment: d.minimumPayment ? String(d.minimumPayment) : '',
       interestRate: d.interestRate !== undefined ? String(d.interestRate) : '',
       note: d.note || '', dueDate: d.dueDate || '',
+      recurring: (d as any).recurring ?? false,
     })
     setEditingId(d.id)
     setShowForm(true)
+  }
+
+  async function openHistory(debtId: string) {
+    if (historyDebtId === debtId) {
+      setHistoryDebtId(null)
+      return
+    }
+    setHistoryDebtId(debtId)
+    setHistoryLoading(true)
+    const h = await fetchHistory(debtId)
+    setHistory(h)
+    setHistoryLoading(false)
   }
 
   async function handleAdd() {
@@ -413,44 +478,63 @@ function DettesSection() {
         minimumPayment: Number(form.minimumPayment) || 0,
         interestRate: form.interestRate ? Number(form.interestRate) : undefined,
         note: form.note, dueDate: form.dueDate || undefined,
-      })
-      setDebts(prev => prev.map(d => d.id !== editingId ? d : { ...d, type: form.type, person: form.person,
-        amount: newAmount, remaining: newRemaining, minimumPayment: Number(form.minimumPayment) || 0,
+        ...(form.recurring !== undefined ? { recurring: form.recurring } : {}),
+      } as any)
+      setDebts(prev => prev.map(d => d.id !== editingId ? d : {
+        ...d, type: form.type, person: form.person,
+        amount: newAmount, remaining: newRemaining,
+        minimumPayment: Number(form.minimumPayment) || 0,
         interestRate: form.interestRate ? Number(form.interestRate) : undefined,
-        note: form.note, dueDate: form.dueDate || undefined }))
+        note: form.note, dueDate: form.dueDate || undefined,
+        recurring: form.recurring,
+      } as any))
     } else {
       const newDebt = await addDebt({
         type: form.type, person: form.person, amount: Number(form.amount) || 0,
         remaining: Number(form.amount) || 0, minimumPayment: Number(form.minimumPayment) || 0,
         interestRate: form.interestRate ? Number(form.interestRate) : undefined,
         note: form.note, dueDate: form.dueDate || undefined,
-      })
+        ...(form.recurring !== undefined ? { recurring: form.recurring } : {}),
+      } as any)
       setDebts(prev => [...prev, newDebt])
     }
     resetForm(); setShowForm(false)
   }
 
   async function handlePay(id: string) {
-  const amt = Number(payAmount)
-  if (!amt || amt <= 0) return
-  const debt = debts.find(d => d.id === id)!
+    const amt = Number(payAmount)
+    if (!amt || amt <= 0) return
+    const debt = debts.find(d => d.id === id)!
+    const isRecurring = (debt as any).recurring ?? false
 
-  if (debt.amount === 0) {
-    setConfirmDeleteId(id)
+    // Log to history
+    await logPayment(id, amt)
+
+    if (debt.amount === 0) {
+      // No total defined — ask to delete
+      setConfirmDeleteId(id)
+      setPayingId(null); setPayAmount('')
+      return
+    }
+
+    const newRemaining = Math.max(0, debt.remaining - amt)
+
+    if (newRemaining === 0) {
+      if (isRecurring) {
+        // Reset remaining to amount for recurring debts
+        await updateDebt(id, { remaining: debt.amount })
+        setDebts(prev => prev.map(d => d.id !== id ? d : { ...d, remaining: debt.amount }))
+      } else {
+        // Non-recurring: ask if they want to delete
+        setConfirmDeleteId(id)
+      }
+    } else {
+      await updateDebt(id, { remaining: newRemaining })
+      setDebts(prev => prev.map(d => d.id !== id ? d : { ...d, remaining: newRemaining }))
+    }
+
     setPayingId(null); setPayAmount('')
-    return
   }
-
-  const newRemaining = Math.max(0, debt.remaining - amt)
-  if (newRemaining === 0) {
-    await deleteDebt(id)
-    setDebts(prev => prev.filter(d => d.id !== id))
-  } else {
-    await updateDebt(id, { remaining: newRemaining })
-    setDebts(prev => prev.map(d => d.id !== id ? d : { ...d, remaining: newRemaining }))
-  }
-  setPayingId(null); setPayAmount('')
-}
 
   if (loading) return <div className="card text-center py-8 text-ink-soft">Chargement...</div>
 
@@ -492,33 +576,78 @@ function DettesSection() {
         const monthsLeft = d.minimumPayment > 0 ? Math.ceil(d.remaining / d.minimumPayment) : null
         const isOverdue  = d.dueDate && new Date(d.dueDate) < new Date()
         const isSnowball = plan.snowballTarget?.id === d.id
+        const isRecurring = (d as any).recurring ?? false
+        const endDate    = projectedEndDate(d.remaining, d.minimumPayment)
+
+        // Due date badge
+        let dueBadge: React.ReactNode = null
+        if (d.dueDate) {
+          const days = daysUntil(d.dueDate)
+          if (days < 0) {
+            dueBadge = <span className="text-xs bg-danger text-white px-2 py-0.5 rounded-full font-bold">⚠️ En retard</span>
+          } else if (days === 0) {
+            dueBadge = <span className="text-xs bg-danger-light text-danger px-2 py-0.5 rounded-full font-bold">🔴 Aujourd'hui !</span>
+          } else if (days <= 7) {
+            dueBadge = <span className="text-xs bg-warning-light text-warning px-2 py-0.5 rounded-full font-bold">⏰ Dans {days} jour{days > 1 ? 's' : ''}</span>
+          } else if (days <= 30) {
+            dueBadge = <span className="text-xs bg-amber-50 text-amber-600 px-2 py-0.5 rounded-full font-bold">📅 Dans {days} jours</span>
+          }
+        }
+
+        const showHistory = historyDebtId === d.id
+
         return (
           <div key={d.id} className={`card space-y-3 border-l-4
             ${d.type === 'owe' ? 'border-l-danger' : 'border-l-positive'}
             ${isSnowball ? 'ring-2 ring-accent' : ''}`}>
+
             <div className="flex items-start justify-between">
-              <div>
+              <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                   {isSnowball && <span className="text-xs bg-accent text-white px-2 py-0.5 rounded-full font-bold">🎯 Priorité snowball</span>}
+                  {isRecurring && <span className="text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-bold">🔄 Récurrent</span>}
                   <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${d.type === 'owe' ? 'bg-danger-light text-danger' : 'bg-positive-light text-positive'}`}>
                     {d.type === 'owe' ? 'Je dois à' : 'Me doit'}
                   </span>
                   <span className="font-bold text-sm text-ink">{d.person}</span>
                 </div>
+
                 {d.note && <p className="text-xs text-ink-soft mt-1">{d.note}</p>}
+
                 {d.minimumPayment > 0 && (
                   <p className="text-xs text-ink-soft mt-1">
                     Min. {formatAmount(d.minimumPayment)}/mois
-                    {monthsLeft && <span className="text-warning font-semibold"> · ~{monthsLeft} mois restants</span>}
+                    {monthsLeft && !isRecurring && (
+                      <span className="text-warning font-semibold"> · ~{monthsLeft} mois restants</span>
+                    )}
                   </p>
                 )}
-                {isOverdue && <p className="text-xs text-danger font-bold mt-1">⚠️ Échéance dépassée</p>}
+
+                {/* Feature 3: Projected end date */}
+                {endDate && !isRecurring && (
+                  <p className="text-xs text-ink-soft mt-0.5">
+                    📅 Terminé en <span className="font-semibold text-ink">{endDate}</span>
+                  </p>
+                )}
+
+                {/* Feature 4: Due date badges */}
+                {dueBadge && <div className="mt-1">{dueBadge}</div>}
               </div>
-              <div className="text-right flex-shrink-0 flex flex-col items-end gap-1">
+
+              <div className="text-right flex-shrink-0 flex flex-col items-end gap-1 ml-2">
                 <p className="font-mono font-bold text-ink">{formatAmount(d.remaining)}</p>
-                {paidPct > 0 && <p className="text-xs text-positive font-semibold">{paidPct}% remboursé</p>}
+                {paidPct > 0 && !isRecurring && <p className="text-xs text-positive font-semibold">{paidPct}% remboursé</p>}
                 <div className="flex gap-1">
-                  <button className="w-8 h-8 rounded-xl bg-mist hover:bg-accent-light text-ink-soft hover:text-accent flex items-center justify-center" onClick={() => openEdit(d)}><Pencil size={14}/></button>
+                  {/* Feature 5: History toggle */}
+                  <button
+                    className="w-8 h-8 rounded-xl bg-mist hover:bg-blue-50 text-ink-soft hover:text-blue-600 flex items-center justify-center"
+                    onClick={() => openHistory(d.id)}
+                    title="Historique des remboursements">
+                    <History size={14}/>
+                  </button>
+                  <button className="w-8 h-8 rounded-xl bg-mist hover:bg-accent-light text-ink-soft hover:text-accent flex items-center justify-center" onClick={() => openEdit(d)}>
+                    <Pencil size={14}/>
+                  </button>
                   <button className="w-8 h-8 rounded-xl bg-mist hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center"
                     onClick={async () => { await deleteDebt(d.id); setDebts(prev => prev.filter(x => x.id !== d.id)) }}>
                     <Trash2 size={14}/>
@@ -526,17 +655,38 @@ function DettesSection() {
                 </div>
               </div>
             </div>
-            {paidPct > 0 && (
+
+            {paidPct > 0 && !isRecurring && (
               <div className="w-full h-2 bg-mist-dark rounded-full">
-                <div className="h-full bg-positive rounded-full" style={{ width: `${paidPct}%` }}/>
+                <div className="h-full bg-positive rounded-full transition-all duration-500" style={{ width: `${paidPct}%` }}/>
               </div>
             )}
+
+            {/* Feature 5: History panel */}
+            {showHistory && (
+              <div className="bg-mist rounded-2xl p-3 space-y-2">
+                <p className="text-xs font-bold text-ink-soft uppercase">Historique des remboursements</p>
+                {historyLoading ? (
+                  <p className="text-xs text-ink-soft">Chargement...</p>
+                ) : history.length === 0 ? (
+                  <p className="text-xs text-ink-soft italic">Aucun remboursement enregistré</p>
+                ) : history.map(h => (
+                  <div key={h.id} className="flex items-center justify-between">
+                    <span className="text-xs text-ink-soft">
+                      {new Date(h.paidAt).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })}
+                    </span>
+                    <span className="text-xs font-mono font-bold text-positive">−{formatAmount(h.amount)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
             {payingId === d.id ? (
               <div className="flex gap-2">
                 <input className="input flex-1" type="number" placeholder="Montant remboursé"
                   value={payAmount} onChange={e => setPayAmount(e.target.value)} autoFocus/>
                 <button className="btn-primary px-4" onClick={() => handlePay(d.id)}>OK</button>
-                <button className="btn-ghost px-3" onClick={() => setPayingId(null)}>✕</button>
+                <button className="btn-ghost px-3" onClick={() => { setPayingId(null); setPayAmount('') }}>✕</button>
               </div>
             ) : (
               <button className="w-full py-3 text-sm font-bold text-danger bg-danger-light rounded-2xl active:scale-95 transition-all"
@@ -548,31 +698,31 @@ function DettesSection() {
         )
       })}
 
+      {/* Feature 2: Confirm delete after full repayment (non-recurring) */}
       {confirmDeleteId && (
-  <div className="bottom-sheet bg-black/40">
-    <div className="bottom-sheet-content">
-      <div className="flex items-center justify-between mb-2">
-        <h2 className="text-lg font-bold text-ink">Aucun montant total</h2>
-        <button className="btn-icon bg-mist" onClick={() => setConfirmDeleteId(null)}><X size={20}/></button>
-      </div>
-      <p className="text-sm text-ink-soft">
-        Cette dette n'a pas de montant total défini, son solde est déjà à 0.
-        Veux-tu supprimer cette dette ?
-      </p>
-      <div className="flex gap-2">
-        <button className="btn-ghost flex-1" onClick={() => setConfirmDeleteId(null)}>Annuler</button>
-        <button className="btn-primary flex-1" style={{ backgroundColor: '#DC2626' }}
-          onClick={async () => {
-            await deleteDebt(confirmDeleteId)
-            setDebts(prev => prev.filter(d => d.id !== confirmDeleteId))
-            setConfirmDeleteId(null)
-          }}>
-          Oui, supprimer
-        </button>
-      </div>
-    </div>
-  </div>
-)}
+        <div className="bottom-sheet bg-black/40">
+          <div className="bottom-sheet-content">
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="text-lg font-bold text-ink">🎉 Dette soldée !</h2>
+              <button className="btn-icon bg-mist" onClick={() => setConfirmDeleteId(null)}><X size={20}/></button>
+            </div>
+            <p className="text-sm text-ink-soft">
+              Tu as remboursé cette dette entièrement. Veux-tu la supprimer de ta liste ?
+            </p>
+            <div className="flex gap-2 mt-3">
+              <button className="btn-ghost flex-1" onClick={() => setConfirmDeleteId(null)}>Garder</button>
+              <button className="btn-primary flex-1" style={{ backgroundColor: '#DC2626' }}
+                onClick={async () => {
+                  await deleteDebt(confirmDeleteId)
+                  setDebts(prev => prev.filter(d => d.id !== confirmDeleteId))
+                  setConfirmDeleteId(null)
+                }}>
+                Oui, supprimer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showForm && (
         <div className="bottom-sheet bg-black/40">
@@ -616,6 +766,20 @@ function DettesSection() {
               <label className="label">Échéance finale (optionnel)</label>
               <input className="input" type="date" value={form.dueDate} onChange={e => setForm(f => ({...f, dueDate: e.target.value}))}/>
             </div>
+
+            {/* Feature 1: Recurring toggle */}
+            <div className="flex items-center justify-between p-3 bg-blue-50 rounded-2xl border border-blue-200">
+              <div>
+                <p className="text-sm font-bold text-blue-800">🔄 Paiement récurrent</p>
+                <p className="text-xs text-blue-600 mt-0.5">Le solde se remet à zéro chaque mois après paiement</p>
+              </div>
+              <button
+                onClick={() => setForm(f => ({...f, recurring: !f.recurring}))}
+                className={`relative w-12 h-6 rounded-full transition-colors flex-shrink-0 ${form.recurring ? 'bg-blue-600' : 'bg-mist-dark'}`}>
+                <span className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-all ${form.recurring ? 'left-7' : 'left-1'}`}/>
+              </button>
+            </div>
+
             <button className="btn-primary w-full py-4" onClick={handleAdd} style={{ backgroundColor: '#DC2626' }}>
               {editingId ? 'Enregistrer les modifications' : 'Enregistrer'}
             </button>
