@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import Onboarding from '../Onboarding'
 import BottomNav, { Tab } from '../BottomNav'
 import HomeTab from '../HomeTab'
@@ -14,20 +14,25 @@ export default function Page() {
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [loading,      setLoading]      = useState(true)
 
-  useEffect(() => {
-    const p = getUserProfile()
-    setProfile(p)
-    setTransactions(getTransactions())
-    setLoading(false)
+  const refresh = useCallback(async () => {
+    const txs = await getTransactions()
+    setTransactions(txs)
   }, [])
 
-  const refresh = () => setTransactions(getTransactions())
+  useEffect(() => {
+    async function init() {
+      const [p, txs] = await Promise.all([getUserProfile(), getTransactions()])
+      setProfile(p)
+      setTransactions(txs)
+      setLoading(false)
+    }
+    init()
+  }, [])
 
   function handleOnboardingComplete(p: UserProfile) {
     setProfile(p)
   }
 
-  // Splash pendant chargement
   if (loading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-accent to-blue-800
@@ -40,7 +45,6 @@ export default function Page() {
     )
   }
 
-  // Onboarding si pas de profil
   if (!profile?.completed) {
     return <Onboarding onComplete={handleOnboardingComplete} />
   }
@@ -48,8 +52,6 @@ export default function Page() {
   return (
     <div className="min-h-screen bg-mist">
       <BottomNav active={tab} onChange={setTab} />
-
-      {/* Header mobile */}
       <header className="md:hidden sticky top-0 z-40 bg-white border-b border-mist-dark
                          px-4 py-3 flex items-center justify-between">
         <span className="text-lg font-bold text-ink tracking-tight">
@@ -59,7 +61,6 @@ export default function Page() {
           👋 {profile.firstName}
         </span>
       </header>
-
       <main className="md:ml-60 pb-28 md:pb-8 px-4 py-4 md:px-8 md:py-8 max-w-2xl mx-auto md:mx-0">
         {tab === 'home'    && <HomeTab     transactions={transactions} onUpdate={refresh} profile={profile} />}
         {tab === 'money'   && <MoneyTab    transactions={transactions} onUpdate={refresh} />}
