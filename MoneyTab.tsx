@@ -24,6 +24,7 @@ interface DebtPaymentHistory {
   amount: number
   paidAt: string
   note?: string
+  category?: string
 }
 
 interface Creditor { id: string; name: string }
@@ -31,16 +32,22 @@ interface Creditor { id: string; name: string }
 const COLORS = ['#F59E0B','#3B82F6','#8B5CF6','#EF4444','#10B981','#F97316']
 const EMOJIS = ['🏖️','🚗','🏠','💻','📱','✈️','🎓','💍','💰','🎮','👶']
 
-// Mapping catégorie récurrente → catégorie budget (casse identique à EXPENSE_CATEGORIES)
+// Catégories communes à tout l'app
+const ALL_CATEGORIES = [
+  'Logement', 'Alimentation', 'Transport', 'Santé', 'Loisirs',
+  'Vêtements', 'Éducation', 'Factures', 'Restaurants', 'Épargne', 'Autre'
+]
+
+// Mapping catégorie récurrente → catégorie budget
 const RECURRING_TO_BUDGET: Record<string, string> = {
   logement:     'Logement',
   transport:    'Transport',
   alimentation: 'Alimentation',
   factures:     'Factures',
-  assurance:    'Factures',   // regroupé dans Factures
+  assurance:    'Factures',
   école:        'Éducation',
   autre:        'Autre',
-  dette:        '',           // dettes pas dans budget (cf. décision)
+  dette:        '',
 }
 
 const SUBTABS = [
@@ -106,9 +113,7 @@ function TransactionsSection({ transactions, onUpdate }: Props) {
   const categories = form.type === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES
 
   const monthOptions = Array.from({ length: 12 }, (_, i) => {
-    const d = new Date()
-    d.setDate(1)
-    d.setMonth(d.getMonth() - i)
+    const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - i)
     const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
     const label = d.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })
     return { ym, label }
@@ -126,7 +131,6 @@ function TransactionsSection({ transactions, onUpdate }: Props) {
   const monthTxs = transactions.filter(t => t.date.startsWith(selectedMonth))
   const income   = monthTxs.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0)
   const expenses = monthTxs.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0)
-
   const filteredTotal    = filtered.reduce((s, t) => t.type === 'income' ? s + t.amount : s - t.amount, 0)
   const filteredIncome   = filtered.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0)
   const filteredExpenses = filtered.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0)
@@ -136,34 +140,22 @@ function TransactionsSection({ transactions, onUpdate }: Props) {
     setForm({ type: 'expense', amount: '', category: EXPENSE_CATEGORIES[0], note: '', date: new Date().toISOString().slice(0, 10) })
     setShowForm(true)
   }
-
   function openEdit(tx: Transaction) {
     setEditingTx(tx)
     setForm({ type: tx.type, amount: String(tx.amount), category: tx.category, note: tx.note, date: tx.date })
     setShowForm(true)
   }
-
   async function handleSubmit() {
     if (!form.amount || Number(form.amount) <= 0) return
     setLoading(true)
     if (editingTx) {
-      await supabase.from('transactions').update({
-        type: form.type, amount: Number(form.amount),
-        category: form.category, note: form.note, date: form.date,
-      }).eq('id', editingTx.id)
+      await supabase.from('transactions').update({ type: form.type, amount: Number(form.amount), category: form.category, note: form.note, date: form.date }).eq('id', editingTx.id)
     } else {
       await addTransaction({ ...form, amount: Number(form.amount) })
     }
-    setShowForm(false)
-    setEditingTx(null)
-    onUpdate()
-    setLoading(false)
+    setShowForm(false); setEditingTx(null); onUpdate(); setLoading(false)
   }
-
-  async function handleDelete(id: string) {
-    await deleteTransaction(id)
-    onUpdate()
-  }
+  async function handleDelete(id: string) { await deleteTransaction(id); onUpdate() }
 
   return (
     <div className="space-y-3">
@@ -176,9 +168,7 @@ function TransactionsSection({ transactions, onUpdate }: Props) {
       </div>
 
       <select className="input" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)}>
-        {monthOptions.map(m => (
-          <option key={m.ym} value={m.ym}>{m.label}</option>
-        ))}
+        {monthOptions.map(m => <option key={m.ym} value={m.ym}>{m.label}</option>)}
       </select>
 
       <div className="grid grid-cols-2 gap-3">
@@ -193,78 +183,46 @@ function TransactionsSection({ transactions, onUpdate }: Props) {
       </div>
 
       <div className="flex gap-2">
-        {([
-          { id: 'all',     label: 'Tout' },
-          { id: 'income',  label: '💰 Revenus' },
-          { id: 'expense', label: '💸 Dépenses' },
-        ] as const).map(f => (
+        {([{ id: 'all', label: 'Tout' }, { id: 'income', label: '💰 Revenus' }, { id: 'expense', label: '💸 Dépenses' }] as const).map(f => (
           <button key={f.id} onClick={() => setFilter(f.id)}
-            className={`flex-1 py-2.5 rounded-2xl text-sm font-semibold transition-colors
-              ${filter === f.id ? 'bg-ink text-white' : 'bg-white text-ink-soft border border-mist-dark'}`}>
+            className={`flex-1 py-2.5 rounded-2xl text-sm font-semibold transition-colors ${filter === f.id ? 'bg-ink text-white' : 'bg-white text-ink-soft border border-mist-dark'}`}>
             {f.label}
           </button>
         ))}
       </div>
 
       <div className="relative">
-        <input
-          className="input pl-9"
-          placeholder="Rechercher par note ou catégorie..."
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-        />
+        <input className="input pl-9" placeholder="Rechercher par note ou catégorie..." value={search} onChange={e => setSearch(e.target.value)}/>
         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-soft text-sm">🔍</span>
-        {search && (
-          <button onClick={() => setSearch('')}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-soft hover:text-ink text-xs font-bold">
-            ✕
-          </button>
-        )}
+        {search && <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-soft hover:text-ink text-xs font-bold">✕</button>}
       </div>
 
-      <button onClick={openAdd} className="btn-primary w-full gap-2">
-        <Plus size={18}/> Ajouter une transaction
-      </button>
+      <button onClick={openAdd} className="btn-primary w-full gap-2"><Plus size={18}/> Ajouter une transaction</button>
 
       <div className="space-y-2">
         {filtered.length === 0 ? (
           <div className="card text-center py-10">
             <p className="text-3xl mb-2">💸</p>
-            <p className="font-semibold text-ink">
-              {search ? 'Aucun résultat' : 'Aucune transaction ce mois'}
-            </p>
-            <p className="text-sm text-ink-soft mt-1">
-              {search ? `Rien pour "${search}"` : 'Appuie sur "Ajouter" pour commencer'}
-            </p>
+            <p className="font-semibold text-ink">{search ? 'Aucun résultat' : 'Aucune transaction ce mois'}</p>
+            <p className="text-sm text-ink-soft mt-1">{search ? `Rien pour "${search}"` : 'Appuie sur "Ajouter" pour commencer'}</p>
           </div>
         ) : filtered.map(tx => (
           <div key={tx.id} className="card flex items-center justify-between gap-3">
             <div className="flex items-center gap-3 min-w-0">
-              <div className={`w-10 h-10 rounded-2xl flex items-center justify-center flex-shrink-0
-                ${tx.type === 'income' ? 'bg-positive-light' : 'bg-danger-light'}`}>
+              <div className={`w-10 h-10 rounded-2xl flex items-center justify-center flex-shrink-0 ${tx.type === 'income' ? 'bg-positive-light' : 'bg-danger-light'}`}>
                 <span className="text-lg">{tx.type === 'income' ? '💰' : '💸'}</span>
               </div>
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-ink truncate">{tx.note || tx.category}</p>
-                <p className="text-xs text-ink-soft">
-                  {tx.category} · {new Date(tx.date).toLocaleDateString('fr-FR')}
-                </p>
+                <p className="text-xs text-ink-soft">{tx.category} · {new Date(tx.date).toLocaleDateString('fr-FR')}</p>
               </div>
             </div>
             <div className="flex items-center gap-1 flex-shrink-0">
               <span className={`font-mono text-sm font-bold ${tx.type === 'income' ? 'text-positive' : 'text-danger'}`}>
                 {tx.type === 'income' ? '+' : '−'}{formatAmount(tx.amount)}
               </span>
-              <button
-                className="w-8 h-8 rounded-xl bg-mist hover:bg-accent-light text-ink-soft hover:text-accent flex items-center justify-center active:scale-95"
-                onClick={() => openEdit(tx)}>
-                <Pencil size={13}/>
-              </button>
-              <button
-                className="w-8 h-8 rounded-xl bg-mist hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center active:scale-95"
-                onClick={() => handleDelete(tx.id)}>
-                <Trash2 size={13}/>
-              </button>
+              <button className="w-8 h-8 rounded-xl bg-mist hover:bg-accent-light text-ink-soft hover:text-accent flex items-center justify-center active:scale-95" onClick={() => openEdit(tx)}><Pencil size={13}/></button>
+              <button className="w-8 h-8 rounded-xl bg-mist hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center active:scale-95" onClick={() => handleDelete(tx.id)}><Trash2 size={13}/></button>
             </div>
           </div>
         ))}
@@ -272,20 +230,10 @@ function TransactionsSection({ transactions, onUpdate }: Props) {
 
       {filtered.length > 0 && (
         <div className="card bg-mist flex items-center justify-between py-3 px-4">
-          <span className="text-xs text-ink-soft font-semibold">
-            {filtered.length} transaction{filtered.length > 1 ? 's' : ''}
-          </span>
-          {filter === 'all' && (
-            <span className={`font-mono text-sm font-bold ${filteredTotal >= 0 ? 'text-positive' : 'text-danger'}`}>
-              {filteredTotal >= 0 ? '+' : ''}{formatAmount(Math.abs(filteredTotal))}
-            </span>
-          )}
-          {filter === 'income' && (
-            <span className="font-mono text-sm font-bold text-positive">+{formatAmount(filteredIncome)}</span>
-          )}
-          {filter === 'expense' && (
-            <span className="font-mono text-sm font-bold text-danger">−{formatAmount(filteredExpenses)}</span>
-          )}
+          <span className="text-xs text-ink-soft font-semibold">{filtered.length} transaction{filtered.length > 1 ? 's' : ''}</span>
+          {filter === 'all' && <span className={`font-mono text-sm font-bold ${filteredTotal >= 0 ? 'text-positive' : 'text-danger'}`}>{filteredTotal >= 0 ? '+' : ''}{formatAmount(Math.abs(filteredTotal))}</span>}
+          {filter === 'income' && <span className="font-mono text-sm font-bold text-positive">+{formatAmount(filteredIncome)}</span>}
+          {filter === 'expense' && <span className="font-mono text-sm font-bold text-danger">−{formatAmount(filteredExpenses)}</span>}
         </div>
       )}
 
@@ -293,47 +241,17 @@ function TransactionsSection({ transactions, onUpdate }: Props) {
         <div className="bottom-sheet bg-black/40">
           <div className="bottom-sheet-content">
             <div className="flex items-center justify-between mb-2">
-              <h2 className="text-lg font-bold text-ink">
-                {editingTx ? 'Modifier la transaction' : 'Nouvelle transaction'}
-              </h2>
-              <button className="btn-icon bg-mist" onClick={() => { setShowForm(false); setEditingTx(null) }}>
-                <X size={20}/>
-              </button>
+              <h2 className="text-lg font-bold text-ink">{editingTx ? 'Modifier la transaction' : 'Nouvelle transaction'}</h2>
+              <button className="btn-icon bg-mist" onClick={() => { setShowForm(false); setEditingTx(null) }}><X size={20}/></button>
             </div>
             <div className="flex rounded-2xl overflow-hidden border-2 border-mist-dark">
-              <button
-                className={`flex-1 py-3 text-sm font-bold ${form.type === 'expense' ? 'bg-danger text-white' : 'bg-white text-ink-soft'}`}
-                onClick={() => setForm(f => ({...f, type:'expense', category: EXPENSE_CATEGORIES[0]}))}>
-                💸 Dépense
-              </button>
-              <button
-                className={`flex-1 py-3 text-sm font-bold ${form.type === 'income' ? 'bg-positive text-white' : 'bg-white text-ink-soft'}`}
-                onClick={() => setForm(f => ({...f, type:'income', category: INCOME_CATEGORIES[0]}))}>
-                💰 Revenu
-              </button>
+              <button className={`flex-1 py-3 text-sm font-bold ${form.type === 'expense' ? 'bg-danger text-white' : 'bg-white text-ink-soft'}`} onClick={() => setForm(f => ({...f, type:'expense', category: EXPENSE_CATEGORIES[0]}))}>💸 Dépense</button>
+              <button className={`flex-1 py-3 text-sm font-bold ${form.type === 'income' ? 'bg-positive text-white' : 'bg-white text-ink-soft'}`} onClick={() => setForm(f => ({...f, type:'income', category: INCOME_CATEGORIES[0]}))}>💰 Revenu</button>
             </div>
-            <div>
-              <label className="label">Montant (Rs)</label>
-              <input className="input text-xl font-bold" type="number" placeholder="0"
-                value={form.amount} onChange={e => setForm(f => ({...f, amount: e.target.value}))}/>
-            </div>
-            <div>
-              <label className="label">Catégorie</label>
-              <select className="input" value={form.category}
-                onChange={e => setForm(f => ({...f, category: e.target.value}))}>
-                {categories.map(c => <option key={c}>{c}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="label">Note (optionnel)</label>
-              <input className="input" placeholder="Ex: Courses Jumbo, Salaire avril..."
-                value={form.note} onChange={e => setForm(f => ({...f, note: e.target.value}))}/>
-            </div>
-            <div>
-              <label className="label">Date</label>
-              <input className="input" type="date" value={form.date}
-                onChange={e => setForm(f => ({...f, date: e.target.value}))}/>
-            </div>
+            <div><label className="label">Montant (Rs)</label><input className="input text-xl font-bold" type="number" placeholder="0" value={form.amount} onChange={e => setForm(f => ({...f, amount: e.target.value}))}/></div>
+            <div><label className="label">Catégorie</label><select className="input" value={form.category} onChange={e => setForm(f => ({...f, category: e.target.value}))}>{categories.map(c => <option key={c}>{c}</option>)}</select></div>
+            <div><label className="label">Note (optionnel)</label><input className="input" placeholder="Ex: Courses Jumbo, Salaire avril..." value={form.note} onChange={e => setForm(f => ({...f, note: e.target.value}))}/></div>
+            <div><label className="label">Date</label><input className="input" type="date" value={form.date} onChange={e => setForm(f => ({...f, date: e.target.value}))}/></div>
             <button className="btn-primary w-full py-4 text-base" onClick={handleSubmit} disabled={loading}>
               {loading ? 'Enregistrement...' : editingTx ? 'Enregistrer les modifications' : 'Enregistrer'}
             </button>
@@ -352,68 +270,74 @@ async function updateBudget(id: string, fields: { name?: string; limit?: number;
 function BudgetSection({ transactions }: { transactions: Transaction[] }) {
   const [budgets, setBudgets] = useState<BudgetCategory[]>([])
   const [recurringPayments, setRecurringPayments] = useState<RecurringPayment[]>([])
+  const [debtPayments, setDebtPayments] = useState<{ category: string; amount: number }[]>([])
+  const [savingsDeposits, setSavingsDeposits] = useState<{ category: string; amount: number }[]>([])
   const [showForm, setShowForm] = useState(false)
   const [editingBudget, setEditingBudget] = useState<BudgetCategory | null>(null)
   const [loading, setLoading] = useState(true)
   const [form, setForm] = useState({ name: '', limit: '', color: COLORS[0] })
 
-  useEffect(() => {
-    Promise.all([getBudgets(), getRecurringPayments()])
-      .then(([b, r]) => { setBudgets(b); setRecurringPayments(r) })
-      .finally(() => setLoading(false))
-  }, [])
-
   const ym = currentYearMonth()
 
-  // Spending depuis les transactions (dépenses ponctuelles)
+  useEffect(() => {
+    async function load() {
+      const [b, r] = await Promise.all([getBudgets(), getRecurringPayments()])
+      setBudgets(b); setRecurringPayments(r)
+
+      // Remboursements de dettes ce mois avec leur catégorie
+      const { data: dh } = await supabase
+        .from('debt_payment_history')
+        .select('amount, category')
+        .gte('paid_at', `${ym}-01`)
+        .lte('paid_at', `${ym}-31`)
+      setDebtPayments((dh ?? []).map(r => ({ category: r.category ?? 'Autre', amount: Number(r.amount) })))
+
+      // Dépôts épargne ce mois (on n'a pas de table de dépôts séparée, skip pour l'instant)
+      // savings_goals ne log pas les dépôts par date, donc on ne peut pas filtrer par mois ici.
+      // À implémenter si une table savings_deposits est créée.
+    }
+    load().finally(() => setLoading(false))
+  }, [ym])
+
+  // Spending de base : transactions ponctuelles
   const spending: Record<string, number> = {}
-  transactions
-    .filter(t => t.type === 'expense' && t.date.startsWith(ym))
+  transactions.filter(t => t.type === 'expense' && t.date.startsWith(ym))
     .forEach(t => { spending[t.category] = (spending[t.category] || 0) + t.amount })
 
-  // Ajouter les charges récurrentes PAYÉES ce mois
+  // Ajouter charges récurrentes PAYÉES ce mois
   recurringPayments.forEach(r => {
     const pay = getPaymentForMonth(r, ym)
     if (!pay.paid) return
-    const budgetCat = RECURRING_TO_BUDGET[r.category]
-    if (!budgetCat) return
-    spending[budgetCat] = (spending[budgetCat] || 0) + pay.amount
+    const cat = RECURRING_TO_BUDGET[r.category]
+    if (!cat) return
+    spending[cat] = (spending[cat] || 0) + pay.amount
+  })
+
+  // Ajouter remboursements de dettes ce mois par catégorie
+  debtPayments.forEach(dp => {
+    if (!dp.category) return
+    spending[dp.category] = (spending[dp.category] || 0) + dp.amount
   })
 
   const overBudget = budgets.filter(b => (spending[b.name] || 0) > b.limit)
   const tip = overBudget.length > 0
     ? `⚠️ Tu dépasses le plafond en : ${overBudget.map(b => b.name).join(', ')}. Réduis ces dépenses !`
-    : budgets.length > 0
-    ? `✅ Tous tes budgets sont respectés ce mois-ci. Continue !`
+    : budgets.length > 0 ? `✅ Tous tes budgets sont respectés ce mois-ci. Continue !`
     : `Crée un plafond par catégorie pour mieux contrôler où va ton argent.`
 
-  function openAdd() {
-    setEditingBudget(null)
-    setForm({ name: '', limit: '', color: COLORS[0] })
-    setShowForm(true)
-  }
-
-  function openEdit(b: BudgetCategory) {
-    setEditingBudget(b)
-    setForm({ name: b.name, limit: String(b.limit), color: b.color })
-    setShowForm(true)
-  }
+  function openAdd() { setEditingBudget(null); setForm({ name: '', limit: '', color: COLORS[0] }); setShowForm(true) }
+  function openEdit(b: BudgetCategory) { setEditingBudget(b); setForm({ name: b.name, limit: String(b.limit), color: b.color }); setShowForm(true) }
 
   async function handleSave() {
     if (!form.name || !form.limit) return
     if (editingBudget) {
       await updateBudget(editingBudget.id, { name: form.name, limit: Number(form.limit), color: form.color })
-      setBudgets(prev => prev.map(b => b.id === editingBudget.id
-        ? { ...b, name: form.name, limit: Number(form.limit), color: form.color }
-        : b
-      ))
+      setBudgets(prev => prev.map(b => b.id === editingBudget.id ? { ...b, name: form.name, limit: Number(form.limit), color: form.color } : b))
     } else {
       const newBudget = await addBudget({ name: form.name, limit: Number(form.limit), color: form.color })
       setBudgets(prev => [...prev, newBudget])
     }
-    setForm({ name: '', limit: '', color: COLORS[0] })
-    setShowForm(false)
-    setEditingBudget(null)
+    setForm({ name: '', limit: '', color: COLORS[0] }); setShowForm(false); setEditingBudget(null)
   }
 
   if (loading) return <div className="card text-center py-8 text-ink-soft">Chargement...</div>
@@ -421,36 +345,30 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
   return (
     <div className="space-y-3">
       <CoachTip message={tip} />
-
       <div className="flex items-start gap-3 p-3 bg-purple-50 border border-purple-200 rounded-2xl">
         <span className="text-lg">💡</span>
         <p className="text-xs text-purple-700 leading-relaxed">
-          <strong>Comment ça marche :</strong> Tu fixes un plafond pour une catégorie. Chaque dépense
-          enregistrée <strong>et chaque charge récurrente payée</strong> dans cette catégorie avancent la barre automatiquement.
+          <strong>Comment ça marche :</strong> Les dépenses ponctuelles, les charges récurrentes payées <strong>et les remboursements de dettes</strong> s'ajoutent tous automatiquement à leur catégorie.
         </p>
       </div>
 
-      <button onClick={openAdd} className="btn-primary w-full gap-2" style={{ backgroundColor: '#7C3AED' }}>
-        <Plus size={18}/> Nouveau plafond
-      </button>
+      <button onClick={openAdd} className="btn-primary w-full gap-2" style={{ backgroundColor: '#7C3AED' }}><Plus size={18}/> Nouveau plafond</button>
 
       {budgets.length === 0 ? (
-        <div className="card text-center py-10">
-          <p className="text-3xl mb-2">🎯</p>
-          <p className="font-semibold text-ink">Aucun budget défini</p>
-          <p className="text-sm text-ink-soft mt-1">Commence par fixer un plafond pour l'alimentation ou le transport</p>
-        </div>
+        <div className="card text-center py-10"><p className="text-3xl mb-2">🎯</p><p className="font-semibold text-ink">Aucun budget défini</p><p className="text-sm text-ink-soft mt-1">Commence par fixer un plafond pour l'alimentation ou le transport</p></div>
       ) : budgets.map(b => {
         const spent = spending[b.name] || 0
         const pct   = Math.min(100, (spent / b.limit) * 100)
         const over  = spent > b.limit
         const near  = pct >= 80 && !over
 
-        // Sources qui contribuent à ce budget ce mois
+        // Détail des sources qui contribuent à ce budget ce mois
         const recurringContrib = recurringPayments.filter(r => {
           const pay = getPaymentForMonth(r, ym)
           return pay.paid && RECURRING_TO_BUDGET[r.category] === b.name
         })
+        const debtContrib = debtPayments.filter(dp => dp.category === b.name)
+        const debtContribTotal = debtContrib.reduce((s, dp) => s + dp.amount, 0)
 
         return (
           <div key={b.id} className="card space-y-3">
@@ -462,31 +380,21 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
                 {near && <span className="text-xs bg-warning-light text-warning px-2 py-0.5 rounded-full font-bold">Attention</span>}
               </div>
               <div className="flex gap-1">
-                <button
-                  className="w-8 h-8 rounded-xl bg-mist hover:bg-accent-light text-ink-soft hover:text-accent flex items-center justify-center"
-                  onClick={() => openEdit(b)}>
-                  <Pencil size={14}/>
-                </button>
-                <button
-                  className="w-8 h-8 rounded-xl bg-mist hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center"
-                  onClick={() => { deleteBudget(b.id); setBudgets(prev => prev.filter(x => x.id !== b.id)) }}>
-                  <Trash2 size={14}/>
-                </button>
+                <button className="w-8 h-8 rounded-xl bg-mist hover:bg-accent-light text-ink-soft hover:text-accent flex items-center justify-center" onClick={() => openEdit(b)}><Pencil size={14}/></button>
+                <button className="w-8 h-8 rounded-xl bg-mist hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center" onClick={() => { deleteBudget(b.id); setBudgets(prev => prev.filter(x => x.id !== b.id)) }}><Trash2 size={14}/></button>
               </div>
             </div>
 
             <div className="w-full h-2.5 bg-mist-dark rounded-full overflow-hidden">
-              <div className="h-full rounded-full transition-all duration-500"
-                style={{ width: `${pct}%`, backgroundColor: over ? '#DC2626' : near ? '#D97706' : b.color }}/>
+              <div className="h-full rounded-full transition-all duration-500" style={{ width: `${pct}%`, backgroundColor: over ? '#DC2626' : near ? '#D97706' : b.color }}/>
             </div>
-
             <div className="flex justify-between text-xs">
               <span className={`font-mono font-bold ${over ? 'text-danger' : 'text-ink'}`}>{formatAmount(spent)} dépensés</span>
               <span className="font-mono text-ink-soft">plafond : {formatAmount(b.limit)}</span>
             </div>
 
-            {/* Détail des récurrents qui contribuent */}
-            {recurringContrib.length > 0 && (
+            {/* Détail des contributions */}
+            {(recurringContrib.length > 0 || debtContribTotal > 0) && (
               <div className="pt-1 border-t border-mist-dark space-y-1">
                 {recurringContrib.map(r => {
                   const pay = getPaymentForMonth(r, ym)
@@ -497,57 +405,39 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
                     </div>
                   )
                 })}
+                {debtContribTotal > 0 && (
+                  <div className="flex items-center justify-between text-xs text-ink-soft">
+                    <span>💳 Remboursements dettes</span>
+                    <span className="font-mono">{formatAmount(debtContribTotal)}</span>
+                  </div>
+                )}
               </div>
             )}
           </div>
         )
       })}
 
-      {/* Modal ajout / édition budget */}
       {showForm && (
         <div className="bottom-sheet bg-black/40">
           <div className="bottom-sheet-content">
             <div className="flex items-center justify-between mb-2">
-              <h2 className="text-lg font-bold text-ink">
-                {editingBudget ? 'Modifier le plafond' : 'Nouveau plafond'}
-              </h2>
-              <button className="btn-icon bg-mist" onClick={() => { setShowForm(false); setEditingBudget(null) }}>
-                <X size={20}/>
-              </button>
+              <h2 className="text-lg font-bold text-ink">{editingBudget ? 'Modifier le plafond' : 'Nouveau plafond'}</h2>
+              <button className="btn-icon bg-mist" onClick={() => { setShowForm(false); setEditingBudget(null) }}><X size={20}/></button>
             </div>
-
             <div>
               <label className="label">Catégorie de dépense</label>
-              {editingBudget ? (
-                /* En édition : afficher le nom en lecture seule ou select */
-                <select className="input" value={form.name} onChange={e => setForm(f => ({...f, name: e.target.value}))}>
-                  {EXPENSE_CATEGORIES.map(c => <option key={c}>{c}</option>)}
-                </select>
-              ) : (
-                <select className="input" value={form.name} onChange={e => setForm(f => ({...f, name: e.target.value}))}>
-                  <option value="">— Choisir —</option>
-                  {EXPENSE_CATEGORIES.map(c => <option key={c}>{c}</option>)}
-                </select>
-              )}
+              <select className="input" value={form.name} onChange={e => setForm(f => ({...f, name: e.target.value}))}>
+                {!editingBudget && <option value="">— Choisir —</option>}
+                {ALL_CATEGORIES.map(c => <option key={c}>{c}</option>)}
+              </select>
             </div>
-
-            <div>
-              <label className="label">Plafond mensuel (Rs)</label>
-              <input className="input" type="number" placeholder="Ex: 15000"
-                value={form.limit} onChange={e => setForm(f => ({...f, limit: e.target.value}))}/>
-            </div>
-
+            <div><label className="label">Plafond mensuel (Rs)</label><input className="input" type="number" placeholder="Ex: 15000" value={form.limit} onChange={e => setForm(f => ({...f, limit: e.target.value}))}/></div>
             <div>
               <label className="label">Couleur</label>
               <div className="flex gap-3 flex-wrap">
-                {COLORS.map(c => (
-                  <button key={c} style={{ backgroundColor: c }}
-                    className={`w-10 h-10 rounded-2xl border-2 transition-transform ${form.color === c ? 'border-ink scale-110' : 'border-transparent'}`}
-                    onClick={() => setForm(f => ({...f, color: c}))}/>
-                ))}
+                {COLORS.map(c => <button key={c} style={{ backgroundColor: c }} className={`w-10 h-10 rounded-2xl border-2 transition-transform ${form.color === c ? 'border-ink scale-110' : 'border-transparent'}`} onClick={() => setForm(f => ({...f, color: c}))}/>)}
               </div>
             </div>
-
             <button className="btn-primary w-full py-4" onClick={handleSave} style={{ backgroundColor: '#7C3AED' }}>
               {editingBudget ? 'Enregistrer les modifications' : 'Créer le plafond'}
             </button>
@@ -572,10 +462,10 @@ function projectedEndDate(remaining: number, minimumPayment: number): string | n
 }
 async function fetchHistory(debtId: string): Promise<DebtPaymentHistory[]> {
   const { data } = await supabase.from('debt_payment_history').select('*').eq('debt_id', debtId).order('paid_at', { ascending: false })
-  return (data ?? []).map(r => ({ id: r.id, debtId: r.debt_id, amount: Number(r.amount), paidAt: r.paid_at, note: r.note ?? undefined }))
+  return (data ?? []).map(r => ({ id: r.id, debtId: r.debt_id, amount: Number(r.amount), paidAt: r.paid_at, note: r.note ?? undefined, category: r.category ?? undefined }))
 }
-async function logPayment(debtId: string, amount: number, date: string, note?: string): Promise<void> {
-  await supabase.from('debt_payment_history').insert({ debt_id: debtId, amount, paid_at: date, note: note || null })
+async function logPayment(debtId: string, amount: number, date: string, category: string, note?: string): Promise<void> {
+  await supabase.from('debt_payment_history').insert({ debt_id: debtId, amount, paid_at: date, category, note: note || null })
 }
 async function updatePayment(id: string, amount: number, date: string, note?: string): Promise<void> {
   await supabase.from('debt_payment_history').update({ amount, paid_at: date, note: note || null }).eq('id', id)
@@ -617,10 +507,8 @@ function CreditorPicker({ value, onChange }: { value: string; onChange: (v: stri
     setAdding(true)
     const c = await saveCreditor(newName.trim())
     setCreditors(prev => [...prev, c].sort((a, b) => a.name.localeCompare(b.name)))
-    onChange(c.name)
-    setNewName(''); setOpen(false); setAdding(false)
+    onChange(c.name); setNewName(''); setOpen(false); setAdding(false)
   }
-
   async function handleDelete(c: Creditor, e: React.MouseEvent) {
     e.stopPropagation()
     await deleteCreditor(c.id)
@@ -630,23 +518,16 @@ function CreditorPicker({ value, onChange }: { value: string; onChange: (v: stri
 
   return (
     <div ref={ref} className="relative">
-      <button type="button" onClick={() => setOpen(o => !o)}
-        className="input flex items-center justify-between text-left">
+      <button type="button" onClick={() => setOpen(o => !o)} className="input flex items-center justify-between text-left">
         <span className={value ? 'text-ink' : 'text-gray-400'}>{value || 'Choisir ou saisir...'}</span>
         <ChevronDown size={16} className={`text-ink-soft transition-transform ${open ? 'rotate-180' : ''}`}/>
       </button>
-
       {open && (
         <div className="absolute z-50 top-full mt-1 left-0 right-0 bg-white border border-mist-dark rounded-2xl shadow-lg overflow-hidden">
           <div className="p-2 border-b border-mist-dark">
             <div className="flex gap-2">
-              <input className="input flex-1 py-2 text-sm" placeholder="Nouveau créancier..."
-                value={newName} onChange={e => setNewName(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleAdd()}/>
-              <button onClick={handleAdd} disabled={adding || !newName.trim()}
-                className="w-10 h-10 rounded-xl bg-accent text-white flex items-center justify-center disabled:opacity-40">
-                <Plus size={16}/>
-              </button>
+              <input className="input flex-1 py-2 text-sm" placeholder="Nouveau créancier..." value={newName} onChange={e => setNewName(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleAdd()}/>
+              <button onClick={handleAdd} disabled={adding || !newName.trim()} className="w-10 h-10 rounded-xl bg-accent text-white flex items-center justify-center disabled:opacity-40"><Plus size={16}/></button>
             </div>
           </div>
           <div className="max-h-48 overflow-y-auto">
@@ -659,24 +540,18 @@ function CreditorPicker({ value, onChange }: { value: string; onChange: (v: stri
                   {value === c.name && <Check size={14} className="text-accent"/>}
                   <span className="text-sm text-ink">{c.name}</span>
                 </div>
-                <button onClick={e => handleDelete(c, e)} className="w-6 h-6 rounded-lg hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center">
-                  <X size={12}/>
-                </button>
+                <button onClick={e => handleDelete(c, e)} className="w-6 h-6 rounded-lg hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center"><X size={12}/></button>
               </div>
             ))}
           </div>
           {newName.trim() && (
-            <div onClick={() => { onChange(newName.trim()); setOpen(false); setNewName('') }}
-              className="px-4 py-3 border-t border-mist-dark cursor-pointer hover:bg-mist transition-colors">
+            <div onClick={() => { onChange(newName.trim()); setOpen(false); setNewName('') }} className="px-4 py-3 border-t border-mist-dark cursor-pointer hover:bg-mist transition-colors">
               <span className="text-sm text-ink-soft">Utiliser "<strong className="text-ink">{newName}</strong>" sans sauvegarder</span>
             </div>
           )}
         </div>
       )}
-
-      {!open && (
-        <input className="sr-only" value={value} onChange={e => onChange(e.target.value)} tabIndex={-1}/>
-      )}
+      {!open && <input className="sr-only" value={value} onChange={e => onChange(e.target.value)} tabIndex={-1}/>}
     </div>
   )
 }
@@ -702,24 +577,25 @@ function DettesSection() {
 
   const [form, setForm] = useState({
     type: 'owe' as 'owe' | 'owed',
-    person: '', amount: '', minimumPayment: '', interestRate: '', note: '', dueDate: '', recurring: false,
+    person: '', amount: '', minimumPayment: '', interestRate: '',
+    note: '', dueDate: '', recurring: false,
+    category: 'Autre',  // ← NOUVEAU
   })
 
   useEffect(() => { getDebts().then(setDebts).finally(() => setLoading(false)) }, [])
 
-  const plan     = computeCoachPlan(debts, [], [], currentYearMonth())
-  const totalOwe = debts.filter(d => d.type === 'owe').reduce((s, d) => s + d.remaining, 0)
-  const totalOwed= debts.filter(d => d.type === 'owed').reduce((s, d) => s + d.remaining, 0)
+  const plan      = computeCoachPlan(debts, [], [], currentYearMonth())
+  const totalOwe  = debts.filter(d => d.type === 'owe').reduce((s, d) => s + d.remaining, 0)
+  const totalOwed = debts.filter(d => d.type === 'owed').reduce((s, d) => s + d.remaining, 0)
   const tip = plan.snowballTarget
     ? `🎯 Rembourse "${plan.snowballTarget.person}" en priorité (${formatAmount(plan.snowballTarget.remaining)} restant). Mets ${formatAmount(plan.snowballSuggestion)} de plus ce mois !`
     : debts.length > 0 ? `✅ Continue comme ça, tu avances bien !`
     : `Enregistre tes crédits et prêts pour que le Coach calcule le meilleur ordre de remboursement.`
 
   function resetForm() {
-    setForm({ type:'owe', person:'', amount:'', minimumPayment:'', interestRate:'', note:'', dueDate:'', recurring: false })
+    setForm({ type:'owe', person:'', amount:'', minimumPayment:'', interestRate:'', note:'', dueDate:'', recurring: false, category: 'Autre' })
     setEditingId(null)
   }
-
   function openEdit(d: Debt) {
     setForm({
       type: d.type, person: d.person, amount: String(d.amount),
@@ -727,6 +603,7 @@ function DettesSection() {
       interestRate: d.interestRate !== undefined ? String(d.interestRate) : '',
       note: d.note || '', dueDate: d.dueDate || '',
       recurring: (d as any).recurring ?? false,
+      category: (d as any).category ?? 'Autre',  // ← NOUVEAU
     })
     setEditingId(d.id); setShowForm(true)
   }
@@ -741,11 +618,7 @@ function DettesSection() {
       setHistoryLoading(false)
     }
   }
-
-  function invalidateHistory(debtId: string) {
-    setHistoryMap(prev => { const n = { ...prev }; delete n[debtId]; return n })
-  }
-
+  function invalidateHistory(debtId: string) { setHistoryMap(prev => { const n = { ...prev }; delete n[debtId]; return n }) }
   async function reloadHistory(debtId: string) {
     const h = await fetchHistory(debtId)
     setHistoryMap(prev => ({ ...prev, [debtId]: h }))
@@ -753,21 +626,24 @@ function DettesSection() {
 
   async function handleAdd() {
     if (!form.person) return
+    const debtData = {
+      type: form.type, person: form.person, amount: Number(form.amount) || 0,
+      minimumPayment: Number(form.minimumPayment) || 0,
+      interestRate: form.interestRate ? Number(form.interestRate) : undefined,
+      note: form.note, dueDate: form.dueDate || undefined,
+      recurring: form.recurring,
+      category: form.category,
+    } as any
+
     if (editingId) {
       const existing = debts.find(d => d.id === editingId)!
-      const newAmount = Number(form.amount) || existing.amount
-      const paidSoFar = existing.amount - existing.remaining
+      const newAmount    = Number(form.amount) || existing.amount
+      const paidSoFar    = existing.amount - existing.remaining
       const newRemaining = Math.max(0, newAmount - paidSoFar)
-      await updateDebt(editingId, {
-        type: form.type, person: form.person, amount: newAmount, remaining: newRemaining,
-        minimumPayment: Number(form.minimumPayment) || 0,
-        interestRate: form.interestRate ? Number(form.interestRate) : undefined,
-        note: form.note, dueDate: form.dueDate || undefined,
-        ...({ recurring: form.recurring } as any),
-      })
-      setDebts(prev => prev.map(d => d.id !== editingId ? d : { ...d, type: form.type, person: form.person, amount: newAmount, remaining: newRemaining, minimumPayment: Number(form.minimumPayment) || 0, interestRate: form.interestRate ? Number(form.interestRate) : undefined, note: form.note, dueDate: form.dueDate || undefined, recurring: form.recurring } as any))
+      await updateDebt(editingId, { ...debtData, remaining: newRemaining })
+      setDebts(prev => prev.map(d => d.id !== editingId ? d : { ...d, ...debtData, amount: newAmount, remaining: newRemaining }))
     } else {
-      const newDebt = await addDebt({ type: form.type, person: form.person, amount: Number(form.amount) || 0, remaining: Number(form.amount) || 0, minimumPayment: Number(form.minimumPayment) || 0, interestRate: form.interestRate ? Number(form.interestRate) : undefined, note: form.note, dueDate: form.dueDate || undefined, ...({ recurring: form.recurring } as any) })
+      const newDebt = await addDebt({ ...debtData, remaining: Number(form.amount) || 0 })
       setDebts(prev => [...prev, newDebt])
     }
     resetForm(); setShowForm(false)
@@ -778,8 +654,12 @@ function DettesSection() {
     if (!amt || amt <= 0) return
     const debt = debts.find(d => d.id === id)!
     const isRecurring = (debt as any).recurring ?? false
-    await logPayment(id, amt, payDate, payNote)
+    const debtCategory = (debt as any).category ?? 'Autre'
+
+    // Log avec la catégorie de la dette
+    await logPayment(id, amt, payDate, debtCategory, payNote)
     invalidateHistory(id)
+
     if (debt.amount === 0) {
       setConfirmDeleteId(id); setPayingId(null); setPayAmount(''); setPayDate(new Date().toISOString().slice(0, 10)); setPayNote(''); return
     }
@@ -836,18 +716,12 @@ function DettesSection() {
 
       <div className="grid grid-cols-2 gap-3">
         <div className="card border border-danger/20">
-          <div className="flex items-center gap-2 mb-2">
-            <div className="w-8 h-8 rounded-xl bg-danger-light flex items-center justify-center"><span className="text-sm">💳</span></div>
-            <p className="text-xs font-bold text-danger uppercase tracking-wide">Je dois</p>
-          </div>
+          <div className="flex items-center gap-2 mb-2"><div className="w-8 h-8 rounded-xl bg-danger-light flex items-center justify-center"><span className="text-sm">💳</span></div><p className="text-xs font-bold text-danger uppercase tracking-wide">Je dois</p></div>
           <p className="text-xl font-bold font-mono text-danger">{formatAmount(totalOwe)}</p>
           <p className="text-xs text-ink-soft mt-1">total restant</p>
         </div>
         <div className="card border border-positive/20">
-          <div className="flex items-center gap-2 mb-2">
-            <div className="w-8 h-8 rounded-xl bg-positive-light flex items-center justify-center"><span className="text-sm">🤝</span></div>
-            <p className="text-xs font-bold text-positive uppercase tracking-wide">On me doit</p>
-          </div>
+          <div className="flex items-center gap-2 mb-2"><div className="w-8 h-8 rounded-xl bg-positive-light flex items-center justify-center"><span className="text-sm">🤝</span></div><p className="text-xs font-bold text-positive uppercase tracking-wide">On me doit</p></div>
           <p className="text-xl font-bold font-mono text-positive">{formatAmount(totalOwed)}</p>
           <p className="text-xs text-ink-soft mt-1">à récupérer</p>
         </div>
@@ -855,28 +729,27 @@ function DettesSection() {
 
       <div className="flex items-start gap-3 p-3 bg-red-50 border border-red-100 rounded-2xl">
         <span className="text-base">💡</span>
-        <p className="text-xs text-red-700 leading-relaxed"><strong>Snowball :</strong> Rembourse la plus petite dette en premier pour créer de l'élan.</p>
+        <p className="text-xs text-red-700 leading-relaxed"><strong>Snowball :</strong> Rembourse la plus petite dette en premier pour créer de l'élan. Chaque remboursement s'ajoute au budget de la catégorie de la dette.</p>
       </div>
 
-      <button onClick={() => { resetForm(); setShowForm(true) }} className="btn-primary w-full gap-2" style={{ backgroundColor: '#DC2626' }}>
-        <Plus size={18}/> Ajouter une dette / prêt
-      </button>
+      <button onClick={() => { resetForm(); setShowForm(true) }} className="btn-primary w-full gap-2" style={{ backgroundColor: '#DC2626' }}><Plus size={18}/> Ajouter une dette / prêt</button>
 
       {debts.length === 0 ? (
         <div className="card text-center py-10"><p className="text-3xl mb-2">🤝</p><p className="font-semibold text-ink">Aucune dette enregistrée</p><p className="text-sm text-ink-soft mt-1">Crédit voiture, prêt bancaire, argent dû à un ami...</p></div>
       ) : debts.map(d => {
-        const paidPct     = d.amount > 0 ? Math.round(((d.amount - d.remaining) / d.amount) * 100) : 0
-        const monthsLeft  = d.minimumPayment > 0 ? Math.ceil(d.remaining / d.minimumPayment) : null
-        const isSnowball  = plan.snowballTarget?.id === d.id
-        const isRecurring = (d as any).recurring ?? false
-        const endDate     = projectedEndDate(d.remaining, d.minimumPayment)
-        const showHistory = openHistoryId === d.id
-        const debtHistory = historyMap[d.id] ?? []
+        const paidPct      = d.amount > 0 ? Math.round(((d.amount - d.remaining) / d.amount) * 100) : 0
+        const monthsLeft   = d.minimumPayment > 0 ? Math.ceil(d.remaining / d.minimumPayment) : null
+        const isSnowball   = plan.snowballTarget?.id === d.id
+        const isRecurring  = (d as any).recurring ?? false
+        const debtCategory = (d as any).category ?? 'Autre'
+        const endDate      = projectedEndDate(d.remaining, d.minimumPayment)
+        const showHistory  = openHistoryId === d.id
+        const debtHistory  = historyMap[d.id] ?? []
 
         let dueBadge: React.ReactNode = null
         if (d.dueDate) {
           const days = daysUntil(d.dueDate)
-          if (days < 0)       dueBadge = <span className="inline-flex items-center gap-1 text-xs bg-danger text-white px-2 py-0.5 rounded-full font-bold">⚠️ En retard de {Math.abs(days)}j</span>
+          if (days < 0)        dueBadge = <span className="inline-flex items-center gap-1 text-xs bg-danger text-white px-2 py-0.5 rounded-full font-bold">⚠️ En retard de {Math.abs(days)}j</span>
           else if (days === 0) dueBadge = <span className="inline-flex items-center gap-1 text-xs bg-danger-light text-danger px-2 py-0.5 rounded-full font-bold">🔴 Aujourd'hui !</span>
           else if (days <= 7)  dueBadge = <span className="inline-flex items-center gap-1 text-xs bg-warning-light text-warning px-2 py-0.5 rounded-full font-bold">⏰ Dans {days}j</span>
           else if (days <= 30) dueBadge = <span className="inline-flex items-center gap-1 text-xs bg-blue-50 text-accent px-2 py-0.5 rounded-full font-medium">📅 Dans {days}j</span>
@@ -889,9 +762,9 @@ function DettesSection() {
                 <div className="flex items-center gap-1.5 flex-wrap mb-1">
                   {isSnowball && <span className="text-xs bg-accent text-white px-2 py-0.5 rounded-full font-bold">🎯 Priorité</span>}
                   {isRecurring && <span className="text-xs bg-blue-50 text-accent border border-blue-100 px-2 py-0.5 rounded-full font-medium">🔄 Récurrent</span>}
-                  <span className="text-xs font-medium text-ink-soft">
-                    {d.type === 'owe' ? 'Je dois à' : 'Me doit'}
-                  </span>
+                  {/* Catégorie badge */}
+                  <span className="text-xs bg-mist text-ink-soft px-2 py-0.5 rounded-full">{debtCategory}</span>
+                  <span className="text-xs font-medium text-ink-soft">{d.type === 'owe' ? 'Je dois à' : 'Me doit'}</span>
                 </div>
                 <p className="font-bold text-base text-ink">{d.person}</p>
                 {d.note && <p className="text-xs text-ink-soft mt-0.5">{d.note}</p>}
@@ -911,15 +784,9 @@ function DettesSection() {
 
               <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
                 <p className="font-mono font-bold text-lg text-ink">{formatAmount(d.remaining)}</p>
-                {paidPct > 0 && !isRecurring && (
-                  <span className="text-xs font-semibold text-positive bg-positive-light px-2 py-0.5 rounded-full">{paidPct}% remboursé</span>
-                )}
+                {paidPct > 0 && !isRecurring && <span className="text-xs font-semibold text-positive bg-positive-light px-2 py-0.5 rounded-full">{paidPct}% remboursé</span>}
                 <div className="flex gap-1 mt-0.5">
-                  <button
-                    className={`w-8 h-8 rounded-xl flex items-center justify-center transition-colors ${showHistory ? 'bg-accent text-white' : 'bg-mist hover:bg-accent-light text-ink-soft hover:text-accent'}`}
-                    onClick={() => toggleHistory(d.id)} title="Historique">
-                    <History size={14}/>
-                  </button>
+                  <button className={`w-8 h-8 rounded-xl flex items-center justify-center transition-colors ${showHistory ? 'bg-accent text-white' : 'bg-mist hover:bg-accent-light text-ink-soft hover:text-accent'}`} onClick={() => toggleHistory(d.id)} title="Historique"><History size={14}/></button>
                   <button className="w-8 h-8 rounded-xl bg-mist hover:bg-mist-dark text-ink-soft hover:text-ink flex items-center justify-center" onClick={() => openEdit(d)}><Pencil size={14}/></button>
                   <button className="w-8 h-8 rounded-xl bg-mist hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center" onClick={async () => { await deleteDebt(d.id); setDebts(prev => prev.filter(x => x.id !== d.id)) }}><Trash2 size={14}/></button>
                 </div>
@@ -942,11 +809,7 @@ function DettesSection() {
               <div className="bg-mist rounded-2xl overflow-hidden">
                 <div className="px-3 py-2.5 border-b border-mist-dark flex items-center justify-between">
                   <p className="text-xs font-bold text-ink-soft uppercase tracking-wide">Historique</p>
-                  {debtHistory.length > 0 && (
-                    <span className="text-xs font-mono font-bold text-positive">
-                      Total : {formatAmount(debtHistory.reduce((s, h) => s + h.amount, 0))}
-                    </span>
-                  )}
+                  {debtHistory.length > 0 && <span className="text-xs font-mono font-bold text-positive">Total : {formatAmount(debtHistory.reduce((s, h) => s + h.amount, 0))}</span>}
                 </div>
                 {historyLoading && !historyMap[d.id] ? (
                   <p className="text-xs text-ink-soft text-center py-4">Chargement...</p>
@@ -960,14 +823,8 @@ function DettesSection() {
                       {h.note && <p className="text-xs text-ink-soft italic truncate">{h.note}</p>}
                     </div>
                     <div className="flex gap-1 ml-2 flex-shrink-0">
-                      <button onClick={() => { setEditingPayment(h); setEditPayAmount(String(h.amount)); setEditPayDate(h.paidAt); setEditPayNote(h.note || '') }}
-                        className="w-7 h-7 rounded-lg bg-white hover:bg-accent-light text-ink-soft hover:text-accent flex items-center justify-center transition-colors">
-                        <Pencil size={12}/>
-                      </button>
-                      <button onClick={() => handleDeletePayment(h)}
-                        className="w-7 h-7 rounded-lg bg-white hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center transition-colors">
-                        <Trash2 size={12}/>
-                      </button>
+                      <button onClick={() => { setEditingPayment(h); setEditPayAmount(String(h.amount)); setEditPayDate(h.paidAt); setEditPayNote(h.note || '') }} className="w-7 h-7 rounded-lg bg-white hover:bg-accent-light text-ink-soft hover:text-accent flex items-center justify-center transition-colors"><Pencil size={12}/></button>
+                      <button onClick={() => handleDeletePayment(h)} className="w-7 h-7 rounded-lg bg-white hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center transition-colors"><Trash2 size={12}/></button>
                     </div>
                   </div>
                 ))}
@@ -977,9 +834,10 @@ function DettesSection() {
             {payingId === d.id ? (
               <div className="space-y-2 p-3 bg-danger-light rounded-2xl">
                 <p className="text-xs font-bold text-danger uppercase tracking-wide">Enregistrer un remboursement</p>
+                <p className="text-xs text-ink-soft">Catégorie : <strong className="text-ink">{debtCategory}</strong> — sera ajouté au budget</p>
                 <input className="input bg-white" type="number" placeholder="Montant (Rs)" value={payAmount} onChange={e => setPayAmount(e.target.value)} autoFocus/>
                 <input className="input bg-white" type="date" value={payDate} onChange={e => setPayDate(e.target.value)}/>
-                <input className="input bg-white border-2 border-warning/30 focus:border-warning placeholder:text-warning/50" placeholder="📝 Note (optionnel)" value={payNote} onChange={e => setPayNote(e.target.value)}/>
+                <input className="input bg-white" placeholder="📝 Note (optionnel)" value={payNote} onChange={e => setPayNote(e.target.value)}/>
                 <div className="flex gap-2">
                   <button className="btn-ghost flex-1 bg-white" onClick={() => { setPayingId(null); setPayAmount(''); setPayDate(new Date().toISOString().slice(0, 10)); setPayNote('') }}>Annuler</button>
                   <button className="btn-primary flex-1" style={{ backgroundColor: '#DC2626' }} onClick={() => handlePay(d.id)}>Enregistrer</button>
@@ -998,10 +856,7 @@ function DettesSection() {
       {confirmDeleteId && (
         <div className="bottom-sheet bg-black/40">
           <div className="bottom-sheet-content">
-            <div className="flex items-center justify-between mb-2">
-              <h2 className="text-lg font-bold text-ink">🎉 Dette soldée !</h2>
-              <button className="btn-icon bg-mist" onClick={() => setConfirmDeleteId(null)}><X size={20}/></button>
-            </div>
+            <div className="flex items-center justify-between mb-2"><h2 className="text-lg font-bold text-ink">🎉 Dette soldée !</h2><button className="btn-icon bg-mist" onClick={() => setConfirmDeleteId(null)}><X size={20}/></button></div>
             <p className="text-sm text-ink-soft">Tu as remboursé cette dette entièrement. Veux-tu la supprimer de ta liste ?</p>
             <div className="flex gap-2 mt-3">
               <button className="btn-ghost flex-1" onClick={() => setConfirmDeleteId(null)}>Garder</button>
@@ -1014,10 +869,7 @@ function DettesSection() {
       {editingPayment && (
         <div className="bottom-sheet bg-black/40">
           <div className="bottom-sheet-content">
-            <div className="flex items-center justify-between mb-2">
-              <h2 className="text-lg font-bold text-ink">Modifier le remboursement</h2>
-              <button className="btn-icon bg-mist" onClick={() => setEditingPayment(null)}><X size={20}/></button>
-            </div>
+            <div className="flex items-center justify-between mb-2"><h2 className="text-lg font-bold text-ink">Modifier le remboursement</h2><button className="btn-icon bg-mist" onClick={() => setEditingPayment(null)}><X size={20}/></button></div>
             <div><label className="label">Montant (Rs)</label><input className="input" type="number" value={editPayAmount} onChange={e => setEditPayAmount(e.target.value)}/></div>
             <div><label className="label">Date</label><input className="input" type="date" value={editPayDate} onChange={e => setEditPayDate(e.target.value)}/></div>
             <div><label className="label">Note (optionnel)</label><input className="input" placeholder="Ex: Virement avril..." value={editPayNote} onChange={e => setEditPayNote(e.target.value)}/></div>
@@ -1044,6 +896,16 @@ function DettesSection() {
               <label className="label">{form.type === 'owe' ? 'À qui tu dois ?' : 'Qui te doit ?'}</label>
               <CreditorPicker value={form.person} onChange={v => setForm(f => ({...f, person: v}))}/>
             </div>
+
+            {/* ← NOUVEAU : Catégorie obligatoire */}
+            <div>
+              <label className="label">Catégorie <span className="text-danger">*</span></label>
+              <select className="input" value={form.category} onChange={e => setForm(f => ({...f, category: e.target.value}))}>
+                {ALL_CATEGORIES.map(c => <option key={c}>{c}</option>)}
+              </select>
+              <p className="text-xs text-ink-soft mt-1">Les remboursements s'ajouteront au budget de cette catégorie</p>
+            </div>
+
             <div><label className="label">Montant total (Rs)</label><input className="input" type="number" placeholder="Ex: 150000" value={form.amount} onChange={e => setForm(f => ({...f, amount: e.target.value}))}/></div>
             <div><label className="label">Remboursement minimum / mois (Rs)</label><input className="input" type="number" placeholder="Ex: 3000" value={form.minimumPayment} onChange={e => setForm(f => ({...f, minimumPayment: e.target.value}))}/></div>
             <div><label className="label">Taux d'intérêt annuel % (optionnel)</label><input className="input" type="number" placeholder="Ex: 12" value={form.interestRate} onChange={e => setForm(f => ({...f, interestRate: e.target.value}))}/></div>
@@ -1076,15 +938,24 @@ function EpargneSection() {
   const [showForm, setShowForm] = useState(false)
   const [addingTo, setAddingTo] = useState<string | null>(null)
   const [addAmount, setAddAmount] = useState('')
-  const [form, setForm] = useState({ name: '', target: '', emoji: EMOJIS[0] })
+  const [form, setForm] = useState({ name: '', target: '', emoji: EMOJIS[0], category: 'Épargne' })
+
   useEffect(() => { getSavings().then(setGoals).finally(() => setLoading(false)) }, [])
+
   const tip = goals.length > 0 ? `💰 Continue à alimenter tes objectifs d'épargne !` : `Crée tes premiers objectifs d'épargne. Même 500 Rs/mois, ça compte !`
   const totalSaved = goals.reduce((s, g) => s + g.saved, 0)
+
   async function handleAdd() {
     if (!form.name || !form.target) return
-    const newGoal = await addSavingsGoal({ name: form.name, target: Number(form.target), saved: 0, emoji: form.emoji })
-    setGoals(prev => [...prev, newGoal]); setForm({ name: '', target: '', emoji: EMOJIS[0] }); setShowForm(false)
+    const newGoal = await addSavingsGoal({
+      name: form.name, target: Number(form.target), saved: 0, emoji: form.emoji,
+      ...({ category: form.category } as any)
+    })
+    setGoals(prev => [...prev, newGoal])
+    setForm({ name: '', target: '', emoji: EMOJIS[0], category: 'Épargne' })
+    setShowForm(false)
   }
+
   async function handleDeposit(id: string) {
     if (!addAmount || Number(addAmount) <= 0) return
     const goal = goals.find(g => g.id === id)!
@@ -1093,7 +964,9 @@ function EpargneSection() {
     setGoals(prev => prev.map(g => g.id === id ? { ...g, saved: newSaved } : g))
     setAddingTo(null); setAddAmount('')
   }
+
   if (loading) return <div className="card text-center py-8 text-ink-soft">Chargement...</div>
+
   return (
     <div className="space-y-3">
       <CoachTip message={tip} />
@@ -1109,11 +982,13 @@ function EpargneSection() {
         </div>
       )}
       <button onClick={() => setShowForm(true)} className="btn-primary w-full gap-2" style={{ backgroundColor: '#16A34A' }}><Plus size={18}/> Nouvel objectif d'épargne</button>
+
       {goals.length === 0 ? (
         <div className="card text-center py-10"><p className="text-3xl mb-2">🐖</p><p className="font-semibold text-ink">Aucun objectif d'épargne</p><p className="text-sm text-ink-soft mt-1">Fonds d'urgence, vacances, nouvelle télé, voiture...</p></div>
       ) : goals.map(g => {
-        const pct = Math.min(100, (g.saved / g.target) * 100)
+        const pct  = Math.min(100, (g.saved / g.target) * 100)
         const done = g.saved >= g.target
+        const goalCategory = (g as any).category ?? 'Épargne'
         return (
           <div key={g.id} className="card space-y-3">
             <div className="flex items-center justify-between">
@@ -1121,6 +996,7 @@ function EpargneSection() {
                 <span className="text-3xl">{g.emoji}</span>
                 <div>
                   <p className="font-bold text-ink">{g.name}</p>
+                  <p className="text-xs text-ink-soft">{goalCategory}</p>
                   {done ? <p className="text-xs text-positive font-bold">✅ Objectif atteint !</p> : <p className="text-xs text-ink-soft">{formatAmount(g.target - g.saved)} restant</p>}
                 </div>
               </div>
@@ -1145,6 +1021,7 @@ function EpargneSection() {
           </div>
         )
       })}
+
       {showForm && (
         <div className="bottom-sheet bg-black/40">
           <div className="bottom-sheet-content">
@@ -1152,6 +1029,14 @@ function EpargneSection() {
             <div><label className="label">Icône</label><div className="flex gap-2 flex-wrap">{EMOJIS.map(e => (<button key={e} className={`text-2xl p-2 rounded-2xl transition-colors ${form.emoji === e ? 'bg-accent-light' : 'bg-mist'}`} onClick={() => setForm(f => ({...f, emoji: e}))}>{e}</button>))}</div></div>
             <div><label className="label">Nom de l'objectif</label><input className="input" placeholder="Ex: Fonds d'urgence, Vacances..." value={form.name} onChange={e => setForm(f => ({...f, name: e.target.value}))}/></div>
             <div><label className="label">Montant cible (Rs)</label><input className="input" type="number" placeholder="Ex: 50000" value={form.target} onChange={e => setForm(f => ({...f, target: e.target.value}))}/></div>
+            {/* ← NOUVEAU : Catégorie épargne */}
+            <div>
+              <label className="label">Catégorie</label>
+              <select className="input" value={form.category} onChange={e => setForm(f => ({...f, category: e.target.value}))}>
+                {ALL_CATEGORIES.map(c => <option key={c}>{c}</option>)}
+              </select>
+              <p className="text-xs text-ink-soft mt-1">Pour suivre cet objectif dans le bon budget</p>
+            </div>
             <button className="btn-primary w-full py-4" onClick={handleAdd} style={{ backgroundColor: '#16A34A' }}>Créer l'objectif</button>
           </div>
         </div>
