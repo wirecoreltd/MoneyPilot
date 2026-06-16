@@ -6,7 +6,7 @@ import {
 import { Plus, Trash2, X, Check, Pencil, ChevronDown, ChevronUp } from "lucide-react";
 
 // ─── Mock data (remplace par les vrais imports de storage.ts) ─────────────────
-const fmt = (n) =>
+const fmt = (n: number) =>
   new Intl.NumberFormat("fr-MU", { style: "currency", currency: "MUR", maximumFractionDigits: 0 }).format(n);
 
 const MOCK_INCOMES = [
