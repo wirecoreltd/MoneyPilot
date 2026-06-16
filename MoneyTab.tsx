@@ -473,14 +473,28 @@ function DettesSection() {
 
   async function handleEditPayment() {
     if (!editingPayment) return
-    const amt = Number(editPayAmount)
-    if (!amt || amt <= 0) return
-    await updatePayment(editingPayment.id, amt, editPayDate, editPayNote)
+    const newAmt = Number(editPayAmount)
+    if (!newAmt || newAmt <= 0) return
+    const oldAmt = editingPayment.amount
+    const diff = newAmt - oldAmt
+    await updatePayment(editingPayment.id, newAmt, editPayDate, editPayNote)
+    const debt = debts.find(d => d.id === editingPayment.debtId)
+    if (debt && debt.amount > 0) {
+      const newRemaining = Math.max(0, debt.remaining - diff)
+      await updateDebt(debt.id, { remaining: newRemaining })
+      setDebts(prev => prev.map(d => d.id === debt.id ? { ...d, remaining: newRemaining } : d))
+    }
     await reloadHistory(editingPayment.debtId)
     setEditingPayment(null)
   }
 
   async function handleDeletePayment(h: DebtPaymentHistory) {
+    const debt = debts.find(d => d.id === h.debtId)
+    if (debt && debt.amount > 0) {
+      const newRemaining = Math.min(debt.amount, debt.remaining + h.amount)
+      await updateDebt(debt.id, { remaining: newRemaining })
+      setDebts(prev => prev.map(d => d.id === debt.id ? { ...d, remaining: newRemaining } : d))
+    }
     await deletePayment(h.id)
     await reloadHistory(h.debtId)
   }
@@ -513,7 +527,7 @@ function DettesSection() {
 
       <div className="flex items-start gap-3 p-3 bg-red-50 border border-red-100 rounded-2xl">
         <span className="text-base">💡</span>
-        <p className="text-xs text-red-700 leading-relaxed"><strong>Snowball :</strong> Dette vs Dépense :</strong> Une dette c'est une somme totale à rembourser sur le temps. Le Coach utilise la méthode <strong>Snowball</strong> pour t'aider à les éliminer dans le bon ordre.</p>
+        <p className="text-xs text-red-700 leading-relaxed"><strong>Snowball :</strong> Rembourse la plus petite dette en premier pour créer de l'élan.</p>
       </div>
 
       <button onClick={() => { resetForm(); setShowForm(true) }} className="btn-primary w-full gap-2" style={{ backgroundColor: '#DC2626' }}>
@@ -549,7 +563,7 @@ function DettesSection() {
                 <div className="flex items-center gap-1.5 flex-wrap mb-1">
                   {isSnowball && <span className="text-xs bg-accent text-white px-2 py-0.5 rounded-full font-bold">🎯 Priorité</span>}
                   {isRecurring && <span className="text-xs bg-blue-50 text-accent border border-blue-100 px-2 py-0.5 rounded-full font-medium">🔄 Récurrent</span>}
-                  <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${d.type === 'owe' ? 'bg-danger-light text-danger' : 'bg-positive-light text-positive'}`}>
+                  <span className="text-xs font-medium text-ink-soft">
                     {d.type === 'owe' ? 'Je dois à' : 'Me doit'}
                   </span>
                 </div>
@@ -643,14 +657,14 @@ function DettesSection() {
                 <p className="text-xs font-bold text-danger uppercase tracking-wide">Enregistrer un remboursement</p>
                 <input className="input bg-white" type="number" placeholder="Montant (Rs)" value={payAmount} onChange={e => setPayAmount(e.target.value)} autoFocus/>
                 <input className="input bg-white" type="date" value={payDate} onChange={e => setPayDate(e.target.value)}/>
-                <input className="input bg-white" placeholder="Note (optionnel)" value={payNote} onChange={e => setPayNote(e.target.value)}/>
+                <input className="input bg-white border-2 border-warning/30 focus:border-warning placeholder:text-warning/50" placeholder="📝 Note (optionnel)" value={payNote} onChange={e => setPayNote(e.target.value)}/>
                 <div className="flex gap-2">
                   <button className="btn-ghost flex-1 bg-white" onClick={() => { setPayingId(null); setPayAmount(''); setPayDate(new Date().toISOString().slice(0, 10)); setPayNote('') }}>Annuler</button>
                   <button className="btn-primary flex-1" style={{ backgroundColor: '#DC2626' }} onClick={() => handlePay(d.id)}>Enregistrer</button>
                 </div>
               </div>
             ) : (
-              <button className="w-full py-3 text-sm font-bold text-danger bg-danger-light hover:bg-red-100 rounded-2xl active:scale-95 transition-all"
+              <button className="w-full py-3 text-sm font-bold text-white bg-ink hover:bg-gray-800 rounded-2xl active:scale-95 transition-all"
                 onClick={() => { setPayingId(d.id); setPayAmount(String(d.minimumPayment || '')); setPayDate(new Date().toISOString().slice(0, 10)); setPayNote('') }}>
                 + Enregistrer un remboursement
               </button>
