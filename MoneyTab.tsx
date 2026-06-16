@@ -106,7 +106,7 @@ function TransactionsSection({ transactions, onUpdate }: Props) {
   const [editingTx, setEditingTx] = useState<Transaction | null>(null)
   const [form, setForm] = useState({
     type: 'expense' as 'income' | 'expense',
-    amount: '', category: EXPENSE_CATEGORIES[0], note: '',
+    amount: '', category: EXPENSE_CATEGORIES[0] as any, note: '',
     date: new Date().toISOString().slice(0, 10),
   })
 
@@ -137,13 +137,12 @@ function TransactionsSection({ transactions, onUpdate }: Props) {
 
   function openAdd() {
     setEditingTx(null)
-    setForm({ type: 'expense', amount: '', category: EXPENSE_CATEGORIES[0], note: '', date: new Date().toISOString().slice(0, 10) })
+    setForm({ type: 'expense', amount: '', category: EXPENSE_CATEGORIES[0] as any, note: '', date: new Date().toISOString().slice(0, 10) })
     setShowForm(true)
   }
   function openEdit(tx: Transaction) {
     setEditingTx(tx)
-    // line 145 — openEdit function
-setForm({ type: tx.type, amount: String(tx.amount), category: tx.category as any, note: tx.note, date: tx.date })
+    setForm({ type: tx.type, amount: String(tx.amount), category: tx.category as any, note: tx.note, date: tx.date })
     setShowForm(true)
   }
   async function handleSubmit() {
@@ -246,11 +245,11 @@ setForm({ type: tx.type, amount: String(tx.amount), category: tx.category as any
               <button className="btn-icon bg-mist" onClick={() => { setShowForm(false); setEditingTx(null) }}><X size={20}/></button>
             </div>
             <div className="flex rounded-2xl overflow-hidden border-2 border-mist-dark">
-              <button className={`flex-1 py-3 text-sm font-bold ${form.type === 'expense' ? 'bg-danger text-white' : 'bg-white text-ink-soft'}`} onClick={() => setForm(f => ({...f, type:'expense', category: EXPENSE_CATEGORIES[0]}))}>💸 Dépense</button>
-              <button className={`flex-1 py-3 text-sm font-bold ${form.type === 'income' ? 'bg-positive text-white' : 'bg-white text-ink-soft'}`} onClick={() => setForm(f => ({...f, type:'income', category: INCOME_CATEGORIES[0]}))}>💰 Revenu</button>
+              <button className={`flex-1 py-3 text-sm font-bold ${form.type === 'expense' ? 'bg-danger text-white' : 'bg-white text-ink-soft'}`} onClick={() => setForm(f => ({...f, type:'expense', category: EXPENSE_CATEGORIES[0] as any}))}>💸 Dépense</button>
+              <button className={`flex-1 py-3 text-sm font-bold ${form.type === 'income' ? 'bg-positive text-white' : 'bg-white text-ink-soft'}`} onClick={() => setForm(f => ({...f, type:'income', category: INCOME_CATEGORIES[0] as any}))}>💰 Revenu</button>
             </div>
             <div><label className="label">Montant (Rs)</label><input className="input text-xl font-bold" type="number" placeholder="0" value={form.amount} onChange={e => setForm(f => ({...f, amount: e.target.value}))}/></div>
-            <div><label className="label">Catégorie</label><select className="input" value={form.category} onChange={e => setForm(f => ({...f, category: e.target.value}))}>{categories.map(c => <option key={c}>{c}</option>)}</select></div>
+            <div><label className="label">Catégorie</label><select className="input" value={form.category} onChange={e => setForm(f => ({...f, category: e.target.value as any}))}>{categories.map(c => <option key={c}>{c}</option>)}</select></div>
             <div><label className="label">Note (optionnel)</label><input className="input" placeholder="Ex: Courses Jumbo, Salaire avril..." value={form.note} onChange={e => setForm(f => ({...f, note: e.target.value}))}/></div>
             <div><label className="label">Date</label><input className="input" type="date" value={form.date} onChange={e => setForm(f => ({...f, date: e.target.value}))}/></div>
             <button className="btn-primary w-full py-4 text-base" onClick={handleSubmit} disabled={loading}>
@@ -285,27 +284,20 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
       const [b, r] = await Promise.all([getBudgets(), getRecurringPayments()])
       setBudgets(b); setRecurringPayments(r)
 
-      // Remboursements de dettes ce mois avec leur catégorie
       const { data: dh } = await supabase
         .from('debt_payment_history')
         .select('amount, category')
         .gte('paid_at', `${ym}-01`)
         .lte('paid_at', `${ym}-31`)
       setDebtPayments((dh ?? []).map(r => ({ category: r.category ?? 'Autre', amount: Number(r.amount) })))
-
-      // Dépôts épargne ce mois (on n'a pas de table de dépôts séparée, skip pour l'instant)
-      // savings_goals ne log pas les dépôts par date, donc on ne peut pas filtrer par mois ici.
-      // À implémenter si une table savings_deposits est créée.
     }
     load().finally(() => setLoading(false))
   }, [ym])
 
-  // Spending de base : transactions ponctuelles
   const spending: Record<string, number> = {}
   transactions.filter(t => t.type === 'expense' && t.date.startsWith(ym))
     .forEach(t => { spending[t.category] = (spending[t.category] || 0) + t.amount })
 
-  // Ajouter charges récurrentes PAYÉES ce mois
   recurringPayments.forEach(r => {
     const pay = getPaymentForMonth(r, ym)
     if (!pay.paid) return
@@ -314,7 +306,6 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
     spending[cat] = (spending[cat] || 0) + pay.amount
   })
 
-  // Ajouter remboursements de dettes ce mois par catégorie
   debtPayments.forEach(dp => {
     if (!dp.category) return
     spending[dp.category] = (spending[dp.category] || 0) + dp.amount
@@ -363,7 +354,6 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
         const over  = spent > b.limit
         const near  = pct >= 80 && !over
 
-        // Détail des sources qui contribuent à ce budget ce mois
         const recurringContrib = recurringPayments.filter(r => {
           const pay = getPaymentForMonth(r, ym)
           return pay.paid && RECURRING_TO_BUDGET[r.category] === b.name
@@ -394,7 +384,6 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
               <span className="font-mono text-ink-soft">plafond : {formatAmount(b.limit)}</span>
             </div>
 
-            {/* Détail des contributions */}
             {(recurringContrib.length > 0 || debtContribTotal > 0) && (
               <div className="pt-1 border-t border-mist-dark space-y-1">
                 {recurringContrib.map(r => {
@@ -580,7 +569,7 @@ function DettesSection() {
     type: 'owe' as 'owe' | 'owed',
     person: '', amount: '', minimumPayment: '', interestRate: '',
     note: '', dueDate: '', recurring: false,
-    category: 'Autre',  // ← NOUVEAU
+    category: 'Autre',
   })
 
   useEffect(() => { getDebts().then(setDebts).finally(() => setLoading(false)) }, [])
@@ -604,7 +593,7 @@ function DettesSection() {
       interestRate: d.interestRate !== undefined ? String(d.interestRate) : '',
       note: d.note || '', dueDate: d.dueDate || '',
       recurring: (d as any).recurring ?? false,
-      category: (d as any).category ?? 'Autre',  // ← NOUVEAU
+      category: (d as any).category ?? 'Autre',
     })
     setEditingId(d.id); setShowForm(true)
   }
@@ -657,7 +646,6 @@ function DettesSection() {
     const isRecurring = (debt as any).recurring ?? false
     const debtCategory = (debt as any).category ?? 'Autre'
 
-    // Log avec la catégorie de la dette
     await logPayment(id, amt, payDate, debtCategory, payNote)
     invalidateHistory(id)
 
@@ -763,7 +751,6 @@ function DettesSection() {
                 <div className="flex items-center gap-1.5 flex-wrap mb-1">
                   {isSnowball && <span className="text-xs bg-accent text-white px-2 py-0.5 rounded-full font-bold">🎯 Priorité</span>}
                   {isRecurring && <span className="text-xs bg-blue-50 text-accent border border-blue-100 px-2 py-0.5 rounded-full font-medium">🔄 Récurrent</span>}
-                  {/* Catégorie badge */}
                   <span className="text-xs bg-mist text-ink-soft px-2 py-0.5 rounded-full">{debtCategory}</span>
                   <span className="text-xs font-medium text-ink-soft">{d.type === 'owe' ? 'Je dois à' : 'Me doit'}</span>
                 </div>
@@ -898,7 +885,6 @@ function DettesSection() {
               <CreditorPicker value={form.person} onChange={v => setForm(f => ({...f, person: v}))}/>
             </div>
 
-            {/* ← NOUVEAU : Catégorie obligatoire */}
             <div>
               <label className="label">Catégorie <span className="text-danger">*</span></label>
               <select className="input" value={form.category} onChange={e => setForm(f => ({...f, category: e.target.value}))}>
@@ -1030,7 +1016,6 @@ function EpargneSection() {
             <div><label className="label">Icône</label><div className="flex gap-2 flex-wrap">{EMOJIS.map(e => (<button key={e} className={`text-2xl p-2 rounded-2xl transition-colors ${form.emoji === e ? 'bg-accent-light' : 'bg-mist'}`} onClick={() => setForm(f => ({...f, emoji: e}))}>{e}</button>))}</div></div>
             <div><label className="label">Nom de l'objectif</label><input className="input" placeholder="Ex: Fonds d'urgence, Vacances..." value={form.name} onChange={e => setForm(f => ({...f, name: e.target.value}))}/></div>
             <div><label className="label">Montant cible (Rs)</label><input className="input" type="number" placeholder="Ex: 50000" value={form.target} onChange={e => setForm(f => ({...f, target: e.target.value}))}/></div>
-            {/* ← NOUVEAU : Catégorie épargne */}
             <div>
               <label className="label">Catégorie</label>
               <select className="input" value={form.category} onChange={e => setForm(f => ({...f, category: e.target.value}))}>
