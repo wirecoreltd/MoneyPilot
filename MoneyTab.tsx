@@ -142,7 +142,8 @@ function TransactionsSection({ transactions, onUpdate }: Props) {
   }
   function openEdit(tx: Transaction) {
     setEditingTx(tx)
-    setForm({ type: tx.type, amount: String(tx.amount), category: tx.category, note: tx.note, date: tx.date })
+    // line 145 — openEdit function
+setForm({ type: tx.type, amount: String(tx.amount), category: tx.category as any, note: tx.note, date: tx.date })
     setShowForm(true)
   }
   async function handleSubmit() {
