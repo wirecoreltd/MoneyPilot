@@ -290,6 +290,12 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
         .select('amount, category, debts!inner(user_id)')
         .eq('debts.user_id', (await supabase.auth.getUser()).data.user!.id)
         .like('paid_at', `${ym}%`)
+
+      console.log('=== DEBT PAYMENTS DEBUG ===')
+      console.log('ym:', ym)
+      console.log('dh:', dh)
+      console.log('error:', error)
+      
       setDebtPayments((dh ?? []).map(r => ({ category: r.category ?? 'Autre', amount: Number(r.amount) })))
     }
     load().finally(() => setLoading(false))
