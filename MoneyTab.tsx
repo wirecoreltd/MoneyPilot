@@ -32,42 +32,37 @@ interface Creditor { id: string; name: string }
 const COLORS = ['#F59E0B','#3B82F6','#8B5CF6','#EF4444','#10B981','#F97316']
 const EMOJIS = ['🏖️','🚗','🏠','💻','📱','✈️','🎓','💍','💰','🎮','👶']
 
-// Catégories de base — enrichies dynamiquement depuis Supabase
-const BASE_CATEGORIES = [
+// ─── Catégories partagées ─────────────────────────────────────────────────────
+const DEFAULT_CATEGORIES = [
   'Logement', 'Alimentation', 'Transport', 'Santé', 'Loisirs',
   'Vêtements', 'Éducation', 'Factures', 'Restaurants', 'Épargne', 'Autre'
 ]
 
-// Hook pour charger les catégories custom depuis Supabase
-function useCategories() {
-  const [customCats, setCustomCats] = useState<string[]>([])
+const CUSTOM_CATEGORIES_KEY = 'moneyapp_custom_categories'
 
-  useEffect(() => {
-    async function load() {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
-      const { data } = await supabase
-        .from('custom_categories')
-        .select('name')
-        .eq('user_id', user.id)
-        .order('name')
-      if (data) setCustomCats(data.map((r: any) => r.name))
-    }
-    load()
-  }, [])
+function loadCustomCategories(): string[] {
+  if (typeof window === 'undefined') return []
+  try {
+    return JSON.parse(localStorage.getItem(CUSTOM_CATEGORIES_KEY) || '[]')
+  } catch { return [] }
+}
 
-  const allCategories = [...BASE_CATEGORIES, ...customCats.filter(c => !BASE_CATEGORIES.includes(c))]
+function saveCustomCategories(cats: string[]) {
+  localStorage.setItem(CUSTOM_CATEGORIES_KEY, JSON.stringify(cats))
+}
 
-  async function addCategory(name: string): Promise<void> {
-    const trimmed = name.trim()
-    if (!trimmed || allCategories.includes(trimmed)) return
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
-    await supabase.from('custom_categories').insert({ name: trimmed, user_id: user.id })
-    setCustomCats(prev => [...prev, trimmed].sort())
-  }
+function getAllCategories(custom: string[]): string[] {
+  return [...DEFAULT_CATEGORIES, ...custom]
+}
 
-  return { allCategories, addCategory }
+// ─── Persistance sous-onglet ──────────────────────────────────────────────────
+const SUBTAB_KEY = 'moneyapp_subtab'
+
+function loadSubTab(): SubTab {
+  if (typeof window === 'undefined') return 'transactions'
+  const v = localStorage.getItem(SUBTAB_KEY)
+  if (v === 'transactions' || v === 'budget' || v === 'dettes' || v === 'epargne') return v
+  return 'transactions'
 }
 
 // Mapping catégorie récurrente → catégorie budget
@@ -89,21 +84,13 @@ const SUBTABS = [
   { id: 'epargne' as SubTab, emoji: '🐖', label: 'Épargne', shortDesc: 'Mes objectifs d\'économies', fullDesc: 'Crée des objectifs d\'épargne avec un montant cible. Tu ajoutes de l\'argent quand tu peux.', color: 'bg-green-50 border-green-200 text-green-700', activeColor: 'bg-positive text-white' },
 ]
 
-const STORAGE_KEY = 'moneyTab_subTab'
-
 export default function MoneyTab({ transactions, onUpdate }: Props) {
-  const [sub, setSub] = useState<SubTab>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem(STORAGE_KEY) as SubTab | null
-      if (saved && SUBTABS.find(t => t.id === saved)) return saved
-    }
-    return 'transactions'
-  })
+  const [sub, setSub] = useState<SubTab>(loadSubTab)
   const [showInfo, setShowInfo] = useState<SubTab | null>(null)
 
-  function handleSetSub(tab: SubTab) {
-    setSub(tab)
-    localStorage.setItem(STORAGE_KEY, tab)
+  function handleSetSub(id: SubTab) {
+    setSub(id)
+    localStorage.setItem(SUBTAB_KEY, id)
   }
 
   return (
@@ -142,71 +129,76 @@ export default function MoneyTab({ transactions, onUpdate }: Props) {
   )
 }
 
-// ─── Category Picker (partagé Transactions + Dettes) ─────────────────────────
-function CategoryPicker({ value, onChange, allCategories, onAddCategory }: {
+// ─── Category Manager (partagé) ───────────────────────────────────────────────
+function CategoryManager({
+  value,
+  onChange,
+  customCategories,
+  onAddCustom,
+}: {
   value: string
   onChange: (v: string) => void
-  allCategories: string[]
-  onAddCategory: (name: string) => Promise<void>
+  customCategories: string[]
+  onAddCustom: (cat: string) => void
 }) {
   const [newCat, setNewCat] = useState('')
-  const [adding, setAdding] = useState(false)
-  const [showNew, setShowNew] = useState(false)
+  const allCats = getAllCategories(customCategories)
 
-  async function handleAdd() {
-    if (!newCat.trim()) return
-    setAdding(true)
-    await onAddCategory(newCat.trim())
-    onChange(newCat.trim())
+  function handleAdd() {
+    const trimmed = newCat.trim()
+    if (!trimmed || allCats.includes(trimmed)) return
+    onAddCustom(trimmed)
+    onChange(trimmed)
     setNewCat('')
-    setShowNew(false)
-    setAdding(false)
   }
 
   return (
     <div className="space-y-2">
+      <select className="input" value={value} onChange={e => onChange(e.target.value)}>
+        {allCats.map(c => <option key={c}>{c}</option>)}
+      </select>
       <div className="flex gap-2">
-        <select className="input flex-1" value={value} onChange={e => onChange(e.target.value)}>
-          {allCategories.map(c => <option key={c}>{c}</option>)}
-        </select>
-        <button type="button" onClick={() => setShowNew(v => !v)}
-          className="w-10 h-10 rounded-xl bg-mist hover:bg-accent-light text-ink-soft hover:text-accent flex items-center justify-center flex-shrink-0">
+        <input
+          className="input flex-1 py-2 text-sm"
+          placeholder="Nouvelle catégorie..."
+          value={newCat}
+          onChange={e => setNewCat(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && handleAdd()}
+        />
+        <button
+          onClick={handleAdd}
+          disabled={!newCat.trim()}
+          className="w-10 h-10 rounded-xl bg-accent text-white flex items-center justify-center disabled:opacity-40 flex-shrink-0"
+        >
           <Plus size={16}/>
         </button>
       </div>
-      {showNew && (
-        <div className="flex gap-2">
-          <input className="input flex-1 text-sm" placeholder="Nouvelle catégorie..." value={newCat}
-            onChange={e => setNewCat(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleAdd()} autoFocus/>
-          <button onClick={handleAdd} disabled={adding || !newCat.trim()}
-            className="px-3 py-2 rounded-xl bg-accent text-white text-sm font-bold disabled:opacity-40">
-            {adding ? '...' : 'OK'}
-          </button>
-          <button onClick={() => { setShowNew(false); setNewCat('') }}
-            className="w-10 h-10 rounded-xl bg-mist text-ink-soft flex items-center justify-center">
-            <X size={14}/>
-          </button>
-        </div>
+      {customCategories.length > 0 && (
+        <p className="text-xs text-blue-600 bg-blue-50 border border-blue-100 rounded-xl px-3 py-2">
+          💡 Cette catégorie s'affiche dans <strong>Dettes ET Transactions</strong>
+        </p>
       )}
-      <p className="text-xs text-ink-soft">Les catégories créées ici s'affichent aussi dans les Dettes et vice versa</p>
     </div>
   )
 }
 
 // ─── Transactions ─────────────────────────────────────────────────────────────
 function TransactionsSection({ transactions, onUpdate }: Props) {
-  const { allCategories, addCategory } = useCategories()
   const [showForm, setShowForm] = useState(false)
   const [loading, setLoading] = useState(false)
   const [filter, setFilter] = useState<'all' | 'income' | 'expense'>('all')
   const [search, setSearch] = useState('')
   const [selectedMonth, setSelectedMonth] = useState(currentYearMonth())
   const [editingTx, setEditingTx] = useState<Transaction | null>(null)
+  const [customCategories, setCustomCategories] = useState<string[]>(loadCustomCategories)
   const [form, setForm] = useState({
     type: 'expense' as 'income' | 'expense',
     amount: '', category: EXPENSE_CATEGORIES[0] as any, note: '',
     date: new Date().toISOString().slice(0, 10),
   })
+
+  const allCats = getAllCategories(customCategories)
+  const categories = form.type === 'income' ? [...INCOME_CATEGORIES, ...customCategories] : allCats
 
   const monthOptions = Array.from({ length: 12 }, (_, i) => {
     const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - i)
@@ -231,9 +223,15 @@ function TransactionsSection({ transactions, onUpdate }: Props) {
   const filteredIncome   = filtered.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0)
   const filteredExpenses = filtered.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0)
 
+  function handleAddCustom(cat: string) {
+    const updated = [...customCategories, cat]
+    setCustomCategories(updated)
+    saveCustomCategories(updated)
+  }
+
   function openAdd() {
     setEditingTx(null)
-    setForm({ type: 'expense', amount: '', category: allCategories[0] ?? EXPENSE_CATEGORIES[0], note: '', date: new Date().toISOString().slice(0, 10) })
+    setForm({ type: 'expense', amount: '', category: EXPENSE_CATEGORIES[0] as any, note: '', date: new Date().toISOString().slice(0, 10) })
     setShowForm(true)
   }
   function openEdit(tx: Transaction) {
@@ -341,19 +339,18 @@ function TransactionsSection({ transactions, onUpdate }: Props) {
               <button className="btn-icon bg-mist" onClick={() => { setShowForm(false); setEditingTx(null) }}><X size={20}/></button>
             </div>
             <div className="flex rounded-2xl overflow-hidden border-2 border-mist-dark">
-              <button className={`flex-1 py-3 text-sm font-bold ${form.type === 'expense' ? 'bg-danger text-white' : 'bg-white text-ink-soft'}`} onClick={() => setForm(f => ({...f, type:'expense', category: allCategories[0] ?? EXPENSE_CATEGORIES[0]}))}>💸 Dépense</button>
+              <button className={`flex-1 py-3 text-sm font-bold ${form.type === 'expense' ? 'bg-danger text-white' : 'bg-white text-ink-soft'}`} onClick={() => setForm(f => ({...f, type:'expense', category: EXPENSE_CATEGORIES[0] as any}))}>💸 Dépense</button>
               <button className={`flex-1 py-3 text-sm font-bold ${form.type === 'income' ? 'bg-positive text-white' : 'bg-white text-ink-soft'}`} onClick={() => setForm(f => ({...f, type:'income', category: INCOME_CATEGORIES[0] as any}))}>💰 Revenu</button>
             </div>
             <div><label className="label">Montant (Rs)</label><input className="input text-xl font-bold" type="number" placeholder="0" value={form.amount} onChange={e => setForm(f => ({...f, amount: e.target.value}))}/></div>
             <div>
               <label className="label">Catégorie</label>
-              {form.type === 'expense' ? (
-                <CategoryPicker value={form.category} onChange={v => setForm(f => ({...f, category: v}))} allCategories={allCategories} onAddCategory={addCategory}/>
-              ) : (
-                <select className="input" value={form.category} onChange={e => setForm(f => ({...f, category: e.target.value as any}))}>
-                  {INCOME_CATEGORIES.map(c => <option key={c}>{c}</option>)}
-                </select>
-              )}
+              <CategoryManager
+                value={form.category}
+                onChange={v => setForm(f => ({...f, category: v as any}))}
+                customCategories={customCategories}
+                onAddCustom={handleAddCustom}
+              />
             </div>
             <div><label className="label">Note (optionnel)</label><input className="input" placeholder="Ex: Courses Jumbo, Salaire avril..." value={form.note} onChange={e => setForm(f => ({...f, note: e.target.value}))}/></div>
             <div><label className="label">Date</label><input className="input" type="date" value={form.date} onChange={e => setForm(f => ({...f, date: e.target.value}))}/></div>
@@ -373,15 +370,15 @@ async function updateBudget(id: string, fields: { name?: string; limit?: number;
 }
 
 function BudgetSection({ transactions }: { transactions: Transaction[] }) {
-  const { allCategories, addCategory } = useCategories()
   const [budgets, setBudgets] = useState<BudgetCategory[]>([])
   const [recurringPayments, setRecurringPayments] = useState<RecurringPayment[]>([])
   const [debtPayments, setDebtPayments] = useState<{ category: string; amount: number }[]>([])
   const [showForm, setShowForm] = useState(false)
   const [editingBudget, setEditingBudget] = useState<BudgetCategory | null>(null)
   const [loading, setLoading] = useState(true)
+  const [customCategories, setCustomCategories] = useState<string[]>(loadCustomCategories)
+  const [expandedBudgets, setExpandedBudgets] = useState<Set<string>>(new Set())
   const [form, setForm] = useState({ name: '', limit: '', color: COLORS[0] })
-  const [duplicateError, setDuplicateError] = useState('')
 
   const ym = currentYearMonth()
 
@@ -392,17 +389,20 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
 
       const { data: { user } } = await supabase.auth.getUser()
       const { data: userDebts } = await supabase.from('debts').select('id').eq('user_id', user!.id)
-      const debtIds = (userDebts ?? []).map((d: any) => d.id)
+      const debtIds = (userDebts ?? []).map(d => d.id)
+
       const [year, month] = ym.split('-').map(Number)
       const lastDay = new Date(year, month, 0).getDate()
       const lastDate = `${ym}-${String(lastDay).padStart(2, '0')}`
+
       const { data: dh } = await supabase
         .from('debt_payment_history')
-        .select('amount, category')
+        .select('amount, category, debt_id, paid_at, note')
         .in('debt_id', debtIds.length > 0 ? debtIds : ['00000000-0000-0000-0000-000000000000'])
         .gte('paid_at', `${ym}-01`)
         .lte('paid_at', lastDate)
-      setDebtPayments((dh ?? []).map((r: any) => ({ category: r.category ?? 'Autre', amount: Number(r.amount) })))
+
+      setDebtPayments((dh ?? []).map(r => ({ category: r.category ?? 'Autre', amount: Number(r.amount), debtId: r.debt_id, paidAt: r.paid_at, note: r.note })))
     }
     load().finally(() => setLoading(false))
   }, [ym])
@@ -410,6 +410,7 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
   const spending: Record<string, number> = {}
   transactions.filter(t => t.type === 'expense' && t.date.startsWith(ym))
     .forEach(t => { spending[t.category] = (spending[t.category] || 0) + t.amount })
+
   recurringPayments.forEach(r => {
     const pay = getPaymentForMonth(r, ym)
     if (!pay.paid) return
@@ -417,6 +418,7 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
     if (!cat) return
     spending[cat] = (spending[cat] || 0) + pay.amount
   })
+
   debtPayments.forEach(dp => {
     if (!dp.category) return
     spending[dp.category] = (spending[dp.category] || 0) + dp.amount
@@ -428,17 +430,33 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
     : budgets.length > 0 ? `✅ Tous tes budgets sont respectés ce mois-ci. Continue !`
     : `Crée un plafond par catégorie pour mieux contrôler où va ton argent.`
 
-  function openAdd() { setEditingBudget(null); setForm({ name: '', limit: '', color: COLORS[0] }); setDuplicateError(''); setShowForm(true) }
-  function openEdit(b: BudgetCategory) { setEditingBudget(b); setForm({ name: b.name, limit: String(b.limit), color: b.color }); setDuplicateError(''); setShowForm(true) }
+  // Catégories déjà utilisées (hors édition en cours)
+  const usedCategories = budgets.filter(b => !editingBudget || b.id !== editingBudget.id).map(b => b.name)
+  const allCats = getAllCategories(customCategories).filter(c => !usedCategories.includes(c))
+
+  function handleAddCustom(cat: string) {
+    const updated = [...customCategories, cat]
+    setCustomCategories(updated)
+    saveCustomCategories(updated)
+  }
+
+  function toggleExpanded(id: string) {
+    setExpandedBudgets(prev => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  }
+
+  function openAdd() { setEditingBudget(null); setForm({ name: '', limit: '', color: COLORS[0] }); setShowForm(true) }
+  function openEdit(b: BudgetCategory) { setEditingBudget(b); setForm({ name: b.name, limit: String(b.limit), color: b.color }); setShowForm(true) }
 
   async function handleSave() {
     if (!form.name || !form.limit) return
-    // Bloquer les doublons de catégorie
-    if (!editingBudget) {
-      const exists = budgets.some(b => b.name.toLowerCase() === form.name.toLowerCase())
-      if (exists) { setDuplicateError(`Un budget "${form.name}" existe déjà. Modifie-le plutôt.`); return }
-    }
-    setDuplicateError('')
+    // Bloquer doublon (sauf si on édite la même)
+    const isDuplicate = budgets.some(b => b.name === form.name && (!editingBudget || b.id !== editingBudget.id))
+    if (isDuplicate) return
+
     if (editingBudget) {
       await updateBudget(editingBudget.id, { name: form.name, limit: Number(form.limit), color: form.color })
       setBudgets(prev => prev.map(b => b.id === editingBudget.id ? { ...b, name: form.name, limit: Number(form.limit), color: form.color } : b))
@@ -448,12 +466,6 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
     }
     setForm({ name: '', limit: '', color: COLORS[0] }); setShowForm(false); setEditingBudget(null)
   }
-
-  // Catégories disponibles = toutes moins celles déjà utilisées (sauf si on édite)
-  const usedCats = budgets.map(b => b.name)
-  const availableCats = editingBudget
-    ? allCategories
-    : allCategories.filter(c => !usedCats.includes(c))
 
   if (loading) return <div className="card text-center py-8 text-ink-soft">Chargement...</div>
 
@@ -467,11 +479,7 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
         </p>
       </div>
 
-      <button onClick={openAdd} className="btn-primary w-full gap-2" style={{ backgroundColor: '#7C3AED' }}
-        disabled={availableCats.length === 0}>
-        <Plus size={18}/> Nouveau plafond
-      </button>
-      {availableCats.length === 0 && <p className="text-xs text-center text-ink-soft">Tous les budgets sont déjà créés pour chaque catégorie.</p>}
+      <button onClick={openAdd} className="btn-primary w-full gap-2" style={{ backgroundColor: '#7C3AED' }}><Plus size={18}/> Nouveau plafond</button>
 
       {budgets.length === 0 ? (
         <div className="card text-center py-10"><p className="text-3xl mb-2">🎯</p><p className="font-semibold text-ink">Aucun budget défini</p><p className="text-sm text-ink-soft mt-1">Commence par fixer un plafond pour l'alimentation ou le transport</p></div>
@@ -480,12 +488,16 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
         const pct   = Math.min(100, (spent / b.limit) * 100)
         const over  = spent > b.limit
         const near  = pct >= 80 && !over
+        const isExpanded = expandedBudgets.has(b.id)
+
         const recurringContrib = recurringPayments.filter(r => {
           const pay = getPaymentForMonth(r, ym)
           return pay.paid && RECURRING_TO_BUDGET[r.category] === b.name
         })
-        const debtContrib = debtPayments.filter(dp => dp.category === b.name)
-        const debtContribTotal = debtContrib.reduce((s, dp) => s + dp.amount, 0)
+        const debtContrib = (debtPayments as any[]).filter(dp => dp.category === b.name)
+        const txContrib = transactions.filter(t => t.type === 'expense' && t.date.startsWith(ym) && t.category === b.name)
+
+        const hasDetails = recurringContrib.length > 0 || debtContrib.length > 0 || txContrib.length > 0
 
         return (
           <div key={b.id} className="card space-y-3">
@@ -501,6 +513,7 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
                 <button className="w-8 h-8 rounded-xl bg-mist hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center" onClick={() => { deleteBudget(b.id); setBudgets(prev => prev.filter(x => x.id !== b.id)) }}><Trash2 size={14}/></button>
               </div>
             </div>
+
             <div className="w-full h-2.5 bg-mist-dark rounded-full overflow-hidden">
               <div className="h-full rounded-full transition-all duration-500" style={{ width: `${pct}%`, backgroundColor: over ? '#DC2626' : near ? '#D97706' : b.color }}/>
             </div>
@@ -508,8 +521,25 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
               <span className={`font-mono font-bold ${over ? 'text-danger' : 'text-ink'}`}>{formatAmount(spent)} dépensés</span>
               <span className="font-mono text-ink-soft">plafond : {formatAmount(b.limit)}</span>
             </div>
-            {(recurringContrib.length > 0 || debtContribTotal > 0) && (
+
+            {hasDetails && (
+              <button
+                onClick={() => toggleExpanded(b.id)}
+                className="flex items-center gap-1.5 text-xs text-ink-soft hover:text-ink transition-colors"
+              >
+                {isExpanded ? <ChevronUp size={14}/> : <ChevronDown size={14}/>}
+                {isExpanded ? 'Voir moins' : 'Voir plus'}
+              </button>
+            )}
+
+            {isExpanded && hasDetails && (
               <div className="pt-1 border-t border-mist-dark space-y-1">
+                {txContrib.map(t => (
+                  <div key={t.id} className="flex items-center justify-between text-xs text-ink-soft">
+                    <span>💸 {t.note || t.category} <span className="text-mist-dark">· {new Date(t.date).toLocaleDateString('fr-FR')}</span></span>
+                    <span className="font-mono">{formatAmount(t.amount)}</span>
+                  </div>
+                ))}
                 {recurringContrib.map(r => {
                   const pay = getPaymentForMonth(r, ym)
                   return (
@@ -519,12 +549,16 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
                     </div>
                   )
                 })}
-                {debtContribTotal > 0 && (
-                  <div className="flex items-center justify-between text-xs text-ink-soft">
-                    <span>💳 Remboursements dettes</span>
-                    <span className="font-mono">{formatAmount(debtContribTotal)}</span>
+                {debtContrib.map((dp: any, i: number) => (
+                  <div key={i} className="flex items-center justify-between text-xs text-ink-soft">
+                    <span>
+                      💳 Remboursement
+                      {dp.note && <span className="italic"> · {dp.note}</span>}
+                      {dp.paidAt && <span className="text-mist-dark"> · {new Date(dp.paidAt).toLocaleDateString('fr-FR')}</span>}
+                    </span>
+                    <span className="font-mono">{formatAmount(dp.amount)}</span>
                   </div>
-                )}
+                ))}
               </div>
             )}
           </div>
@@ -536,21 +570,27 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
           <div className="bottom-sheet-content">
             <div className="flex items-center justify-between mb-2">
               <h2 className="text-lg font-bold text-ink">{editingBudget ? 'Modifier le plafond' : 'Nouveau plafond'}</h2>
-              <button className="btn-icon bg-mist" onClick={() => { setShowForm(false); setEditingBudget(null); setDuplicateError('') }}><X size={20}/></button>
+              <button className="btn-icon bg-mist" onClick={() => { setShowForm(false); setEditingBudget(null) }}><X size={20}/></button>
             </div>
             <div>
               <label className="label">Catégorie de dépense</label>
               {editingBudget ? (
                 <select className="input" value={form.name} onChange={e => setForm(f => ({...f, name: e.target.value}))}>
-                  {allCategories.map(c => <option key={c}>{c}</option>)}
+                  {getAllCategories(customCategories).map(c => <option key={c}>{c}</option>)}
                 </select>
               ) : (
-                <select className="input" value={form.name} onChange={e => { setForm(f => ({...f, name: e.target.value})); setDuplicateError('') }}>
-                  <option value="">— Choisir —</option>
-                  {availableCats.map(c => <option key={c}>{c}</option>)}
-                </select>
+                <>
+                  <CategoryManager
+                    value={form.name}
+                    onChange={v => setForm(f => ({...f, name: v}))}
+                    customCategories={customCategories}
+                    onAddCustom={handleAddCustom}
+                  />
+                  {form.name && budgets.some(b => b.name === form.name) && (
+                    <p className="text-xs text-danger mt-1 font-semibold">⚠️ Un plafond existe déjà pour cette catégorie</p>
+                  )}
+                </>
               )}
-              {duplicateError && <p className="text-xs text-danger mt-1 font-semibold">{duplicateError}</p>}
             </div>
             <div><label className="label">Plafond mensuel (Rs)</label><input className="input" type="number" placeholder="Ex: 15000" value={form.limit} onChange={e => setForm(f => ({...f, limit: e.target.value}))}/></div>
             <div>
@@ -559,7 +599,12 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
                 {COLORS.map(c => <button key={c} style={{ backgroundColor: c }} className={`w-10 h-10 rounded-2xl border-2 transition-transform ${form.color === c ? 'border-ink scale-110' : 'border-transparent'}`} onClick={() => setForm(f => ({...f, color: c}))}/>)}
               </div>
             </div>
-            <button className="btn-primary w-full py-4" onClick={handleSave} style={{ backgroundColor: '#7C3AED' }}>
+            <button
+              className="btn-primary w-full py-4"
+              onClick={handleSave}
+              style={{ backgroundColor: '#7C3AED' }}
+              disabled={!editingBudget && budgets.some(b => b.name === form.name)}
+            >
               {editingBudget ? 'Enregistrer les modifications' : 'Créer le plafond'}
             </button>
           </div>
@@ -679,7 +724,6 @@ function CreditorPicker({ value, onChange }: { value: string; onChange: (v: stri
 
 // ─── Dettes ───────────────────────────────────────────────────────────────────
 function DettesSection() {
-  const { allCategories, addCategory } = useCategories()
   const [debts, setDebts] = useState<Debt[]>([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
@@ -696,7 +740,7 @@ function DettesSection() {
   const [editPayAmount, setEditPayAmount] = useState('')
   const [editPayDate, setEditPayDate] = useState('')
   const [editPayNote, setEditPayNote] = useState('')
-  const [expandedDetails, setExpandedDetails] = useState<Record<string, boolean>>({})
+  const [customCategories, setCustomCategories] = useState<string[]>(loadCustomCategories)
 
   const [form, setForm] = useState({
     type: 'owe' as 'owe' | 'owed',
@@ -706,6 +750,12 @@ function DettesSection() {
   })
 
   useEffect(() => { getDebts().then(setDebts).finally(() => setLoading(false)) }, [])
+
+  function handleAddCustom(cat: string) {
+    const updated = [...customCategories, cat]
+    setCustomCategories(updated)
+    saveCustomCategories(updated)
+  }
 
   const plan      = computeCoachPlan(debts, [], [], currentYearMonth())
   const totalOwe  = debts.filter(d => d.type === 'owe').reduce((s, d) => s + d.remaining, 0)
@@ -867,7 +917,6 @@ function DettesSection() {
         const endDate      = projectedEndDate(d.remaining, d.minimumPayment)
         const showHistory  = openHistoryId === d.id
         const debtHistory  = historyMap[d.id] ?? []
-        const showDetails  = expandedDetails[d.id] ?? false
 
         let dueBadge: React.ReactNode = null
         if (d.dueDate) {
@@ -880,7 +929,6 @@ function DettesSection() {
 
         return (
           <div key={d.id} className={`card space-y-3 border-l-4 ${d.type === 'owe' ? 'border-l-danger' : 'border-l-positive'} ${isSnowball ? 'ring-2 ring-accent ring-offset-1' : ''}`}>
-            {/* Header toujours visible */}
             <div className="flex items-start justify-between gap-2">
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-1.5 flex-wrap mb-1">
@@ -890,7 +938,20 @@ function DettesSection() {
                   <span className="text-xs font-medium text-ink-soft">{d.type === 'owe' ? 'Je dois à' : 'Me doit'}</span>
                 </div>
                 <p className="font-bold text-base text-ink">{d.person}</p>
-                {d.note && <p className="text-xs text-accent mt-0.5 font-medium">{d.note}</p>}
+                {/* FIX #6 : note en bleu */}
+                {d.note && <p className="text-xs text-blue-500 mt-0.5">{d.note}</p>}
+                <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1.5">
+                  {d.minimumPayment > 0 && (
+                    <span className="text-xs text-ink-soft">
+                      Min. <span className="font-semibold text-ink">{formatAmount(d.minimumPayment)}</span>/mois
+                      {monthsLeft && !isRecurring && <span className="text-warning font-medium"> · ~{monthsLeft} mois</span>}
+                    </span>
+                  )}
+                  {endDate && !isRecurring && (
+                    <span className="text-xs text-ink-soft">Fin : <span className="font-semibold text-ink">{endDate}</span></span>
+                  )}
+                </div>
+                {dueBadge && <div className="mt-1.5">{dueBadge}</div>}
               </div>
 
               <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
@@ -904,7 +965,6 @@ function DettesSection() {
               </div>
             </div>
 
-            {/* Barre de progression */}
             {paidPct > 0 && !isRecurring && (
               <div className="space-y-1">
                 <div className="w-full h-2 bg-mist-dark rounded-full overflow-hidden">
@@ -917,38 +977,6 @@ function DettesSection() {
               </div>
             )}
 
-            {/* Bouton Voir plus / Voir moins */}
-            {(d.minimumPayment > 0 || endDate || dueBadge) && (
-              <button
-                onClick={() => setExpandedDetails(prev => ({ ...prev, [d.id]: !showDetails }))}
-                className="flex items-center gap-1.5 text-xs text-accent font-semibold hover:underline">
-                {showDetails ? <ChevronUp size={13}/> : <ChevronDown size={13}/>}
-                {showDetails ? 'Voir moins' : 'Voir plus'}
-              </button>
-            )}
-
-            {/* Détails masqués */}
-            {showDetails && (
-              <div className="space-y-1.5 bg-mist rounded-2xl p-3">
-                {d.minimumPayment > 0 && (
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-ink-soft">Remboursement min.</span>
-                    <span className="font-semibold text-ink">{formatAmount(d.minimumPayment)}/mois
-                      {monthsLeft && !isRecurring && <span className="text-warning font-medium"> · ~{monthsLeft} mois</span>}
-                    </span>
-                  </div>
-                )}
-                {endDate && !isRecurring && (
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-ink-soft">Fin estimée</span>
-                    <span className="font-semibold text-ink">{endDate}</span>
-                  </div>
-                )}
-                {dueBadge && <div className="mt-1">{dueBadge}</div>}
-              </div>
-            )}
-
-            {/* Historique */}
             {showHistory && (
               <div className="bg-mist rounded-2xl overflow-hidden">
                 <div className="px-3 py-2.5 border-b border-mist-dark flex items-center justify-between">
@@ -964,7 +992,7 @@ function DettesSection() {
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-mono font-bold text-positive">−{formatAmount(h.amount)}</p>
                       <p className="text-xs text-ink-soft">{new Date(h.paidAt).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })}</p>
-                      {h.note && <p className="text-xs text-accent font-medium italic truncate">{h.note}</p>}
+                      {h.note && <p className="text-xs text-ink-soft italic truncate">{h.note}</p>}
                     </div>
                     <div className="flex gap-1 ml-2 flex-shrink-0">
                       <button onClick={() => { setEditingPayment(h); setEditPayAmount(String(h.amount)); setEditPayDate(h.paidAt); setEditPayNote(h.note || '') }} className="w-7 h-7 rounded-lg bg-white hover:bg-accent-light text-ink-soft hover:text-accent flex items-center justify-center transition-colors"><Pencil size={12}/></button>
@@ -975,7 +1003,6 @@ function DettesSection() {
               </div>
             )}
 
-            {/* Paiement */}
             {payingId === d.id ? (
               <div className="space-y-2 p-3 bg-danger-light rounded-2xl">
                 <p className="text-xs font-bold text-danger uppercase tracking-wide">Enregistrer un remboursement</p>
@@ -989,11 +1016,16 @@ function DettesSection() {
                 </div>
               </div>
             ) : (
-              <button
-                className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-bold text-white bg-danger hover:bg-red-700 rounded-2xl active:scale-95 transition-all"
-                onClick={() => { setPayingId(d.id); setPayAmount(String(d.minimumPayment || '')); setPayDate(new Date().toISOString().slice(0, 10)); setPayNote('') }}>
-                <Plus size={15}/> Enregistrer un remboursement
-              </button>
+              /* FIX #5 : centré, pas w-full, couleur rouge */
+              <div className="flex justify-center">
+                <button
+                  className="px-6 py-2.5 text-sm font-bold text-white rounded-2xl active:scale-95 transition-all"
+                  style={{ backgroundColor: '#DC2626' }}
+                  onClick={() => { setPayingId(d.id); setPayAmount(String(d.minimumPayment || '')); setPayDate(new Date().toISOString().slice(0, 10)); setPayNote('') }}
+                >
+                  + Enregistrer un remboursement
+                </button>
+              </div>
             )}
           </div>
         )
@@ -1042,10 +1074,18 @@ function DettesSection() {
               <label className="label">{form.type === 'owe' ? 'À qui tu dois ?' : 'Qui te doit ?'}</label>
               <CreditorPicker value={form.person} onChange={v => setForm(f => ({...f, person: v}))}/>
             </div>
+
             <div>
               <label className="label">Catégorie <span className="text-danger">*</span></label>
-              <CategoryPicker value={form.category} onChange={v => setForm(f => ({...f, category: v}))} allCategories={allCategories} onAddCategory={addCategory}/>
+              <CategoryManager
+                value={form.category}
+                onChange={v => setForm(f => ({...f, category: v}))}
+                customCategories={customCategories}
+                onAddCustom={handleAddCustom}
+              />
+              <p className="text-xs text-ink-soft mt-1">Les remboursements s'ajouteront au budget de cette catégorie</p>
             </div>
+
             <div><label className="label">Montant total (Rs)</label><input className="input" type="number" placeholder="Ex: 150000" value={form.amount} onChange={e => setForm(f => ({...f, amount: e.target.value}))}/></div>
             <div><label className="label">Remboursement minimum / mois (Rs)</label><input className="input" type="number" placeholder="Ex: 3000" value={form.minimumPayment} onChange={e => setForm(f => ({...f, minimumPayment: e.target.value}))}/></div>
             <div><label className="label">Taux d'intérêt annuel % (optionnel)</label><input className="input" type="number" placeholder="Ex: 12" value={form.interestRate} onChange={e => setForm(f => ({...f, interestRate: e.target.value}))}/></div>
@@ -1073,7 +1113,6 @@ function DettesSection() {
 
 // ─── Épargne ──────────────────────────────────────────────────────────────────
 function EpargneSection() {
-  const { allCategories, addCategory } = useCategories()
   const [goals, setGoals] = useState<SavingsGoal[]>([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
@@ -1172,7 +1211,7 @@ function EpargneSection() {
             <div><label className="label">Montant cible (Rs)</label><input className="input" type="number" placeholder="Ex: 50000" value={form.target} onChange={e => setForm(f => ({...f, target: e.target.value}))}/></div>
             <div>
               <label className="label">Catégorie</label>
-              <CategoryPicker value={form.category} onChange={v => setForm(f => ({...f, category: v}))} allCategories={allCategories} onAddCategory={addCategory}/>
+              <p className="text-xs text-ink-soft mt-1">Pour suivre cet objectif dans le bon budget</p>
             </div>
             <button className="btn-primary w-full py-4" onClick={handleAdd} style={{ backgroundColor: '#16A34A' }}>Créer l'objectif</button>
           </div>
