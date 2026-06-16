@@ -208,7 +208,11 @@ ${context}`,
                 💸 Dépense</button>
               <button className={`flex-1 py-3 text-sm font-bold
                 ${form.type === 'income' ? 'bg-positive text-white' : 'bg-white text-ink-soft'}`}
-                onClick={() => setForm(f => ({ ...f, type:'income', category: INCOME_CATEGORIES[0] }))}>
+                onClick={() => setForm(f => ({
+                  ...f,
+                  type: 'income',
+                  category: INCOME_CATEGORIES[0] as any
+                }))}>
                 💰 Revenu</button>
             </div>
             <div>
@@ -219,7 +223,10 @@ ${context}`,
             <div>
               <label className="label">Catégorie</label>
               <select className="input" value={form.category}
-                onChange={e => setForm(f => ({ ...f, category: e.target.value }))}>
+                onChange={e => setForm(f => ({
+                  ...f,
+                  category: e.target.value as any
+                }))}>
                 {categories.map(c => <option key={c}>{c}</option>)}
               </select>
             </div>
