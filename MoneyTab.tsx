@@ -285,10 +285,9 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
       setBudgets(b); setRecurringPayments(r)
 
       const { data: dh } = await supabase
-        .from('debt_payment_history')
-        .select('amount, category')
-        .gte('paid_at', `${ym}-01`)
-        .lte('paid_at', `${ym}-31`)
+      .from('debt_payment_history')
+      .select('amount, category')
+      .like('paid_at', `${ym}%`)
       setDebtPayments((dh ?? []).map(r => ({ category: r.category ?? 'Autre', amount: Number(r.amount) })))
     }
     load().finally(() => setLoading(false))
