@@ -287,8 +287,8 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
      const { data: { user } } = await supabase.auth.getUser()
       const { data: dh } = await supabase
         .from('debt_payment_history')
-        .select('amount, category')
-        .eq('user_id', user!.id)
+        .select('amount, category, debts!inner(user_id)')
+        .eq('debts.user_id', (await supabase.auth.getUser()).data.user!.id)
         .like('paid_at', `${ym}%`)
       setDebtPayments((dh ?? []).map(r => ({ category: r.category ?? 'Autre', amount: Number(r.amount) })))
     }
