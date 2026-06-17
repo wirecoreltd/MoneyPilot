@@ -8,7 +8,7 @@ export interface UserProfile {
   situation: 'single' | 'couple' | 'family' | 'single-parent'
   children: number
   monthlyIncome: number
-  incomeType: 'fixed' | 'variable' | 'mixed'
+  incomeType: '' | 'fixed' | 'mixed' | 'variable' | 'none'
   mainGoal: 'survive' | 'stabilize' | 'build' | 'prosper'
   hasDebts: boolean
   currency: string
