@@ -1,7 +1,19 @@
 'use client'
 import { useEffect, useState, useRef } from 'react'
 import { RefreshCw, ChevronRight, AlertTriangle, TrendingUp, Shield, Zap } from 'lucide-react'
-import { getUserProfile } from '@/lib/storage'
+import {
+  getUserProfile,
+  getDebts,
+  getSavings,
+  getTransactions,
+  getRecurringPayments,
+  getMonthlyIncomes,
+  getProjects,
+  computeCoachPlan,
+  currentYearMonth,
+  formatAmount,
+  formatDebtEndDate,
+} from '@/lib/storage'
 import type { UserProfile } from '@/lib/storage'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -179,31 +191,135 @@ export default function CoachPage() {
   async function fetchAnalysis(p: UserProfile) {
     setLoading(true)
 
-    const context = `
-PROFIL UTILISATEUR COMPLET :
+    try {
+      const month = currentYearMonth()
+
+      // 1. Charger toutes les données réelles de l'utilisateur
+      const [debts, savings, transactions, recurring, incomes, projects] = await Promise.all([
+        getDebts(),
+        getSavings(),
+        getTransactions(),
+        getRecurringPayments(),
+        getMonthlyIncomes(month),
+        getProjects(),
+      ])
+
+      // 2. Pré-calculer le plan (snowball, reste à vivre) côté code — pas par le LLM
+      const plan = computeCoachPlan(debts, recurring, incomes, month)
+
+      // 3. Dépenses des 30 derniers jours, regroupées par catégorie
+      const thirtyDaysAgo = new Date()
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
+      const recentExpenses = transactions.filter(
+        t => t.type === 'expense' && new Date(t.date) >= thirtyDaysAgo
+      )
+      const expensesByCategory: Record<string, number> = {}
+      for (const t of recentExpenses) {
+        expensesByCategory[t.category] = (expensesByCategory[t.category] || 0) + t.amount
+      }
+      const totalRecentExpenses = recentExpenses.reduce((s, t) => s + t.amount, 0)
+
+      // 4. Construire le bloc dettes (nominatif, chiffré)
+      const owedDebts = debts.filter(d => d.type === 'owe')
+      const debtsBlock = owedDebts.length === 0
+        ? "Aucune dette en cours."
+        : owedDebts.map(d => {
+            const monthsLeft = d.minimumPayment > 0 ? Math.ceil(d.remaining / d.minimumPayment) : null
+            const endLabel = formatDebtEndDate(d)
+            return [
+              `- "${d.person}" (catégorie: ${d.category})`,
+              `  Reste à payer: ${formatAmount(d.remaining, p.currency)} sur ${formatAmount(d.amount, p.currency)} initial`,
+              `  Mensualité actuelle: ${formatAmount(d.minimumPayment, p.currency)}`,
+              d.interestRate ? `  Taux d'intérêt: ${d.interestRate}%` : null,
+              monthsLeft !== null ? `  Temps restant au rythme actuel: ${monthsLeft} mois${endLabel ? ` (${endLabel})` : ''}` : null,
+              d.dueDate ? `  Échéance: ${d.dueDate}` : null,
+              d.recurring ? `  Type: dette récurrente (se renouvelle chaque mois)` : null,
+            ].filter(Boolean).join('\n')
+          }).join('\n')
+
+      // 5. Construire le bloc épargnes (nominatif, chiffré)
+      const savingsBlock = savings.length === 0
+        ? "Aucune épargne en cours."
+        : savings.map(s => {
+            const pct = s.target > 0 ? Math.round((s.saved / s.target) * 100) : 0
+            return `- "${s.name}" (${s.category}): ${formatAmount(s.saved, p.currency)} / ${formatAmount(s.target, p.currency)} (${pct}%)`
+          }).join('\n')
+
+      // 6. Construire le bloc charges fixes récurrentes
+      const recurringBlock = recurring.length === 0
+        ? "Aucune charge récurrente enregistrée."
+        : recurring.map(r => `- ${r.name} (${r.category}): ${formatAmount(r.defaultAmount, p.currency)}/${r.frequency === 'monthly' ? 'mois' : 'an'}`).join('\n')
+
+      // 7. Construire le bloc projets
+      const projectsBlock = projects.length === 0
+        ? "Aucun projet en cours."
+        : projects.map(pr => `- ${pr.emoji} "${pr.name}" (${pr.type}): ${formatAmount(pr.savedAmount, p.currency)} / ${formatAmount(pr.targetAmount, p.currency)}, contribution mensuelle: ${formatAmount(pr.monthlyContribution, p.currency)}`).join('\n')
+
+      // 8. Construire le bloc dépenses récentes par catégorie
+      const expensesBlock = Object.keys(expensesByCategory).length === 0
+        ? "Pas de dépenses enregistrées sur les 30 derniers jours."
+        : Object.entries(expensesByCategory)
+            .sort((a, b) => b[1] - a[1])
+            .map(([cat, amt]) => `- ${cat}: ${formatAmount(amt, p.currency)}`)
+            .join('\n')
+
+      // 9. Plan pré-calculé (snowball, reste à vivre) — chiffres déjà fiables
+      const planBlock = [
+        `Revenu mensuel total déclaré: ${formatAmount(plan.totalIncome, p.currency)}`,
+        `Charges fixes (loyer, factures, etc.): ${formatAmount(plan.fixedCharges, p.currency)}`,
+        `Total mensualités dettes: ${formatAmount(plan.debtMinimums, p.currency)}`,
+        `Estimation dépenses variables: ${formatAmount(plan.variableEstimate, p.currency)}`,
+        `Argent libre disponible/mois: ${formatAmount(plan.freeMoney, p.currency)}`,
+        plan.snowballTarget
+          ? `Cible snowball recommandée: "${plan.snowballTarget.person}" (reste ${formatAmount(plan.snowballTarget.remaining, p.currency)}) — suggestion d'y ajouter ${formatAmount(plan.snowballSuggestion, p.currency)}/mois`
+          : `Aucune cible snowball identifiée actuellement.`,
+        `Suggestion épargne/mois: ${formatAmount(plan.savingsSuggestion, p.currency)}`,
+        `Suggestion loisirs/mois: ${formatAmount(plan.leisureSuggestion, p.currency)}`,
+        plan.alerts.length > 0 ? `Alertes système détectées:\n${plan.alerts.map(a => `  ${a}`).join('\n')}` : null,
+      ].filter(Boolean).join('\n')
+
+      const context = `
+PROFIL UTILISATEUR :
 Prénom : ${p.firstName}
 Situation familiale : ${p.situation}${p.children > 0 ? ` avec ${p.children} enfant(s)` : ''}
-Revenu mensuel net : ${p.monthlyIncome} Rs
 Type de revenu : ${p.incomeType}
-A des dettes : ${p.hasDebts ? 'Oui' : 'Non'}
 Objectif principal : ${p.mainGoal}
 Devise : ${p.currency}
+
+═══ PLAN FINANCIER PRÉ-CALCULÉ (chiffres fiables, ne pas recalculer) ═══
+${planBlock}
+
+═══ DETTES DÉTAILLÉES ═══
+${debtsBlock}
+
+═══ ÉPARGNES EN COURS ═══
+${savingsBlock}
+
+═══ CHARGES FIXES RÉCURRENTES ═══
+${recurringBlock}
+
+═══ PROJETS ═══
+${projectsBlock}
+
+═══ DÉPENSES DES 30 DERNIERS JOURS PAR CATÉGORIE (total: ${formatAmount(totalRecentExpenses, p.currency)}) ═══
+${expensesBlock}
 `.trim()
 
-    try {     
-        const res = await fetch('/api/coach-analysis', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ context }),
-        })
-      console.log('API status:', res.status) 
-        const parsed: CoachAnalysis = await res.json()
-      console.log('Parsed:', parsed)
-        setAnalysis(parsed)
-        setLastUpdated(new Date())
+      const res = await fetch('/api/coach-analysis', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ context }),
+      })
 
-      
-    } catch {
+      if (!res.ok) throw new Error(`API error: ${res.status}`)
+
+      const parsed: CoachAnalysis = await res.json()
+      if ((parsed as any).error) throw new Error((parsed as any).error)
+
+      setAnalysis(parsed)
+      setLastUpdated(new Date())
+    } catch (err) {
+      console.error('Coach analysis failed:', err)
       setAnalysis({
         greeting: `${p.firstName}, voici ton analyse.`,
         situation: "Impossible de charger l'analyse complète. Vérifie ta connexion et réessaie.",
