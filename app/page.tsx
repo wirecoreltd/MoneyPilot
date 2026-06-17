@@ -59,14 +59,28 @@ export default function Page() {
   return (
     <div className="min-h-screen bg-mist">
       <BottomNav active={tab} onChange={setTab} />
-      <header className="md:hidden sticky top-0 z-40 bg-white border-b border-mist-dark
-                         px-4 py-3 flex items-center justify-between">
-        <span className="text-lg font-bold text-ink tracking-tight">
-          Money<span className="text-accent">Pilot</span>
-        </span>
-        <span className="text-xs text-ink-soft font-medium">
-          👋 {profile.firstName}
-        </span>
+      <header className="md:hidden sticky top-0 z-40 bg-white border-b border-mist-dark px-4 py-3">
+        <div className="flex items-center justify-between">
+          <span className="text-lg font-bold text-ink tracking-tight">
+            Money<span className="text-accent">Pilot</span>
+          </span>
+      
+          <div className="flex flex-col items-end">
+            <span className="text-xs text-ink-soft font-medium">
+              👋 {profile.firstName}
+            </span>
+      
+            <button
+              onClick={async () => {
+                await supabase.auth.signOut()
+                window.location.href = '/login'
+              }}
+              className="mt-1 text-[10px] text-red-500 font-medium flex items-center gap-1"
+            >
+              🚪 Déconnexion
+            </button>
+          </div>
+        </div>
       </header>
       <main className="md:ml-60 pb-28 md:pb-8 px-4 py-4 md:px-8 md:py-8 max-w-2xl mx-auto md:mx-0">
         {tab === 'home'    && <HomeTab     transactions={transactions} onUpdate={refresh} profile={profile} />}
