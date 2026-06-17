@@ -1,60 +1,37 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis,
   Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine
 } from "recharts";
+import {
+  getDebts,
+  getSavings,
+  getMonthlyIncomes,
+  addMonthlyIncome,
+  deleteMonthlyIncome,
+  getProjects,
+  getRecurringPayments,
+  getMonthlyChecklist,
+  toggleRecurringPayment,
+  toggleDebtPayment,
+  deleteRecurringPayment,
+  computeCoachPlan,
+  computeYearlyProjection,
+  computeHealthScore,
+  currentYearMonth,
+  formatAmount,
+  Debt,
+  SavingsGoal,
+  MonthlyIncome,
+  Project,
+  ChecklistItem,
+  Transaction,
+  CoachPlan,
+  MonthProjection,
+} from "@/lib/storage";
 
-// ─── Mock data ─────────────────────────────────────────────────────────────────
-const fmt = (n: number): string =>
-  new Intl.NumberFormat("fr-MU", { style: "currency", currency: "MUR", maximumFractionDigits: 0 }).format(n);
-
-const MOCK_INCOMES = [
-  { id: "1", label: "Salaire", amount: 28000, isFixed: true, month: "2025-06" },
-  { id: "2", label: "Freelance", amount: 4500, isFixed: false, month: "2025-06" },
-];
-
-const MOCK_CHECKLIST = [
-  { id: "r1", source: "recurring", name: "Loyer", emoji: "🏠", amount: 9500, defaultAmount: 9500, paid: true, category: "logement" },
-  { id: "r2", source: "recurring", name: "Assurance", emoji: "🛡️", amount: 1800, defaultAmount: 1800, paid: true, category: "assurance" },
-  { id: "d1", source: "debt", name: "Prêt BCP", emoji: "💳", amount: 4200, defaultAmount: 4200, paid: false, hasTotal: true },
-  { id: "r3", source: "recurring", name: "Internet", emoji: "⚡", amount: 850, defaultAmount: 850, paid: false, category: "factures" },
-];
-
-const MOCK_SAVINGS = [
-  { id: "s1", name: "Fonds urgence", target: 80000, saved: 60000, emoji: "🛡️" },
-  { id: "s2", name: "Vacances", target: 30000, saved: 12000, emoji: "✈️" },
-];
-
-const MOCK_DEBTS = [
-  { id: "d1", type: "owe", person: "Prêt BCP", amount: 120000, remaining: 18000, minimumPayment: 4200, category: "Dette" },
-];
-
-const MOCK_PLAN = {
-  totalIncome: 32500,
-  fixedCharges: 9500,
-  debtMinimums: 4200,
-  variableEstimate: 4800,
-  freeMoney: 14000,
-  snowballSuggestion: 7000,
-  savingsSuggestion: 4200,
-  leisureSuggestion: 2800,
-  alerts: [] as string[],
-};
-
-// ─── Types ─────────────────────────────────────────────────────────────────────
-type Income = typeof MOCK_INCOMES[0];
-type ChecklistItem = typeof MOCK_CHECKLIST[0] & { hasTotal?: boolean; category?: string };
-type Saving = typeof MOCK_SAVINGS[0];
-type Debt = typeof MOCK_DEBTS[0];
-type Plan = typeof MOCK_PLAN;
-
-type ProjectionPoint = {
-  month: string;
-  label: string;
-  projectedIncome: number;
-  projectedExpenses: number;
-  projectedBalance: number;
-};
+// ─── Helpers ────────────────────────────────────────────────────────────────────
+const fmt = (n: number): string => formatAmount(n);
 
 type SixMonthPoint = {
   month: string;
@@ -62,31 +39,19 @@ type SixMonthPoint = {
   Dépenses: number;
 };
 
-// ─── Mock projection data ──────────────────────────────────────────────────────
-const NOW = new Date();
-
-const MOCK_PROJECTION: ProjectionPoint[] = Array.from({ length: 12 }, (_, i) => {
-  const d = new Date(NOW.getFullYear(), i, 1);
-  const label = d.toLocaleDateString("fr-FR", { month: "short" });
-  const income = 30000 + Math.round(Math.random() * 5000);
-  const expenses = 18000 + Math.round(Math.random() * 4000);
-  return {
-    month: `${NOW.getFullYear()}-${String(i + 1).padStart(2, "0")}`,
-    label,
-    projectedIncome: income,
-    projectedExpenses: expenses,
-    projectedBalance: (income - expenses) * (i + 1) * 0.7,
-  };
-});
-
-const MOCK_6M: SixMonthPoint[] = Array.from({ length: 6 }, (_, i) => {
-  const d = new Date(NOW.getFullYear(), NOW.getMonth() - (5 - i), 1);
-  return {
-    month: d.toLocaleDateString("fr-FR", { month: "short" }),
-    Revenus: 28000 + Math.round(Math.random() * 6000),
-    Dépenses: 16000 + Math.round(Math.random() * 5000),
-  };
-});
+function computeSixMonthHistory(transactions: Transaction[]): SixMonthPoint[] {
+  const now = new Date();
+  return Array.from({ length: 6 }, (_, i) => {
+    const d = new Date(now.getFullYear(), now.getMonth() - (5 - i), 1);
+    const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    const txs = transactions.filter((t) => t.date.startsWith(ym));
+    return {
+      month: d.toLocaleDateString("fr-FR", { month: "short" }),
+      Revenus: txs.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0),
+      Dépenses: txs.filter((t) => t.type === "expense").reduce((s, t) => s + t.amount, 0),
+    };
+  });
+}
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
@@ -127,7 +92,21 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 }
 
 // ─── Health score gauge ───────────────────────────────────────────────────────
-function HealthGauge({ score = 84 }: { score?: number }) {
+function HealthGauge({
+  score,
+  label,
+  color,
+  savingsRate,
+  debtRatio,
+  emergencyMonths,
+}: {
+  score: number;
+  label: string;
+  color: string;
+  savingsRate: string;
+  debtRatio: string;
+  emergencyMonths: string;
+}) {
   const [displayed, setDisplayed] = useState(0);
   const raf = useRef<number | null>(null);
 
@@ -144,9 +123,6 @@ function HealthGauge({ score = 84 }: { score?: number }) {
     raf.current = requestAnimationFrame(animate);
     return () => { if (raf.current) cancelAnimationFrame(raf.current); };
   }, [score]);
-
-  const color = score >= 80 ? "#16A34A" : score >= 60 ? "#2563EB" : score >= 40 ? "#D97706" : "#DC2626";
-  const label = score >= 80 ? "Excellent" : score >= 60 ? "Bien" : score >= 40 ? "À améliorer" : "Fragile";
 
   const R = 68, cx = 90, cy = 90;
   const startAngle = -210, endAngle = 30;
@@ -171,9 +147,9 @@ function HealthGauge({ score = 84 }: { score?: number }) {
       </svg>
       <div style={{ display: "flex", justifyContent: "space-around", width: "100%", marginTop: 4 }}>
         {[
-          { label: "Taux épargne", value: "34%" },
-          { label: "Endettement", value: "15%" },
-          { label: "Fonds urgence", value: "5 mois" },
+          { label: "Taux épargne", value: savingsRate },
+          { label: "Endettement", value: debtRatio },
+          { label: "Fonds urgence", value: emergencyMonths },
         ].map((m) => (
           <div key={m.label} style={{ textAlign: "center" }}>
             <p style={{ fontSize: 18, fontWeight: 800, fontFamily: "monospace", color: "#1E3A5F" }}>{m.value}</p>
@@ -186,7 +162,7 @@ function HealthGauge({ score = 84 }: { score?: number }) {
 }
 
 // ─── Income Statement ─────────────────────────────────────────────────────────
-function IncomeStatement({ plan }: { plan: Plan }) {
+function IncomeStatement({ plan }: { plan: CoachPlan }) {
   const rows = [
     { label: "Revenus", amount: plan.totalIncome, sign: "+", color: "#16A34A" },
     { label: "Charges fixes", amount: plan.fixedCharges, sign: "−", color: "#DC2626" },
@@ -211,7 +187,7 @@ function IncomeStatement({ plan }: { plan: Plan }) {
         </div>
       </div>
       <div style={{ marginTop: 10, height: 6, background: "#F1F3F9", borderRadius: 99, overflow: "hidden" }}>
-        <div style={{ height: "100%", width: `${Math.min(100, netPct)}%`, background: plan.freeMoney >= 0 ? "#16A34A" : "#DC2626", borderRadius: 99, transition: "width 0.8s ease" }} />
+        <div style={{ height: "100%", width: `${Math.min(100, Math.max(0, netPct))}%`, background: plan.freeMoney >= 0 ? "#16A34A" : "#DC2626", borderRadius: 99, transition: "width 0.8s ease" }} />
       </div>
       {plan.freeMoney > 0 && (
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginTop: 14 }}>
@@ -232,10 +208,9 @@ function IncomeStatement({ plan }: { plan: Plan }) {
 }
 
 // ─── Balance Sheet ────────────────────────────────────────────────────────────
-function BalanceSheet({ savings, debts }: { savings: Saving[]; debts: Debt[] }) {
+function BalanceSheet({ savings, debts, projectsTotal }: { savings: SavingsGoal[]; debts: Debt[]; projectsTotal: number }) {
   const totalSavings = savings.reduce((s, g) => s + g.saved, 0);
-  const totalProjects = 12000;
-  const totalAssets = totalSavings + totalProjects;
+  const totalAssets = totalSavings + projectsTotal;
   const totalDebt = debts.filter((d) => d.type === "owe").reduce((s, d) => s + d.remaining, 0);
   const netWorth = totalAssets - totalDebt;
 
@@ -267,7 +242,7 @@ function BalanceSheet({ savings, debts }: { savings: Saving[]; debts: Debt[] }) 
 
   return (
     <div>
-      <Section title="Actifs" rows={[{ label: "Épargne objectifs", amount: totalSavings }, { label: "Projets financés", amount: totalProjects }]} total={totalAssets} totalColor="#16A34A" />
+      <Section title="Actifs" rows={[{ label: "Épargne objectifs", amount: totalSavings }, { label: "Projets financés", amount: projectsTotal }]} total={totalAssets} totalColor="#16A34A" />
       <div style={{ height: 1, background: "#E8EDF5", margin: "4px 0 16px" }} />
       <Section title="Passifs" rows={[{ label: "Dettes personnelles", amount: totalDebt }]} total={totalDebt} totalColor="#DC2626" />
       <div style={{ height: 1, background: "#E8EDF5", margin: "4px 0 12px" }} />
@@ -297,6 +272,9 @@ function ChecklistSection({
         <p style={{ fontSize: 12, color: "#8896B0" }}>{paidCount}/{checklist.length} payés</p>
         <button style={{ width: 34, height: 34, borderRadius: 12, background: "#EFF6FF", color: "#2563EB", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>+</button>
       </div>
+      {checklist.length === 0 && (
+        <p style={{ fontSize: 13, color: "#8896B0", textAlign: "center", padding: "12px 0" }}>Aucune charge récurrente ou dette à suivre ce mois-ci</p>
+      )}
       {checklist.length > 0 && (
         <div style={{ height: 6, background: "#F1F3F9", borderRadius: 99, overflow: "hidden", marginBottom: 4 }}>
           <div style={{ height: "100%", width: `${(paidCount / checklist.length) * 100}%`, background: "#16A34A", borderRadius: 99, transition: "width 0.6s ease" }} />
@@ -336,7 +314,7 @@ function IncomeList({
   onDelete,
   onAdd,
 }: {
-  incomes: Income[];
+  incomes: MonthlyIncome[];
   onDelete?: (id: string) => void;
   onAdd: () => void;
 }) {
@@ -391,26 +369,136 @@ const ChartTooltip = ({
   );
 };
 
-// ─── Main Dashboard ───────────────────────────────────────────────────────────
-export default function BilanDashboard({ transactions = [] }: { transactions?: unknown[] }) {
-  const [incomes, setIncomes] = useState<Income[]>(MOCK_INCOMES);
-  const [checklist, setChecklist] = useState<ChecklistItem[]>(MOCK_CHECKLIST);
-  const [savings] = useState<Saving[]>(MOCK_SAVINGS);
-  const [debts] = useState<Debt[]>(MOCK_DEBTS);
-  const plan: Plan = MOCK_PLAN;
-  const projection: ProjectionPoint[] = MOCK_PROJECTION;
+// ─── Loading / Error states ────────────────────────────────────────────────────
+function LoadingState() {
+  return (
+    <div style={{ fontFamily: "'Inter', system-ui, sans-serif", maxWidth: 420, margin: "0 auto", padding: "40px 14px", background: "#F4F6FB", minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12 }}>
+      <div style={{ fontSize: 40 }}>💰</div>
+      <p style={{ color: "#8896B0", fontSize: 13 }}>Chargement de ton bilan…</p>
+    </div>
+  );
+}
 
+function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div style={{ fontFamily: "'Inter', system-ui, sans-serif", maxWidth: 420, margin: "0 auto", padding: "40px 14px", background: "#F4F6FB", minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, textAlign: "center" }}>
+      <div style={{ fontSize: 32 }}>⚠️</div>
+      <p style={{ color: "#1E3A5F", fontSize: 14, fontWeight: 600 }}>Impossible de charger ton bilan</p>
+      <p style={{ color: "#8896B0", fontSize: 12 }}>{message}</p>
+      <button
+        onClick={onRetry}
+        style={{ padding: "10px 18px", background: "#2563EB", color: "#fff", border: "none", borderRadius: 12, fontSize: 13, fontWeight: 700, cursor: "pointer" }}
+      >
+        Réessayer
+      </button>
+    </div>
+  );
+}
+
+// ─── Main Dashboard ───────────────────────────────────────────────────────────
+export default function BilanDashboard({ transactions = [] }: { transactions?: Transaction[] }) {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const [debts, setDebts] = useState<Debt[]>([]);
+  const [savings, setSavings] = useState<SavingsGoal[]>([]);
+  const [incomes, setIncomes] = useState<MonthlyIncome[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [recurring, setRecurring] = useState<Awaited<ReturnType<typeof getRecurringPayments>>>([]);
+  const [checklist, setChecklist] = useState<ChecklistItem[]>([]);
+
+  const month = currentYearMonth();
+
+  const loadAll = useCallback(async () => {
+    setError(null);
+    try {
+      const [d, s, i, p, r, c] = await Promise.all([
+        getDebts(),
+        getSavings(),
+        getMonthlyIncomes(month),
+        getProjects(),
+        getRecurringPayments(),
+        getMonthlyChecklist(month),
+      ]);
+      setDebts(d);
+      setSavings(s);
+      setIncomes(i);
+      setProjects(p);
+      setRecurring(r);
+      setChecklist(c);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Erreur inconnue");
+    } finally {
+      setLoading(false);
+    }
+  }, [month]);
+
+  useEffect(() => {
+    loadAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function toggleItem(item: ChecklistItem) {
+    // Mise à jour optimiste de l'UI
+    setChecklist((prev) => prev.map((c) => (c.id === item.id ? { ...c, paid: !c.paid } : c)));
+    try {
+      if (item.source === "recurring") {
+        await toggleRecurringPayment(item.id, month);
+      } else {
+        await toggleDebtPayment(item.id, month);
+      }
+      // Resynchronise avec la base (montants/dette soldée peuvent changer)
+      const [c, d] = await Promise.all([getMonthlyChecklist(month), getDebts()]);
+      setChecklist(c);
+      setDebts(d);
+    } catch (e) {
+      // Rollback en cas d'échec
+      setChecklist((prev) => prev.map((c) => (c.id === item.id ? { ...c, paid: item.paid } : c)));
+    }
+  }
+
+  async function handleDeleteRecurring(id: string) {
+    setChecklist((prev) => prev.filter((c) => !(c.source === "recurring" && c.id === id)));
+    try {
+      await deleteRecurringPayment(id);
+    } catch (e) {
+      // En cas d'échec, on recharge l'état réel depuis la base
+      const c = await getMonthlyChecklist(month);
+      setChecklist(c);
+    }
+  }
+
+  async function handleDeleteIncome(id: string) {
+    setIncomes((prev) => prev.filter((i) => i.id !== id));
+    try {
+      await deleteMonthlyIncome(id);
+    } catch (e) {
+      const i = await getMonthlyIncomes(month);
+      setIncomes(i);
+    }
+  }
+
+  if (loading) return <LoadingState />;
+  if (error) return <ErrorState message={error} onRetry={loadAll} />;
+
+  const plan = computeCoachPlan(debts, recurring, incomes, month);
+  const projection: MonthProjection[] = computeYearlyProjection(transactions, recurring, incomes);
+  const sixMonth = computeSixMonthHistory(transactions);
+  const health = computeHealthScore(transactions, debts, savings, projects);
+
+  const projectsTotal = projects.reduce((s, p) => s + p.savedAmount, 0);
   const totalSavings = savings.reduce((s, g) => s + g.saved, 0);
   const totalDebt = debts.filter((d) => d.type === "owe").reduce((s, d) => s + d.remaining, 0);
-  const netWorth = totalSavings + 12000 - totalDebt;
+  const netWorth = totalSavings + projectsTotal - totalDebt;
   const cashflow = plan.freeMoney;
   const endBalance = projection[projection.length - 1]?.projectedBalance ?? 0;
 
-  const tip = plan.alerts?.[0] ?? `💰 Tu peux épargner ${fmt(plan.savingsSuggestion)} ce mois tout en remboursant ${fmt(plan.snowballSuggestion)} de dettes.`;
+  const savingsRate = plan.totalIncome > 0 ? `${Math.round((totalSavings / (plan.totalIncome * 12)) * 100)}%` : "—";
+  const debtRatio = plan.totalIncome > 0 ? `${Math.round((plan.debtMinimums / plan.totalIncome) * 100)}%` : "—";
+  const monthlyExpenseEstimate = plan.fixedCharges + plan.debtMinimums + plan.variableEstimate;
+  const emergencyMonths = monthlyExpenseEstimate > 0 ? `${(totalSavings / monthlyExpenseEstimate).toFixed(1)} mois` : "—";
 
-  function toggleItem(item: ChecklistItem) {
-    setChecklist((prev) => prev.map((c) => (c.id === item.id ? { ...c, paid: !c.paid } : c)));
-  }
+  const tip = plan.alerts?.[0] ?? `💰 Tu peux épargner ${fmt(plan.savingsSuggestion)} ce mois tout en remboursant ${fmt(plan.snowballSuggestion)} de dettes.`;
 
   return (
     <div style={{ fontFamily: "'Inter', system-ui, sans-serif", maxWidth: 420, margin: "0 auto", padding: "16px 14px 40px", background: "#F4F6FB", minHeight: "100vh", display: "flex", flexDirection: "column", gap: 14 }}>
@@ -433,7 +521,7 @@ export default function BilanDashboard({ transactions = [] }: { transactions?: u
       <Card>
         <SectionLabel>③ Évolution du Situation financière</SectionLabel>
         <p style={{ fontSize: 24, fontWeight: 800, fontFamily: "monospace", color: endBalance >= 0 ? "#16A34A" : "#DC2626", marginBottom: 2 }}>{fmt(endBalance)}</p>
-        <p style={{ fontSize: 11, color: "#8896B0", marginBottom: 14 }}>solde projeté en décembre {NOW.getFullYear()}</p>
+        <p style={{ fontSize: 11, color: "#8896B0", marginBottom: 14 }}>solde projeté en décembre {new Date().getFullYear()}</p>
         <ResponsiveContainer width="100%" height={160}>
           <AreaChart data={projection} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
             <defs>
@@ -462,7 +550,7 @@ export default function BilanDashboard({ transactions = [] }: { transactions?: u
       <Card>
         <SectionLabel>⑤ Revenus vs Dépenses — 6 mois</SectionLabel>
         <ResponsiveContainer width="100%" height={180}>
-          <BarChart data={MOCK_6M} barGap={4} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+          <BarChart data={sixMonth} barGap={4} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#F1F3F9" />
             <XAxis dataKey="month" tick={{ fontSize: 10, fill: "#8896B0" }} axisLine={false} tickLine={false} />
             <YAxis tick={{ fontSize: 9, fill: "#8896B0" }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `${(v / 1000).toFixed(0)}k`} />
@@ -484,19 +572,26 @@ export default function BilanDashboard({ transactions = [] }: { transactions?: u
       {/* ⑥ Bilan patrimonial */}
       <Card>
         <SectionLabel>⑥ Bilan patrimonial</SectionLabel>
-        <BalanceSheet savings={savings} debts={debts} />
+        <BalanceSheet savings={savings} debts={debts} projectsTotal={projectsTotal} />
       </Card>
 
       {/* ⑦ Santé financière */}
       <Card>
         <SectionLabel>⑦ Santé financière</SectionLabel>
-        <HealthGauge score={84} />
+        <HealthGauge
+          score={health.score}
+          label={health.label}
+          color={health.color}
+          savingsRate={savingsRate}
+          debtRatio={debtRatio}
+          emergencyMonths={emergencyMonths}
+        />
       </Card>
 
       {/* ⑧ Paiements du mois */}
       <Card>
         <SectionLabel>⑧ Paiements du mois</SectionLabel>
-        <ChecklistSection checklist={checklist} onToggle={toggleItem} />
+        <ChecklistSection checklist={checklist} onToggle={toggleItem} onDeleteRecurring={handleDeleteRecurring} />
       </Card>
 
       {/* ⑨ Revenus du mois */}
@@ -504,8 +599,10 @@ export default function BilanDashboard({ transactions = [] }: { transactions?: u
         <SectionLabel>⑨ Revenus du mois</SectionLabel>
         <IncomeList
           incomes={incomes}
-          onDelete={(id) => setIncomes((prev) => prev.filter((i) => i.id !== id))}
-          onAdd={() => {}}
+          onDelete={handleDeleteIncome}
+          onAdd={() => {
+            // TODO: brancher un formulaire de saisie (modale ou inline) pour addMonthlyIncome
+          }}
         />
       </Card>
 
