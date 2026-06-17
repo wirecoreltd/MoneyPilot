@@ -85,9 +85,9 @@ export default function LoginPage() {
             className="w-16 h-16 mx-auto mb-2 object-contain"
           />
 
-          <h1 className="text-2xl font-bold text-ink">
-            MoneyPilot
-          </h1>
+          <span className="text-xl font-bold">
+          Money<span className="text-accent">Pilot</span>
+        </span>
 
           <p className="text-sm text-ink-soft mt-1">
             {mode === 'login'
