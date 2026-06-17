@@ -164,6 +164,7 @@ export default function CoachPage() {
   useEffect(() => {
     async function init() {
       const p = await getUserProfile()
+      console.log('Profile:', p)
       setProfile(p)
       if (p && !hasFetched.current) {
         hasFetched.current = true
@@ -195,7 +196,9 @@ Devise : ${p.currency}
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ context }),
         })
+      console.log('API status:', res.status) 
         const parsed: CoachAnalysis = await res.json()
+      console.log('Parsed:', parsed)
         setAnalysis(parsed)
         setLastUpdated(new Date())
 
