@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
-import { Plus, Trash2, X, Info, Pencil, History, ChevronDown, Check, ChevronUp, ChevronRight, Minus } from 'lucide-react'
+import { Plus, Trash2, X, Info, Pencil, History, ChevronDown, Check, ChevronUp, ChevronRight, Minus, ChevronUp as ChevronUpIcon } from 'lucide-react'
 import {
   Transaction, BudgetCategory, SavingsGoal, Debt, RecurringPayment,
   EXPENSE_CATEGORIES, INCOME_CATEGORIES,
@@ -14,7 +14,7 @@ import {
 import CoachTip from './CoachTip'
 import { supabase } from '@/lib/supabase'
 
-type SubTab = 'transactions' | 'budget' | 'dettes' | 'epargne'
+type SubTab = 'transactions' | 'budget' | 'dettes' | 'epargne' | 'factures' | 'revenus'
 interface Props { transactions: Transaction[]; onUpdate: () => void }
 
 interface DebtPaymentHistory {
@@ -37,12 +37,39 @@ interface SavingsDeposit {
 
 interface Creditor { id: string; name: string }
 
+// ─── Facture types ────────────────────────────────────────────────────────────
+interface Facture {
+  id: string
+  name: string
+  amount: number
+  dueDate?: string
+  isRecurring: boolean
+  category: string
+  paid: boolean
+  month: string // YYYY-MM
+  note?: string
+}
+
+// ─── Revenu types ─────────────────────────────────────────────────────────────
+interface RevenuSource {
+  id: string
+  label: string
+  amount: number
+  type: 'fixed' | 'variable'
+  month: string
+}
+
 const COLORS = ['#F59E0B','#3B82F6','#8B5CF6','#EF4444','#10B981','#F97316']
 const EMOJIS = ['🏖️','🚗','🏠','💻','📱','✈️','🎓','💍','💰','🎮','👶']
 
 const DEFAULT_CATEGORIES = [
   'Logement', 'Alimentation', 'Transport', 'Santé', 'Loisirs',
   'Vêtements', 'Éducation', 'Factures', 'Restaurants', 'Épargne', 'Autre'
+]
+
+const FACTURE_CATEGORIES = [
+  'Électricité', 'Eau', 'Internet', 'Téléphone', 'Loyer',
+  'Assurance', 'Abonnement', 'Gaz', 'Autre'
 ]
 
 const CUSTOM_CATEGORIES_KEY = 'moneyapp_custom_categories'
@@ -63,7 +90,7 @@ const SUBTAB_KEY = 'moneyapp_subtab'
 function loadSubTab(): SubTab {
   if (typeof window === 'undefined') return 'transactions'
   const v = localStorage.getItem(SUBTAB_KEY)
-  if (v === 'transactions' || v === 'budget' || v === 'dettes' || v === 'epargne') return v
+  if (v === 'transactions' || v === 'budget' || v === 'dettes' || v === 'epargne' || v === 'factures' || v === 'revenus') return v
   return 'transactions'
 }
 
@@ -72,12 +99,55 @@ const RECURRING_TO_BUDGET: Record<string, string> = {
   factures: 'Factures', assurance: 'Factures', école: 'Éducation', autre: 'Autre', dette: '',
 }
 
-// ── 2. Carte Budget : activeColor orange au lieu de mauve ──
 const SUBTABS = [
-  { id: 'transactions' as SubTab, emoji: '💸', label: 'Transactions', shortDesc: 'Mes dépenses & revenus', fullDesc: 'Enregistre chaque dépense ou revenu ponctuel.', color: 'bg-blue-50 border-blue-200 text-blue-700', activeColor: 'bg-accent text-white' },
-  { id: 'budget' as SubTab, emoji: '🎯', label: 'Budget', shortDesc: 'Mes plafonds par catégorie', fullDesc: 'Fixe des limites de dépenses par catégorie.', color: 'bg-orange-50 border-orange-200 text-orange-700', activeColor: 'bg-orange-500 text-white' },
-  { id: 'dettes' as SubTab, emoji: '💳', label: 'Dettes', shortDesc: 'Ce que je dois / on me doit', fullDesc: 'Suis tes crédits et prêts.', color: 'bg-red-50 border-red-200 text-red-700', activeColor: 'bg-danger text-white' },
-  { id: 'epargne' as SubTab, emoji: '🐖', label: 'Épargne', shortDesc: 'Mes objectifs d\'économies', fullDesc: 'Crée des objectifs d\'épargne avec un montant cible.', color: 'bg-green-50 border-green-200 text-green-700', activeColor: 'bg-positive text-white' },
+  {
+    id: 'transactions' as SubTab,
+    emoji: '💸', label: 'Transactions',
+    shortDesc: 'Mes dépenses du mois',
+    fullDesc: 'Enregistre chaque dépense ponctuelle. Les revenus se gèrent dans la carte "Revenus".',
+    color: 'bg-blue-50 border-blue-200 text-blue-700',
+    activeColor: 'bg-accent text-white'
+  },
+  {
+    id: 'revenus' as SubTab,
+    emoji: '💰', label: 'Revenus',
+    shortDesc: 'Mes sources de revenus',
+    fullDesc: 'Ajoute tes sources de revenus du mois : salaire, freelance, loyer perçu... Le total est calculé automatiquement.',
+    color: 'bg-green-50 border-green-200 text-green-700',
+    activeColor: 'bg-positive text-white'
+  },
+  {
+    id: 'factures' as SubTab,
+    emoji: '🧾', label: 'Factures',
+    shortDesc: 'Factures à payer ce mois',
+    fullDesc: 'Suis tes factures récurrentes (eau, élec, internet) et ponctuelles reçues. Différent des dettes : une facture est payée en une fois chaque mois.',
+    color: 'bg-yellow-50 border-yellow-200 text-yellow-700',
+    activeColor: 'bg-yellow-500 text-white'
+  },
+  {
+    id: 'budget' as SubTab,
+    emoji: '🎯', label: 'Budget',
+    shortDesc: 'Mes plafonds par catégorie',
+    fullDesc: 'Fixe des limites de dépenses par catégorie pour mieux contrôler ton argent.',
+    color: 'bg-orange-50 border-orange-200 text-orange-700',
+    activeColor: 'bg-orange-500 text-white'
+  },
+  {
+    id: 'dettes' as SubTab,
+    emoji: '💳', label: 'Dettes',
+    shortDesc: 'Ce que je dois / on me doit',
+    fullDesc: 'Suis tes crédits et prêts. Différent d\'une facture : une dette se rembourse progressivement sur plusieurs mois/années.',
+    color: 'bg-red-50 border-red-200 text-red-700',
+    activeColor: 'bg-danger text-white'
+  },
+  {
+    id: 'epargne' as SubTab,
+    emoji: '🐖', label: 'Épargne',
+    shortDesc: 'Mes objectifs d\'économies',
+    fullDesc: 'Crée des objectifs d\'épargne avec un montant cible. Règle d\'or : épargne d\'abord, dépense ensuite.',
+    color: 'bg-green-50 border-green-200 text-green-700',
+    activeColor: 'bg-positive text-white'
+  },
 ]
 
 // ─── Confettis ────────────────────────────────────────────────────────────────
@@ -113,28 +183,33 @@ function Confetti({ onDone }: { onDone: () => void }) {
   )
 }
 
+// ─── Main MoneyTab ─────────────────────────────────────────────────────────────
 export default function MoneyTab({ transactions, onUpdate }: Props) {
   const [sub, setSub] = useState<SubTab>(loadSubTab)
   const [showInfo, setShowInfo] = useState<SubTab | null>(null)
   function handleSetSub(id: SubTab) { setSub(id); localStorage.setItem(SUBTAB_KEY, id) }
+
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-2">
+      {/* Grid 3×2 */}
+      <div className="grid grid-cols-3 gap-2">
         {SUBTABS.map(t => (
           <button key={t.id} onClick={() => handleSetSub(t.id)}
             className={`relative flex flex-col items-start p-3 rounded-2xl border-2 text-left transition-all active:scale-[0.98] ${sub === t.id ? t.activeColor + ' border-transparent shadow-sm' : 'bg-white border-mist-dark'}`}>
             <div className="flex items-center justify-between w-full mb-1">
-              <span className="text-xl">{t.emoji}</span>
+              <span className="text-lg">{t.emoji}</span>
               <button onClick={e => { e.stopPropagation(); setShowInfo(showInfo === t.id ? null : t.id) }}
-                className={`w-6 h-6 rounded-full flex items-center justify-center transition-colors ${sub === t.id ? 'bg-white/20 text-white' : 'bg-mist text-ink-soft'}`}>
-                <Info size={12}/>
+                className={`w-5 h-5 rounded-full flex items-center justify-center transition-colors text-[10px] ${sub === t.id ? 'bg-white/20 text-white' : 'bg-mist text-ink-soft'}`}>
+                i
               </button>
             </div>
-            <p className={`text-sm font-bold ${sub === t.id ? 'text-white' : 'text-ink'}`}>{t.label}</p>
-            <p className={`text-xs mt-0.5 leading-tight ${sub === t.id ? 'text-white/75' : 'text-ink-soft'}`}>{t.shortDesc}</p>
+            <p className={`text-xs font-bold ${sub === t.id ? 'text-white' : 'text-ink'}`}>{t.label}</p>
+            <p className={`text-[10px] mt-0.5 leading-tight ${sub === t.id ? 'text-white/75' : 'text-ink-soft'}`}>{t.shortDesc}</p>
           </button>
         ))}
       </div>
+
+      {/* Info banner */}
       {showInfo && (
         <div className={`flex items-start gap-3 p-4 rounded-2xl border ${SUBTABS.find(t => t.id === showInfo)?.color}`}>
           <span className="text-xl flex-shrink-0">{SUBTABS.find(t => t.id === showInfo)?.emoji}</span>
@@ -145,7 +220,10 @@ export default function MoneyTab({ transactions, onUpdate }: Props) {
           <button onClick={() => setShowInfo(null)} className="flex-shrink-0 opacity-60"><X size={16}/></button>
         </div>
       )}
+
       {sub === 'transactions' && <TransactionsSection transactions={transactions} onUpdate={onUpdate} />}
+      {sub === 'revenus'      && <RevenusSection />}
+      {sub === 'factures'     && <FacturesSection />}
       {sub === 'budget'       && <BudgetSection transactions={transactions} />}
       {sub === 'dettes'       && <DettesSection />}
       {sub === 'epargne'      && <EpargneSection />}
@@ -154,7 +232,7 @@ export default function MoneyTab({ transactions, onUpdate }: Props) {
 }
 
 // ─── Category Manager ─────────────────────────────────────────────────────────
-type CategoryContext = 'transactions' | 'budget' | 'dettes' | 'epargne'
+type CategoryContext = 'transactions' | 'budget' | 'dettes' | 'epargne' | 'factures' | 'revenus'
 
 function CategoryManager({
   value, onChange, customCategories, onAddCustom, context = 'transactions'
@@ -181,6 +259,8 @@ function CategoryManager({
     budget:       '💡 Cette catégorie s\'affiche dans <strong>Dettes</strong> et <strong>Transactions</strong>',
     dettes:       '💡 Cette catégorie s\'affiche dans <strong>Budget</strong> et <strong>Transactions</strong>',
     epargne:      '💡 Cette catégorie s\'affiche dans <strong>Budget</strong> et <strong>Transactions</strong>',
+    factures:     '💡 Catégorie personnalisée pour tes factures',
+    revenus:      '💡 Source de revenu personnalisée',
   }
 
   return (
@@ -209,23 +289,20 @@ function CategoryManager({
   )
 }
 
-// ─── Transactions ─────────────────────────────────────────────────────────────
+// ─── Transactions (dépenses uniquement) ───────────────────────────────────────
 function TransactionsSection({ transactions, onUpdate }: Props) {
   const [showForm, setShowForm] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [filter, setFilter] = useState<'all' | 'income' | 'expense'>('all')
   const [search, setSearch] = useState('')
   const [selectedMonth, setSelectedMonth] = useState(currentYearMonth())
   const [editingTx, setEditingTx] = useState<Transaction | null>(null)
   const [customCategories, setCustomCategories] = useState<string[]>(loadCustomCategories)
   const [form, setForm] = useState({
-    type: 'expense' as 'income' | 'expense',
     amount: '', category: EXPENSE_CATEGORIES[0] as any, note: '',
     date: new Date().toISOString().slice(0, 10),
   })
 
   const allCats = getAllCategories(customCategories)
-  const categories = form.type === 'income' ? [...INCOME_CATEGORIES, ...customCategories] : allCats
 
   const monthOptions = Array.from({ length: 12 }, (_, i) => {
     const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - i)
@@ -234,21 +311,19 @@ function TransactionsSection({ transactions, onUpdate }: Props) {
     return { ym, label }
   })
 
+  // Only expense transactions
   const filtered = transactions
+    .filter(t => t.type === 'expense')
     .filter(t => t.date.startsWith(selectedMonth))
-    .filter(t => filter === 'all' || t.type === filter)
     .filter(t => {
       if (!search.trim()) return true
       const q = search.toLowerCase()
       return t.note?.toLowerCase().includes(q) || t.category.toLowerCase().includes(q)
     })
 
-  const monthTxs = transactions.filter(t => t.date.startsWith(selectedMonth))
-  const income   = monthTxs.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0)
-  const expenses = monthTxs.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0)
-  const filteredTotal    = filtered.reduce((s, t) => t.type === 'income' ? s + t.amount : s - t.amount, 0)
-  const filteredIncome   = filtered.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0)
-  const filteredExpenses = filtered.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0)
+  const monthExpenses = transactions
+    .filter(t => t.type === 'expense' && t.date.startsWith(selectedMonth))
+    .reduce((s, t) => s + t.amount, 0)
 
   function handleAddCustom(cat: string) {
     const updated = [...customCategories, cat]
@@ -258,21 +333,21 @@ function TransactionsSection({ transactions, onUpdate }: Props) {
 
   function openAdd() {
     setEditingTx(null)
-    setForm({ type: 'expense', amount: '', category: EXPENSE_CATEGORIES[0] as any, note: '', date: new Date().toISOString().slice(0, 10) })
+    setForm({ amount: '', category: EXPENSE_CATEGORIES[0] as any, note: '', date: new Date().toISOString().slice(0, 10) })
     setShowForm(true)
   }
   function openEdit(tx: Transaction) {
     setEditingTx(tx)
-    setForm({ type: tx.type, amount: String(tx.amount), category: tx.category as any, note: tx.note, date: tx.date })
+    setForm({ amount: String(tx.amount), category: tx.category as any, note: tx.note, date: tx.date })
     setShowForm(true)
   }
   async function handleSubmit() {
     if (!form.amount || Number(form.amount) <= 0) return
     setLoading(true)
     if (editingTx) {
-      await supabase.from('transactions').update({ type: form.type, amount: Number(form.amount), category: form.category, note: form.note, date: form.date }).eq('id', editingTx.id)
+      await supabase.from('transactions').update({ type: 'expense', amount: Number(form.amount), category: form.category, note: form.note, date: form.date }).eq('id', editingTx.id)
     } else {
-      await addTransaction({ ...form, amount: Number(form.amount) })
+      await addTransaction({ type: 'expense', amount: Number(form.amount), category: form.category, note: form.note, date: form.date })
     }
     setShowForm(false); setEditingTx(null); onUpdate(); setLoading(false)
   }
@@ -280,10 +355,11 @@ function TransactionsSection({ transactions, onUpdate }: Props) {
 
   return (
     <div className="space-y-3">
+      {/* Note explicative */}
       <div className="flex items-start gap-3 p-3 bg-blue-50 border border-blue-100 rounded-2xl">
         <span className="text-base">💡</span>
         <p className="text-xs text-blue-700 leading-relaxed">
-          <strong>Transactions</strong> = mouvements ponctuels. Pour les paiements récurrents, utilise <strong>Bilan → Charges récurrentes</strong>.
+          <strong>Dépenses ponctuelles uniquement.</strong> Les revenus → carte <strong>Revenus</strong>. Les factures récurrentes → carte <strong>Factures</strong>. Les remboursements de crédit → carte <strong>Dettes</strong>.
         </p>
       </div>
 
@@ -291,24 +367,9 @@ function TransactionsSection({ transactions, onUpdate }: Props) {
         {monthOptions.map(m => <option key={m.ym} value={m.ym}>{m.label}</option>)}
       </select>
 
-      <div className="grid grid-cols-2 gap-3">
-        <div className="card bg-positive-light">
-          <p className="text-xs font-bold text-positive uppercase tracking-wide">Revenus</p>
-          <p className="text-lg font-bold font-mono text-positive mt-1">{formatAmount(income)}</p>
-        </div>
-        <div className="card bg-danger-light">
-          <p className="text-xs font-bold text-danger uppercase tracking-wide">Dépenses</p>
-          <p className="text-lg font-bold font-mono text-danger mt-1">{formatAmount(expenses)}</p>
-        </div>
-      </div>
-
-      <div className="flex gap-2">
-        {([{ id: 'all', label: 'Tout' }, { id: 'income', label: '💰 Revenus' }, { id: 'expense', label: '💸 Dépenses' }] as const).map(f => (
-          <button key={f.id} onClick={() => setFilter(f.id)}
-            className={`flex-1 py-2.5 rounded-2xl text-sm font-semibold transition-colors ${filter === f.id ? 'bg-ink text-white' : 'bg-white text-ink-soft border border-mist-dark'}`}>
-            {f.label}
-          </button>
-        ))}
+      <div className="card bg-danger-light">
+        <p className="text-xs font-bold text-danger uppercase tracking-wide">Total dépenses ce mois</p>
+        <p className="text-2xl font-bold font-mono text-danger mt-1">{formatAmount(monthExpenses)}</p>
       </div>
 
       <div className="relative">
@@ -317,20 +378,20 @@ function TransactionsSection({ transactions, onUpdate }: Props) {
         {search && <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-soft text-xs font-bold">✕</button>}
       </div>
 
-      <button onClick={openAdd} className="btn-primary w-full gap-2"><Plus size={18}/> Ajouter une transaction</button>
+      <button onClick={openAdd} className="btn-primary w-full gap-2"><Plus size={18}/> Ajouter une dépense</button>
 
       <div className="space-y-2">
         {filtered.length === 0 ? (
           <div className="card text-center py-10">
             <p className="text-3xl mb-2">💸</p>
-            <p className="font-semibold text-ink">{search ? 'Aucun résultat' : 'Aucune transaction ce mois'}</p>
+            <p className="font-semibold text-ink">{search ? 'Aucun résultat' : 'Aucune dépense ce mois'}</p>
             <p className="text-sm text-ink-soft mt-1">{search ? `Rien pour "${search}"` : 'Appuie sur "Ajouter" pour commencer'}</p>
           </div>
         ) : filtered.map(tx => (
           <div key={tx.id} className="card flex items-center justify-between gap-3">
             <div className="flex items-center gap-3 min-w-0">
-              <div className={`w-10 h-10 rounded-2xl flex items-center justify-center flex-shrink-0 ${tx.type === 'income' ? 'bg-positive-light' : 'bg-danger-light'}`}>
-                <span className="text-lg">{tx.type === 'income' ? '💰' : '💸'}</span>
+              <div className="w-10 h-10 rounded-2xl flex items-center justify-center flex-shrink-0 bg-danger-light">
+                <span className="text-lg">💸</span>
               </div>
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-ink truncate">{tx.note || tx.category}</p>
@@ -338,9 +399,7 @@ function TransactionsSection({ transactions, onUpdate }: Props) {
               </div>
             </div>
             <div className="flex items-center gap-1 flex-shrink-0">
-              <span className={`font-mono text-sm font-bold ${tx.type === 'income' ? 'text-positive' : 'text-danger'}`}>
-                {tx.type === 'income' ? '+' : '−'}{formatAmount(tx.amount)}
-              </span>
+              <span className="font-mono text-sm font-bold text-danger">−{formatAmount(tx.amount)}</span>
               <button className="w-8 h-8 rounded-xl bg-mist hover:bg-accent-light text-ink-soft hover:text-accent flex items-center justify-center active:scale-95" onClick={() => openEdit(tx)}><Pencil size={13}/></button>
               <button className="w-8 h-8 rounded-xl bg-mist hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center active:scale-95" onClick={() => handleDelete(tx.id)}><Trash2 size={13}/></button>
             </div>
@@ -350,10 +409,8 @@ function TransactionsSection({ transactions, onUpdate }: Props) {
 
       {filtered.length > 0 && (
         <div className="card bg-mist flex items-center justify-between py-3 px-4">
-          <span className="text-xs text-ink-soft font-semibold">{filtered.length} transaction{filtered.length > 1 ? 's' : ''}</span>
-          {filter === 'all' && <span className={`font-mono text-sm font-bold ${filteredTotal >= 0 ? 'text-positive' : 'text-danger'}`}>{filteredTotal >= 0 ? '+' : ''}{formatAmount(Math.abs(filteredTotal))}</span>}
-          {filter === 'income' && <span className="font-mono text-sm font-bold text-positive">+{formatAmount(filteredIncome)}</span>}
-          {filter === 'expense' && <span className="font-mono text-sm font-bold text-danger">−{formatAmount(filteredExpenses)}</span>}
+          <span className="text-xs text-ink-soft font-semibold">{filtered.length} dépense{filtered.length > 1 ? 's' : ''}</span>
+          <span className="font-mono text-sm font-bold text-danger">−{formatAmount(filtered.reduce((s, t) => s + t.amount, 0))}</span>
         </div>
       )}
 
@@ -361,12 +418,8 @@ function TransactionsSection({ transactions, onUpdate }: Props) {
         <div className="bottom-sheet bg-black/40">
           <div className="bottom-sheet-content">
             <div className="flex items-center justify-between mb-2">
-              <h2 className="text-lg font-bold text-ink">{editingTx ? 'Modifier la transaction' : 'Nouvelle transaction'}</h2>
+              <h2 className="text-lg font-bold text-ink">{editingTx ? 'Modifier la dépense' : 'Nouvelle dépense'}</h2>
               <button className="btn-icon bg-mist" onClick={() => { setShowForm(false); setEditingTx(null) }}><X size={20}/></button>
-            </div>
-            <div className="flex rounded-2xl overflow-hidden border-2 border-mist-dark">
-              <button className={`flex-1 py-3 text-sm font-bold ${form.type === 'expense' ? 'bg-danger text-white' : 'bg-white text-ink-soft'}`} onClick={() => setForm(f => ({...f, type:'expense', category: EXPENSE_CATEGORIES[0] as any}))}>💸 Dépense</button>
-              <button className={`flex-1 py-3 text-sm font-bold ${form.type === 'income' ? 'bg-positive text-white' : 'bg-white text-ink-soft'}`} onClick={() => setForm(f => ({...f, type:'income', category: INCOME_CATEGORIES[0] as any}))}>💰 Revenu</button>
             </div>
             <div><label className="label">Montant (Rs)</label><input className="input text-xl font-bold" type="number" placeholder="0" value={form.amount} onChange={e => setForm(f => ({...f, amount: e.target.value}))}/></div>
             <div>
@@ -381,6 +434,431 @@ function TransactionsSection({ transactions, onUpdate }: Props) {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// ─── Revenus ──────────────────────────────────────────────────────────────────
+function RevenusSection() {
+  const [revenus, setRevenus] = useState<RevenuSource[]>([])
+  const [loading, setLoading] = useState(true)
+  const [open, setOpen] = useState(false) // dropdown toggle
+  const [showForm, setShowForm] = useState(false)
+  const [form, setForm] = useState({ label: '', amount: '', type: 'fixed' as 'fixed' | 'variable' })
+  const [saving, setSaving] = useState(false)
+  const ym = currentYearMonth()
+  const monthName = new Date().toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })
+
+  useEffect(() => { loadRevenus() }, [])
+
+  async function loadRevenus() {
+    setLoading(true)
+    const { data: { user } } = await supabase.auth.getUser()
+    const { data } = await supabase
+      .from('monthly_incomes')
+      .select('*')
+      .eq('user_id', user!.id)
+      .eq('month', ym)
+      .order('created_at', { ascending: true })
+    setRevenus((data ?? []).map(r => ({
+      id: r.id, label: r.label, amount: Number(r.amount),
+      type: r.is_fixed ? 'fixed' : 'variable', month: r.month
+    })))
+    setLoading(false)
+  }
+
+  async function handleAdd() {
+    if (!form.label.trim() || !form.amount || Number(form.amount) <= 0) return
+    setSaving(true)
+    const { data: { user } } = await supabase.auth.getUser()
+    const { data } = await supabase.from('monthly_incomes').insert({
+      user_id: user!.id, label: form.label.trim(),
+      amount: Number(form.amount), is_fixed: form.type === 'fixed', month: ym
+    }).select().single()
+    if (data) {
+      setRevenus(prev => [...prev, { id: data.id, label: data.label, amount: Number(data.amount), type: data.is_fixed ? 'fixed' : 'variable', month: data.month }])
+    }
+    setForm({ label: '', amount: '', type: 'fixed' })
+    setShowForm(false)
+    setSaving(false)
+  }
+
+  async function handleDelete(id: string) {
+    await supabase.from('monthly_incomes').delete().eq('id', id)
+    setRevenus(prev => prev.filter(r => r.id !== id))
+  }
+
+  const total = revenus.reduce((s, r) => s + r.amount, 0)
+  const fixedTotal = revenus.filter(r => r.type === 'fixed').reduce((s, r) => s + r.amount, 0)
+  const variableTotal = revenus.filter(r => r.type === 'variable').reduce((s, r) => s + r.amount, 0)
+
+  if (loading) return <div className="card text-center py-8 text-ink-soft">Chargement...</div>
+
+  return (
+    <div className="space-y-3">
+      {/* Note explicative */}
+      <div className="flex items-start gap-3 p-3 bg-green-50 border border-green-100 rounded-2xl">
+        <span className="text-base">💡</span>
+        <p className="text-xs text-green-700 leading-relaxed">
+          <strong>Tes sources de revenus du mois.</strong> Salaire, freelance, loyer perçu, allocations... Ajoute chaque source séparément pour avoir une vision claire. Ces données alimentent le Coach IA et le Bilan.
+        </p>
+      </div>
+
+      {/* Total card + dropdown toggle */}
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full card bg-positive-light border border-positive/20 text-left"
+      >
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-xs font-bold text-positive uppercase tracking-wide capitalize">{monthName}</p>
+            <p className="text-3xl font-bold font-mono text-positive mt-1">{formatAmount(total)}</p>
+            <p className="text-xs text-positive/70 mt-1">{revenus.length} source{revenus.length > 1 ? 's' : ''} de revenus</p>
+          </div>
+          <div className={`w-10 h-10 rounded-2xl bg-positive/10 flex items-center justify-center transition-transform ${open ? 'rotate-180' : ''}`}>
+            <ChevronDown size={20} className="text-positive"/>
+          </div>
+        </div>
+
+        {/* Mini breakdown always visible */}
+        {total > 0 && (
+          <div className="flex gap-4 mt-3 pt-3 border-t border-positive/20">
+            {fixedTotal > 0 && (
+              <div>
+                <p className="text-[10px] text-positive/60 uppercase font-bold">Fixe</p>
+                <p className="text-sm font-mono font-bold text-positive">{formatAmount(fixedTotal)}</p>
+              </div>
+            )}
+            {variableTotal > 0 && (
+              <div>
+                <p className="text-[10px] text-positive/60 uppercase font-bold">Variable</p>
+                <p className="text-sm font-mono font-bold text-positive">{formatAmount(variableTotal)}</p>
+              </div>
+            )}
+          </div>
+        )}
+      </button>
+
+      {/* Dropdown content */}
+      {open && (
+        <div className="card space-y-2 border-2 border-positive/20">
+          {revenus.length === 0 ? (
+            <p className="text-sm text-ink-soft text-center py-4">Aucun revenu saisi ce mois</p>
+          ) : revenus.map(r => (
+            <div key={r.id} className="flex items-center justify-between py-2.5 border-b border-mist last:border-0">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-xl bg-positive-light flex items-center justify-center flex-shrink-0">
+                  <span className="text-sm">💰</span>
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-ink">{r.label}</p>
+                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${r.type === 'fixed' ? 'bg-blue-50 text-blue-600' : 'bg-orange-50 text-orange-600'}`}>
+                    {r.type === 'fixed' ? 'Fixe' : 'Variable'}
+                  </span>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-sm font-bold text-positive">+{formatAmount(r.amount)}</span>
+                <button onClick={() => handleDelete(r.id)}
+                  className="w-7 h-7 rounded-lg bg-mist hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center">
+                  <Trash2 size={12}/>
+                </button>
+              </div>
+            </div>
+          ))}
+
+          {/* Add form inline */}
+          {showForm ? (
+            <div className="space-y-2 pt-2 border-t border-mist">
+              <input
+                className="input" placeholder="Source (ex: Salaire, Freelance...)"
+                value={form.label} onChange={e => setForm(f => ({...f, label: e.target.value}))}
+                autoFocus
+              />
+              <input
+                className="input" type="number" placeholder="Montant (Rs)"
+                value={form.amount} onChange={e => setForm(f => ({...f, amount: e.target.value}))}
+              />
+              <div className="flex rounded-xl overflow-hidden border-2 border-mist-dark">
+                <button className={`flex-1 py-2 text-xs font-bold ${form.type === 'fixed' ? 'bg-accent text-white' : 'bg-white text-ink-soft'}`}
+                  onClick={() => setForm(f => ({...f, type: 'fixed'}))}>📅 Fixe</button>
+                <button className={`flex-1 py-2 text-xs font-bold ${form.type === 'variable' ? 'bg-accent text-white' : 'bg-white text-ink-soft'}`}
+                  onClick={() => setForm(f => ({...f, type: 'variable'}))}>📈 Variable</button>
+              </div>
+              <div className="flex gap-2">
+                <button className="btn-ghost flex-1" onClick={() => setShowForm(false)}>Annuler</button>
+                <button className="btn-primary flex-1" style={{ backgroundColor: '#16A34A' }}
+                  onClick={handleAdd} disabled={saving}>
+                  {saving ? 'Ajout...' : 'Ajouter'}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              onClick={() => setShowForm(true)}
+              className="w-full py-3 text-sm font-bold text-positive bg-positive-light hover:bg-green-100 rounded-2xl transition-colors flex items-center justify-center gap-2">
+              <Plus size={16}/> Ajouter une source
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* CTA when closed */}
+      {!open && (
+        <button
+          onClick={() => { setOpen(true); setShowForm(true) }}
+          className="btn-primary w-full gap-2" style={{ backgroundColor: '#16A34A' }}>
+          <Plus size={18}/> Ajouter un revenu
+        </button>
+      )}
+    </div>
+  )
+}
+
+// ─── Factures ─────────────────────────────────────────────────────────────────
+function FacturesSection() {
+  const [factures, setFactures] = useState<Facture[]>([])
+  const [loading, setLoading] = useState(true)
+  const [showForm, setShowForm] = useState(false)
+  const [form, setForm] = useState({
+    name: '', amount: '', category: FACTURE_CATEGORIES[0],
+    dueDate: '', isRecurring: false, note: '',
+  })
+  const [saving, setSaving] = useState(false)
+  const ym = currentYearMonth()
+
+  useEffect(() => { loadFactures() }, [])
+
+  async function loadFactures() {
+    setLoading(true)
+    const { data: { user } } = await supabase.auth.getUser()
+    const { data } = await supabase
+      .from('factures')
+      .select('*')
+      .eq('user_id', user!.id)
+      .eq('month', ym)
+      .order('created_at', { ascending: true })
+    setFactures((data ?? []).map(r => ({
+      id: r.id, name: r.name, amount: Number(r.amount),
+      dueDate: r.due_date ?? undefined, isRecurring: r.is_recurring ?? false,
+      category: r.category ?? 'Autre', paid: r.paid ?? false,
+      month: r.month, note: r.note ?? undefined,
+    })))
+    setLoading(false)
+  }
+
+  async function handleAdd() {
+    if (!form.name.trim() || !form.amount || Number(form.amount) <= 0) return
+    setSaving(true)
+    const { data: { user } } = await supabase.auth.getUser()
+    const { data } = await supabase.from('factures').insert({
+      user_id: user!.id,
+      name: form.name.trim(),
+      amount: Number(form.amount),
+      category: form.category,
+      due_date: form.dueDate || null,
+      is_recurring: form.isRecurring,
+      note: form.note || null,
+      paid: false,
+      month: ym,
+    }).select().single()
+    if (data) {
+      setFactures(prev => [...prev, {
+        id: data.id, name: data.name, amount: Number(data.amount),
+        dueDate: data.due_date ?? undefined, isRecurring: data.is_recurring,
+        category: data.category, paid: data.paid, month: data.month, note: data.note ?? undefined,
+      }])
+    }
+    setForm({ name: '', amount: '', category: FACTURE_CATEGORIES[0], dueDate: '', isRecurring: false, note: '' })
+    setShowForm(false)
+    setSaving(false)
+  }
+
+  async function togglePaid(f: Facture) {
+    const newPaid = !f.paid
+    await supabase.from('factures').update({ paid: newPaid }).eq('id', f.id)
+    setFactures(prev => prev.map(x => x.id === f.id ? { ...x, paid: newPaid } : x))
+  }
+
+  async function handleDelete(id: string) {
+    await supabase.from('factures').delete().eq('id', id)
+    setFactures(prev => prev.filter(f => f.id !== id))
+  }
+
+  const paidCount = factures.filter(f => f.paid).length
+  const totalAmount = factures.reduce((s, f) => s + f.amount, 0)
+  const paidAmount = factures.filter(f => f.paid).reduce((s, f) => s + f.amount, 0)
+  const unpaidAmount = totalAmount - paidAmount
+  const recurringFactures = factures.filter(f => f.isRecurring)
+  const ponctuellesFactures = factures.filter(f => !f.isRecurring)
+
+  const tip = factures.length === 0
+    ? `Ajoute tes factures du mois (eau, élec, internet...) pour ne rien oublier.`
+    : paidCount === factures.length
+    ? `✅ Toutes tes factures sont payées ce mois ! Bien joué.`
+    : `⏳ ${factures.length - paidCount} facture${factures.length - paidCount > 1 ? 's' : ''} en attente · ${formatAmount(unpaidAmount)} à payer`
+
+  if (loading) return <div className="card text-center py-8 text-ink-soft">Chargement...</div>
+
+  return (
+    <div className="space-y-3">
+      <CoachTip message={tip} />
+
+      {/* Note explicative */}
+      <div className="flex items-start gap-3 p-3 bg-yellow-50 border border-yellow-200 rounded-2xl">
+        <span className="text-base">💡</span>
+        <p className="text-xs text-yellow-800 leading-relaxed">
+          <strong>Factures ≠ Dettes.</strong> Une facture (eau, élec, internet...) se paie <strong>en une fois chaque mois</strong>. Une dette (crédit, prêt) se rembourse <strong>progressivement sur des mois/années</strong>. Gère tes dettes dans la carte <strong>Dettes</strong>.
+        </p>
+      </div>
+
+      {/* Summary */}
+      {factures.length > 0 && (
+        <div className="grid grid-cols-3 gap-2">
+          <div className="card text-center py-3">
+            <p className="text-lg font-bold font-mono text-ink">{formatAmount(totalAmount)}</p>
+            <p className="text-[10px] text-ink-soft uppercase font-bold mt-0.5">Total</p>
+          </div>
+          <div className="card text-center py-3 bg-positive-light">
+            <p className="text-lg font-bold font-mono text-positive">{formatAmount(paidAmount)}</p>
+            <p className="text-[10px] text-positive uppercase font-bold mt-0.5">Payé</p>
+          </div>
+          <div className="card text-center py-3 bg-danger-light">
+            <p className="text-lg font-bold font-mono text-danger">{formatAmount(unpaidAmount)}</p>
+            <p className="text-[10px] text-danger uppercase font-bold mt-0.5">Restant</p>
+          </div>
+        </div>
+      )}
+
+      {/* Progress bar */}
+      {factures.length > 0 && (
+        <div className="space-y-1">
+          <div className="flex justify-between text-xs text-ink-soft">
+            <span>{paidCount}/{factures.length} payées</span>
+            <span>{Math.round((paidCount / factures.length) * 100)}%</span>
+          </div>
+          <div className="w-full h-2.5 bg-mist-dark rounded-full overflow-hidden">
+            <div className="h-full bg-positive rounded-full transition-all duration-500"
+              style={{ width: `${(paidCount / factures.length) * 100}%` }}/>
+          </div>
+        </div>
+      )}
+
+      <button onClick={() => setShowForm(true)} className="btn-primary w-full gap-2" style={{ backgroundColor: '#CA8A04' }}>
+        <Plus size={18}/> Ajouter une facture
+      </button>
+
+      {factures.length === 0 ? (
+        <div className="card text-center py-10">
+          <p className="text-3xl mb-2">🧾</p>
+          <p className="font-semibold text-ink">Aucune facture ce mois</p>
+          <p className="text-sm text-ink-soft mt-1">Eau, électricité, internet, loyer...</p>
+        </div>
+      ) : (
+        <>
+          {/* Récurrentes */}
+          {recurringFactures.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-xs font-bold text-ink-soft uppercase tracking-wider">🔄 Récurrentes</p>
+              {recurringFactures.map(f => <FactureCard key={f.id} facture={f} onToggle={togglePaid} onDelete={handleDelete}/>)}
+            </div>
+          )}
+
+          {/* Ponctuelles */}
+          {ponctuellesFactures.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-xs font-bold text-ink-soft uppercase tracking-wider">📄 Ponctuelles</p>
+              {ponctuellesFactures.map(f => <FactureCard key={f.id} facture={f} onToggle={togglePaid} onDelete={handleDelete}/>)}
+            </div>
+          )}
+        </>
+      )}
+
+      {showForm && (
+        <div className="bottom-sheet bg-black/40">
+          <div className="bottom-sheet-content">
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="text-lg font-bold text-ink">Nouvelle facture</h2>
+              <button className="btn-icon bg-mist" onClick={() => setShowForm(false)}><X size={20}/></button>
+            </div>
+
+            {/* Recurring toggle */}
+            <div className="flex items-center justify-between p-3 bg-yellow-50 rounded-2xl border border-yellow-200">
+              <div>
+                <p className="text-sm font-bold text-yellow-800">🔄 Facture récurrente</p>
+                <p className="text-xs text-yellow-600 mt-0.5">Revient chaque mois (eau, élec, abonnement...)</p>
+              </div>
+              <button onClick={() => setForm(f => ({...f, isRecurring: !f.isRecurring}))}
+                className={`relative w-12 h-6 rounded-full transition-colors flex-shrink-0 ${form.isRecurring ? 'bg-yellow-500' : 'bg-mist-dark'}`}>
+                <span className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-all ${form.isRecurring ? 'left-7' : 'left-1'}`}/>
+              </button>
+            </div>
+
+            <div><label className="label">Nom de la facture</label>
+              <input className="input" placeholder="Ex: Facture CEB, Abonnement Netflix..." value={form.name} onChange={e => setForm(f => ({...f, name: e.target.value}))}/></div>
+
+            <div><label className="label">Montant (Rs)</label>
+              <input className="input" type="number" placeholder="0" value={form.amount} onChange={e => setForm(f => ({...f, amount: e.target.value}))}/></div>
+
+            <div>
+              <label className="label">Catégorie</label>
+              <select className="input" value={form.category} onChange={e => setForm(f => ({...f, category: e.target.value}))}>
+                {FACTURE_CATEGORIES.map(c => <option key={c}>{c}</option>)}
+              </select>
+            </div>
+
+            <div><label className="label">Date d'échéance (optionnel)</label>
+              <input className="input" type="date" value={form.dueDate} onChange={e => setForm(f => ({...f, dueDate: e.target.value}))}/></div>
+
+            <div><label className="label">Note (optionnel)</label>
+              <input className="input" placeholder="Ex: Facture reçue le 5..." value={form.note} onChange={e => setForm(f => ({...f, note: e.target.value}))}/></div>
+
+            <button className="btn-primary w-full py-4" onClick={handleAdd} style={{ backgroundColor: '#CA8A04' }} disabled={saving}>
+              {saving ? 'Ajout...' : 'Ajouter la facture'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function FactureCard({ facture: f, onToggle, onDelete }: {
+  facture: Facture
+  onToggle: (f: Facture) => void
+  onDelete: (id: string) => void
+}) {
+  const isDue = f.dueDate ? new Date(f.dueDate) < new Date() && !f.paid : false
+
+  return (
+    <div className={`card flex items-center gap-3 transition-all ${f.paid ? 'opacity-60' : ''} ${isDue ? 'border-l-4 border-l-danger' : ''}`}>
+      {/* Checkbox */}
+      <button
+        onClick={() => onToggle(f)}
+        className={`w-7 h-7 rounded-xl border-2 flex items-center justify-center flex-shrink-0 transition-all
+          ${f.paid ? 'bg-positive border-positive' : 'border-mist-dark bg-white'}`}>
+        {f.paid && <span className="text-white text-xs font-bold">✓</span>}
+      </button>
+
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
+          <p className={`text-sm font-semibold ${f.paid ? 'line-through text-ink-soft' : 'text-ink'}`}>{f.name}</p>
+          {isDue && !f.paid && <span className="text-[10px] bg-danger text-white px-1.5 py-0.5 rounded-full font-bold">En retard</span>}
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-[10px] bg-yellow-50 text-yellow-700 border border-yellow-200 px-1.5 py-0.5 rounded-full font-medium">{f.category}</span>
+          {f.dueDate && <span className="text-[10px] text-ink-soft">📅 {new Date(f.dueDate).toLocaleDateString('fr-FR')}</span>}
+          {f.note && <span className="text-[10px] text-ink-soft italic">{f.note}</span>}
+        </div>
+      </div>
+
+      <div className="flex items-center gap-1 flex-shrink-0">
+        <span className={`font-mono text-sm font-bold ${f.paid ? 'text-positive' : 'text-ink'}`}>{formatAmount(f.amount)}</span>
+        <button onClick={() => onDelete(f.id)}
+          className="w-7 h-7 rounded-lg bg-mist hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center">
+          <Trash2 size={12}/>
+        </button>
+      </div>
     </div>
   )
 }
@@ -475,7 +953,7 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
       <div className="flex items-start gap-3 p-3 bg-orange-50 border border-orange-200 rounded-2xl">
         <span className="text-lg">💡</span>
         <p className="text-xs text-orange-700 leading-relaxed">
-          <strong>Comment ça marche :</strong> Les dépenses ponctuelles, les charges récurrentes payées <strong>et les remboursements de dettes</strong> s'ajoutent automatiquement.
+          <strong>Plafonds de dépenses par catégorie.</strong> Fixe une limite mensuelle pour chaque poste (alimentation, transport...). Les dépenses ponctuelles, charges récurrentes payées et remboursements de dettes s'ajoutent automatiquement.
         </p>
       </div>
       <button onClick={openAdd} className="btn-primary w-full gap-2" style={{ backgroundColor: '#F97316' }}><Plus size={18}/> Nouveau plafond</button>
@@ -712,7 +1190,6 @@ function DettesSection() {
   const [customCategories, setCustomCategories] = useState<string[]>(loadCustomCategories)
   const [expandedCreditors, setExpandedCreditors] = useState<Set<string>>(new Set())
   const [monthlyPaid, setMonthlyPaid] = useState<Record<string, number>>({})
-
   const ym = currentYearMonth()
 
   const [form, setForm] = useState({
@@ -725,7 +1202,6 @@ function DettesSection() {
     async function load() {
       const fetchedDebts = await getDebts()
       setDebts(fetchedDebts)
-
       const { data: { user } } = await supabase.auth.getUser()
       const { data: userDebts } = await supabase.from('debts').select('id').eq('user_id', user!.id)
       const debtIds = (userDebts ?? []).map(d => d.id)
@@ -747,10 +1223,8 @@ function DettesSection() {
     setCustomCategories(updated); saveCustomCategories(updated)
   }
 
-  // ── 3. Snowball supprimé : tip générique ──
   const totalOwe  = debts.filter(d => d.type === 'owe').reduce((s, d) => s + d.remaining, 0)
   const totalOwed = debts.filter(d => d.type === 'owed').reduce((s, d) => s + d.remaining, 0)
-
   const oweDebts = debts.filter(d => d.type === 'owe')
   const totalMonthlyMin = oweDebts.reduce((s, d) => s + (d.minimumPayment || 0), 0)
   const totalMonthlyPaid = Object.values(monthlyPaid).reduce((s, v) => s + v, 0)
@@ -829,12 +1303,9 @@ function DettesSection() {
     const debt = debts.find(d => d.id === id)!
     const isRecurring = (debt as any).recurring ?? false
     const debtCategory = (debt as any).category ?? 'Autre'
-
     await logPayment(id, amt, payDate, debtCategory, payNote)
     invalidateHistory(id)
-
     setMonthlyPaid(prev => ({ ...prev, [id]: (prev[id] || 0) + amt }))
-
     if (debt.amount === 0) {
       setConfirmDeleteId(id); setPayingId(null); setPayAmount(''); setPayDate(new Date().toISOString().slice(0, 10)); setPayNote(''); return
     }
@@ -890,7 +1361,14 @@ function DettesSection() {
     <div className="space-y-3">
       <CoachTip message={tip} />
 
-      {/* Summary cards */}
+      {/* Note explicative */}
+      <div className="flex items-start gap-3 p-3 bg-red-50 border border-red-100 rounded-2xl">
+        <span className="text-base">💡</span>
+        <p className="text-xs text-red-700 leading-relaxed">
+          <strong>Dettes ≠ Factures.</strong> Une dette (crédit voiture, prêt bancaire...) se rembourse <strong>progressivement sur des mois ou des années</strong>, avec un solde qui diminue. Une facture mensuelle → carte <strong>Factures</strong>.
+        </p>
+      </div>
+
       <div className="grid grid-cols-2 gap-3">
         <div className="card border border-danger/20">
           <div className="flex items-center gap-2 mb-2">
@@ -910,7 +1388,6 @@ function DettesSection() {
         </div>
       </div>
 
-      {/* ── 1. Monthly payment card : fond bleu au lieu d'orange ── */}
       {oweDebts.length > 0 && (
         <div className="card border-2 border-blue-200 bg-blue-50 space-y-2">
           <div className="flex items-center justify-between">
@@ -940,11 +1417,6 @@ function DettesSection() {
           )}
         </div>
       )}
-
-      <div className="flex items-start gap-3 p-3 bg-red-50 border border-red-100 rounded-2xl">
-        <span className="text-base">💡</span>
-        <p className="text-xs text-red-700 leading-relaxed"><strong>Conseil :</strong> Rembourse régulièrement chaque mois pour réduire ton endettement progressivement.</p>
-      </div>
 
       <button onClick={() => { resetForm(); setShowForm(true) }} className="btn-primary w-full gap-2" style={{ backgroundColor: '#DC2626' }}><Plus size={18}/> Ajouter une dette / prêt</button>
 
@@ -1034,7 +1506,6 @@ function DettesSection() {
                       )}
                       {dueBadge && <div className="mt-1.5">{dueBadge}</div>}
                     </div>
-
                     <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
                       <p className="font-mono font-bold text-lg text-ink">{formatAmount(d.remaining)}</p>
                       {paidPct > 0 && !isRecurring && <span className="text-xs font-semibold text-positive bg-positive-light px-2 py-0.5 rounded-full">{paidPct}% remboursé</span>}
@@ -1224,25 +1695,19 @@ function EpargneSection() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [showConfetti, setShowConfetti] = useState(false)
   const [celebratedGoals, setCelebratedGoals] = useState<Set<string>>(new Set())
-
   const [depositGoalId, setDepositGoalId] = useState<string | null>(null)
   const [depositAmount, setDepositAmount] = useState('')
   const [depositNote, setDepositNote] = useState('')
   const [depositDate, setDepositDate] = useState(new Date().toISOString().slice(0, 10))
   const [isWithdrawal, setIsWithdrawal] = useState(false)
-
   const [openHistoryId, setOpenHistoryId] = useState<string | null>(null)
   const [depositsMap, setDepositsMap] = useState<Record<string, SavingsDeposit[]>>({})
   const [historyLoading, setHistoryLoading] = useState(false)
-
   const [editingDeposit, setEditingDeposit] = useState<SavingsDeposit | null>(null)
   const [editDepAmount, setEditDepAmount] = useState('')
   const [editDepNote, setEditDepNote] = useState('')
   const [editDepDate, setEditDepDate] = useState('')
-
-  const [form, setForm] = useState({
-    name: '', target: '', emoji: EMOJIS[0], targetDate: '',
-  })
+  const [form, setForm] = useState({ name: '', target: '', emoji: EMOJIS[0], targetDate: '' })
 
   useEffect(() => { getSavings().then(setGoals).finally(() => setLoading(false)) }, [])
 
@@ -1272,16 +1737,13 @@ function EpargneSection() {
     const amt = Number(depositAmount)
     const delta = isWithdrawal ? -amt : amt
     const newSaved = Math.max(0, goal.saved + delta)
-
     await addSavingsDeposit(depositGoalId, amt, isWithdrawal, depositNote, depositDate)
     await updateSavingsGoal(depositGoalId, newSaved)
     setGoals(prev => prev.map(g => g.id === depositGoalId ? { ...g, saved: newSaved } : g))
-
     if (!isWithdrawal && newSaved >= goal.target && goal.saved < goal.target && !celebratedGoals.has(depositGoalId)) {
       setShowConfetti(true)
       setCelebratedGoals(prev => new Set([...prev, depositGoalId]))
     }
-
     setDepositsMap(prev => { const n = { ...prev }; delete n[depositGoalId]; return n })
     setDepositGoalId(null); setDepositAmount(''); setDepositNote(''); setDepositDate(new Date().toISOString().slice(0, 10)); setIsWithdrawal(false)
   }
@@ -1337,11 +1799,7 @@ function EpargneSection() {
     const oldest = new Date(contributions[contributions.length - 1].depositedAt)
     const monthsActive = Math.max(1, monthsBetween(oldest, new Date()) + 1)
     const totalContributed = contributions.reduce((s, d) => s + d.amount, 0)
-    return {
-      avgMonthly: Math.round(totalContributed / monthsActive),
-      lastDeposit: deposits[0] ?? null,
-      monthsActive,
-    }
+    return { avgMonthly: Math.round(totalContributed / monthsActive), lastDeposit: deposits[0] ?? null, monthsActive }
   }
 
   function getPaceBadge(g: SavingsGoal): React.ReactNode {
@@ -1363,11 +1821,12 @@ function EpargneSection() {
   return (
     <div className="space-y-3">
       {showConfetti && <Confetti onDone={() => setShowConfetti(false)}/>}
-
       <CoachTip message={tip} />
       <div className="flex items-start gap-3 p-3 bg-green-50 border border-green-100 rounded-2xl">
         <span className="text-base">💡</span>
-        <p className="text-xs text-green-700 leading-relaxed"><strong>Règle d'or :</strong> Épargne d'abord, dépense ensuite. Les objectifs sont triés par avancement.</p>
+        <p className="text-xs text-green-700 leading-relaxed">
+          <strong>Objectifs d'épargne à long terme.</strong> Fonds d'urgence, vacances, achat voiture... Chaque objectif a un montant cible. Règle d'or : épargne d'abord, dépense ensuite. Les objectifs sont triés par avancement.
+        </p>
       </div>
 
       {goals.length > 0 && (
@@ -1414,7 +1873,7 @@ function EpargneSection() {
             </div>
 
             <div className="w-full h-3 bg-mist-dark rounded-full overflow-hidden">
-              <div className="h-full rounded-full transition-all duration-700" style={{ width: `${pct}%`, backgroundColor: done ? '#16A34A' : pct >= 80 ? '#2563EB' : '#2563EB', opacity: done ? 1 : 0.7 + pct * 0.003 }}/>
+              <div className="h-full rounded-full transition-all duration-700" style={{ width: `${pct}%`, backgroundColor: done ? '#16A34A' : '#2563EB', opacity: done ? 1 : 0.7 + pct * 0.003 }}/>
             </div>
             <div className="flex justify-between text-xs">
               <span className="font-mono font-bold text-accent">{formatAmount(g.saved)}</span>
