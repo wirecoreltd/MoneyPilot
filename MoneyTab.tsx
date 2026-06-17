@@ -9,7 +9,6 @@ import {
   getSavings, addSavingsGoal, updateSavingsGoal, deleteSavingsGoal,
   getDebts, addDebt, updateDebt, deleteDebt,
   getRecurringPayments, getPaymentForMonth,
-  computeCoachPlan,
   formatAmount, currentYearMonth,
 } from '@/lib/storage'
 import CoachTip from './CoachTip'
@@ -73,9 +72,10 @@ const RECURRING_TO_BUDGET: Record<string, string> = {
   factures: 'Factures', assurance: 'Factures', école: 'Éducation', autre: 'Autre', dette: '',
 }
 
+// ── 2. Carte Budget : activeColor orange au lieu de mauve ──
 const SUBTABS = [
   { id: 'transactions' as SubTab, emoji: '💸', label: 'Transactions', shortDesc: 'Mes dépenses & revenus', fullDesc: 'Enregistre chaque dépense ou revenu ponctuel.', color: 'bg-blue-50 border-blue-200 text-blue-700', activeColor: 'bg-accent text-white' },
-  { id: 'budget' as SubTab, emoji: '🎯', label: 'Budget', shortDesc: 'Mes plafonds par catégorie', fullDesc: 'Fixe des limites de dépenses par catégorie.', color: 'bg-purple-50 border-purple-200 text-purple-700', activeColor: 'bg-purple-600 text-white' },
+  { id: 'budget' as SubTab, emoji: '🎯', label: 'Budget', shortDesc: 'Mes plafonds par catégorie', fullDesc: 'Fixe des limites de dépenses par catégorie.', color: 'bg-orange-50 border-orange-200 text-orange-700', activeColor: 'bg-orange-500 text-white' },
   { id: 'dettes' as SubTab, emoji: '💳', label: 'Dettes', shortDesc: 'Ce que je dois / on me doit', fullDesc: 'Suis tes crédits et prêts.', color: 'bg-red-50 border-red-200 text-red-700', activeColor: 'bg-danger text-white' },
   { id: 'epargne' as SubTab, emoji: '🐖', label: 'Épargne', shortDesc: 'Mes objectifs d\'économies', fullDesc: 'Crée des objectifs d\'épargne avec un montant cible.', color: 'bg-green-50 border-green-200 text-green-700', activeColor: 'bg-positive text-white' },
 ]
@@ -472,13 +472,13 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
   return (
     <div className="space-y-3">
       <CoachTip message={tip} />
-      <div className="flex items-start gap-3 p-3 bg-purple-50 border border-purple-200 rounded-2xl">
+      <div className="flex items-start gap-3 p-3 bg-orange-50 border border-orange-200 rounded-2xl">
         <span className="text-lg">💡</span>
-        <p className="text-xs text-purple-700 leading-relaxed">
+        <p className="text-xs text-orange-700 leading-relaxed">
           <strong>Comment ça marche :</strong> Les dépenses ponctuelles, les charges récurrentes payées <strong>et les remboursements de dettes</strong> s'ajoutent automatiquement.
         </p>
       </div>
-      <button onClick={openAdd} className="btn-primary w-full gap-2" style={{ backgroundColor: '#7C3AED' }}><Plus size={18}/> Nouveau plafond</button>
+      <button onClick={openAdd} className="btn-primary w-full gap-2" style={{ backgroundColor: '#F97316' }}><Plus size={18}/> Nouveau plafond</button>
 
       {budgets.length === 0 ? (
         <div className="card text-center py-10"><p className="text-3xl mb-2">🎯</p><p className="font-semibold text-ink">Aucun budget défini</p></div>
@@ -573,7 +573,7 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
                 {COLORS.map(c => <button key={c} style={{ backgroundColor: c }} className={`w-10 h-10 rounded-2xl border-2 transition-transform ${form.color === c ? 'border-ink scale-110' : 'border-transparent'}`} onClick={() => setForm(f => ({...f, color: c}))}/>)}
               </div>
             </div>
-            <button className="btn-primary w-full py-4" onClick={handleSave} style={{ backgroundColor: '#7C3AED' }} disabled={!editingBudget && budgets.some(b => b.name === form.name)}>
+            <button className="btn-primary w-full py-4" onClick={handleSave} style={{ backgroundColor: '#F97316' }} disabled={!editingBudget && budgets.some(b => b.name === form.name)}>
               {editingBudget ? 'Enregistrer les modifications' : 'Créer le plafond'}
             </button>
           </div>
@@ -710,9 +710,7 @@ function DettesSection() {
   const [editPayDate, setEditPayDate] = useState('')
   const [editPayNote, setEditPayNote] = useState('')
   const [customCategories, setCustomCategories] = useState<string[]>(loadCustomCategories)
-  // Grouped creditors: track which creditor groups are expanded
   const [expandedCreditors, setExpandedCreditors] = useState<Set<string>>(new Set())
-  // Monthly payments tracking
   const [monthlyPaid, setMonthlyPaid] = useState<Record<string, number>>({})
 
   const ym = currentYearMonth()
@@ -728,7 +726,6 @@ function DettesSection() {
       const fetchedDebts = await getDebts()
       setDebts(fetchedDebts)
 
-      // Load monthly payment totals
       const { data: { user } } = await supabase.auth.getUser()
       const { data: userDebts } = await supabase.from('debts').select('id').eq('user_id', user!.id)
       const debtIds = (userDebts ?? []).map(d => d.id)
@@ -750,23 +747,20 @@ function DettesSection() {
     setCustomCategories(updated); saveCustomCategories(updated)
   }
 
-  const plan      = computeCoachPlan(debts, [], [], currentYearMonth())
+  // ── 3. Snowball supprimé : tip générique ──
   const totalOwe  = debts.filter(d => d.type === 'owe').reduce((s, d) => s + d.remaining, 0)
   const totalOwed = debts.filter(d => d.type === 'owed').reduce((s, d) => s + d.remaining, 0)
 
-  // Monthly summary card
   const oweDebts = debts.filter(d => d.type === 'owe')
   const totalMonthlyMin = oweDebts.reduce((s, d) => s + (d.minimumPayment || 0), 0)
   const totalMonthlyPaid = Object.values(monthlyPaid).reduce((s, v) => s + v, 0)
   const debtsPaidThisMonth = oweDebts.filter(d => (monthlyPaid[d.id] || 0) >= (d.minimumPayment || 0)).length
   const debtsStillDue = oweDebts.filter(d => (monthlyPaid[d.id] || 0) < (d.minimumPayment || 0)).length
 
-  const tip = plan.snowballTarget
-    ? `🎯 Rembourse "${plan.snowballTarget.person}" en priorité (${formatAmount(plan.snowballTarget.remaining)} restant). Mets ${formatAmount(plan.snowballSuggestion)} de plus ce mois !`
-    : debts.length > 0 ? `✅ Continue comme ça, tu avances bien !`
-    : `Enregistre tes crédits et prêts pour que le Coach calcule le meilleur ordre de remboursement.`
+  const tip = debts.length > 0
+    ? `💪 Continue tes remboursements régulièrement, chaque paiement compte !`
+    : `Enregistre tes crédits et prêts pour suivre leur avancement.`
 
-  // Group debts by creditor name
   const groupedDebts = debts.reduce((acc, d) => {
     if (!acc[d.person]) acc[d.person] = []
     acc[d.person].push(d)
@@ -839,7 +833,6 @@ function DettesSection() {
     await logPayment(id, amt, payDate, debtCategory, payNote)
     invalidateHistory(id)
 
-    // Update monthly paid tracking
     setMonthlyPaid(prev => ({ ...prev, [id]: (prev[id] || 0) + amt }))
 
     if (debt.amount === 0) {
@@ -886,7 +879,6 @@ function DettesSection() {
       await updateDebt(debt.id, { remaining: newRemaining })
       setDebts(prev => prev.map(d => d.id === debt.id ? { ...d, remaining: newRemaining } : d))
     }
-    // Update monthly paid tracking
     setMonthlyPaid(prev => ({ ...prev, [h.debtId]: Math.max(0, (prev[h.debtId] || 0) - h.amount) }))
     await deletePayment(h.id)
     await reloadHistory(h.debtId)
@@ -918,13 +910,13 @@ function DettesSection() {
         </div>
       </div>
 
-      {/* Monthly payment card */}
+      {/* ── 1. Monthly payment card : fond bleu au lieu d'orange ── */}
       {oweDebts.length > 0 && (
-        <div className="card border-2 border-orange-200 bg-orange-50 space-y-2">
+        <div className="card border-2 border-blue-200 bg-blue-50 space-y-2">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <span className="text-lg">📅</span>
-              <p className="text-sm font-bold text-orange-700">Ce mois-ci</p>
+              <p className="text-sm font-bold text-blue-700">Ce mois-ci</p>
             </div>
             <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${debtsStillDue === 0 ? 'bg-positive-light text-positive' : 'bg-danger-light text-danger'}`}>
               {debtsStillDue === 0 ? '✅ Tout payé !' : `${debtsStillDue} restant${debtsStillDue > 1 ? 's' : ''}`}
@@ -932,17 +924,17 @@ function DettesSection() {
           </div>
           <div className="flex justify-between items-end">
             <div>
-              <p className="text-2xl font-bold font-mono text-orange-800">{formatAmount(totalMonthlyPaid)}</p>
-              <p className="text-xs text-orange-600">remboursés sur {formatAmount(totalMonthlyMin)} prévus</p>
+              <p className="text-2xl font-bold font-mono text-blue-800">{formatAmount(totalMonthlyPaid)}</p>
+              <p className="text-xs text-blue-600">remboursés sur {formatAmount(totalMonthlyMin)} prévus</p>
             </div>
             <div className="text-right">
-              <p className="text-sm font-bold text-orange-700">{debtsPaidThisMonth}/{oweDebts.length}</p>
-              <p className="text-xs text-orange-500">dettes payées</p>
+              <p className="text-sm font-bold text-blue-700">{debtsPaidThisMonth}/{oweDebts.length}</p>
+              <p className="text-xs text-blue-500">dettes payées</p>
             </div>
           </div>
           {totalMonthlyMin > 0 && (
-            <div className="w-full h-2 bg-orange-200 rounded-full overflow-hidden">
-              <div className="h-full bg-orange-500 rounded-full transition-all duration-500"
+            <div className="w-full h-2 bg-blue-200 rounded-full overflow-hidden">
+              <div className="h-full bg-blue-500 rounded-full transition-all duration-500"
                 style={{ width: `${Math.min(100, (totalMonthlyPaid / totalMonthlyMin) * 100)}%` }}/>
             </div>
           )}
@@ -951,7 +943,7 @@ function DettesSection() {
 
       <div className="flex items-start gap-3 p-3 bg-red-50 border border-red-100 rounded-2xl">
         <span className="text-base">💡</span>
-        <p className="text-xs text-red-700 leading-relaxed"><strong>Snowball :</strong> Rembourse la plus petite dette en premier pour créer de l'élan.</p>
+        <p className="text-xs text-red-700 leading-relaxed"><strong>Conseil :</strong> Rembourse régulièrement chaque mois pour réduire ton endettement progressivement.</p>
       </div>
 
       <button onClick={() => { resetForm(); setShowForm(true) }} className="btn-primary w-full gap-2" style={{ backgroundColor: '#DC2626' }}><Plus size={18}/> Ajouter une dette / prêt</button>
@@ -966,7 +958,6 @@ function DettesSection() {
 
         return (
           <div key={personName}>
-            {/* Group header for multiple debts to same person */}
             {isGrouped && (
               <button
                 onClick={() => setExpandedCreditors(prev => {
@@ -990,11 +981,9 @@ function DettesSection() {
               </button>
             )}
 
-            {/* Show debts: always show if single, show if expanded if grouped */}
             {(!isGrouped || isExpanded) && personDebts.map(d => {
               const paidPct      = d.amount > 0 ? Math.round(((d.amount - d.remaining) / d.amount) * 100) : 0
               const monthsLeft   = d.minimumPayment > 0 ? Math.ceil(d.remaining / d.minimumPayment) : null
-              const isSnowball   = plan.snowballTarget?.id === d.id
               const isRecurring  = (d as any).recurring ?? false
               const debtCategory = (d as any).category ?? 'Autre'
               const endDate      = projectedEndDate(d.remaining, d.minimumPayment)
@@ -1013,13 +1002,11 @@ function DettesSection() {
               }
 
               return (
-                <div key={d.id} className={`card space-y-3 border-l-4 mb-2 ${isGrouped ? 'ml-4' : ''} ${d.type === 'owe' ? 'border-l-danger' : 'border-l-positive'} ${isSnowball ? 'ring-2 ring-accent ring-offset-1' : ''}`}>
+                <div key={d.id} className={`card space-y-3 border-l-4 mb-2 ${isGrouped ? 'ml-4' : ''} ${d.type === 'owe' ? 'border-l-danger' : 'border-l-positive'}`}>
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5 flex-wrap mb-1">
-                        {isSnowball && <span className="text-xs bg-accent text-white px-2 py-0.5 rounded-full font-bold">🎯 Priorité</span>}
                         {isRecurring && <span className="text-xs bg-blue-50 text-accent border border-blue-100 px-2 py-0.5 rounded-full font-medium">🔄 Récurrent</span>}
-                        {/* ── Catégorie en orange ── */}
                         <span className="text-xs font-medium px-2 py-0.5 rounded-full" style={{ backgroundColor: '#FFF7ED', color: '#C2410C', border: '1px solid #FDBA74' }}>{debtCategory}</span>
                         <span className="text-xs font-medium text-ink-soft">{d.type === 'owe' ? 'Je dois à' : 'Me doit'}</span>
                       </div>
@@ -1034,7 +1021,6 @@ function DettesSection() {
                         )}
                         {endDate && !isRecurring && <span className="text-xs text-ink-soft">Fin : <span className="font-semibold text-ink">{endDate}</span></span>}
                       </div>
-                      {/* Monthly payment status */}
                       {d.type === 'owe' && d.minimumPayment > 0 && (
                         <div className="mt-1.5">
                           {paidThisMonth >= d.minimumPayment ? (
@@ -1239,19 +1225,16 @@ function EpargneSection() {
   const [showConfetti, setShowConfetti] = useState(false)
   const [celebratedGoals, setCelebratedGoals] = useState<Set<string>>(new Set())
 
-  // Deposit modal state
   const [depositGoalId, setDepositGoalId] = useState<string | null>(null)
   const [depositAmount, setDepositAmount] = useState('')
   const [depositNote, setDepositNote] = useState('')
   const [depositDate, setDepositDate] = useState(new Date().toISOString().slice(0, 10))
   const [isWithdrawal, setIsWithdrawal] = useState(false)
 
-  // History state
   const [openHistoryId, setOpenHistoryId] = useState<string | null>(null)
   const [depositsMap, setDepositsMap] = useState<Record<string, SavingsDeposit[]>>({})
   const [historyLoading, setHistoryLoading] = useState(false)
 
-  // Edit deposit
   const [editingDeposit, setEditingDeposit] = useState<SavingsDeposit | null>(null)
   const [editDepAmount, setEditDepAmount] = useState('')
   const [editDepNote, setEditDepNote] = useState('')
@@ -1263,7 +1246,6 @@ function EpargneSection() {
 
   useEffect(() => { getSavings().then(setGoals).finally(() => setLoading(false)) }, [])
 
-  // Sort goals: closest to completion first
   const sortedGoals = [...goals].sort((a, b) => {
     const pctA = a.target > 0 ? a.saved / a.target : 0
     const pctB = b.target > 0 ? b.saved / b.target : 0
@@ -1295,15 +1277,12 @@ function EpargneSection() {
     await updateSavingsGoal(depositGoalId, newSaved)
     setGoals(prev => prev.map(g => g.id === depositGoalId ? { ...g, saved: newSaved } : g))
 
-    // Confetti if just reached target
     if (!isWithdrawal && newSaved >= goal.target && goal.saved < goal.target && !celebratedGoals.has(depositGoalId)) {
       setShowConfetti(true)
       setCelebratedGoals(prev => new Set([...prev, depositGoalId]))
     }
 
-    // Invalidate history cache
     setDepositsMap(prev => { const n = { ...prev }; delete n[depositGoalId]; return n })
-
     setDepositGoalId(null); setDepositAmount(''); setDepositNote(''); setDepositDate(new Date().toISOString().slice(0, 10)); setIsWithdrawal(false)
   }
 
@@ -1351,7 +1330,6 @@ function EpargneSection() {
     await reloadDeposits(d.goalId)
   }
 
-  // Per-goal stats
   function getGoalStats(g: SavingsGoal, deposits: SavingsDeposit[]) {
     if (!deposits || deposits.length === 0) return { avgMonthly: 0, lastDeposit: null, monthsActive: 0 }
     const contributions = deposits.filter(d => !d.isWithdrawal)
@@ -1435,7 +1413,6 @@ function EpargneSection() {
               </div>
             </div>
 
-            {/* Progress bar */}
             <div className="w-full h-3 bg-mist-dark rounded-full overflow-hidden">
               <div className="h-full rounded-full transition-all duration-700" style={{ width: `${pct}%`, backgroundColor: done ? '#16A34A' : pct >= 80 ? '#2563EB' : '#2563EB', opacity: done ? 1 : 0.7 + pct * 0.003 }}/>
             </div>
@@ -1444,7 +1421,6 @@ function EpargneSection() {
               <span className="font-mono text-ink-soft">{pct.toFixed(0)}% · objectif {formatAmount(g.target)}</span>
             </div>
 
-            {/* Stats row */}
             {depositsMap[g.id] && depositsMap[g.id].length > 0 && (
               <div className="flex gap-3 text-xs text-ink-soft bg-mist rounded-xl px-3 py-2">
                 {avgMonthly > 0 && <span>📊 Moy. <strong className="text-ink">{formatAmount(avgMonthly)}</strong>/mois</span>}
@@ -1452,7 +1428,6 @@ function EpargneSection() {
               </div>
             )}
 
-            {/* Suggested amount */}
             {suggested && !done && (
               <div className="flex items-center gap-2 bg-blue-50 border border-blue-100 rounded-xl px-3 py-2">
                 <span className="text-sm">💡</span>
@@ -1460,7 +1435,6 @@ function EpargneSection() {
               </div>
             )}
 
-            {/* History */}
             {showHistory && (
               <div className="bg-mist rounded-2xl overflow-hidden">
                 <div className="px-3 py-2.5 border-b border-mist-dark flex items-center justify-between">
@@ -1490,7 +1464,6 @@ function EpargneSection() {
               </div>
             )}
 
-            {/* Deposit / Withdraw buttons */}
             {depositGoalId === g.id ? (
               <div className="space-y-2 p-3 rounded-2xl" style={{ backgroundColor: isWithdrawal ? '#FEF2F2' : '#F0FDF4' }}>
                 <div className="flex rounded-xl overflow-hidden border-2 border-mist-dark">
@@ -1519,7 +1492,6 @@ function EpargneSection() {
         )
       })}
 
-      {/* Confirm delete */}
       {confirmDeleteId && (
         <div className="bottom-sheet bg-black/40">
           <div className="bottom-sheet-content">
@@ -1536,7 +1508,6 @@ function EpargneSection() {
         </div>
       )}
 
-      {/* Edit deposit modal */}
       {editingDeposit && (
         <div className="bottom-sheet bg-black/40">
           <div className="bottom-sheet-content">
@@ -1555,7 +1526,6 @@ function EpargneSection() {
         </div>
       )}
 
-      {/* New goal form */}
       {showForm && (
         <div className="bottom-sheet bg-black/40">
           <div className="bottom-sheet-content">
