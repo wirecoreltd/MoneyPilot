@@ -62,7 +62,7 @@ export default function Page() {
       <header className="md:hidden sticky top-0 z-40 bg-white border-b border-mist-dark
                          px-4 py-3 flex items-center justify-between">
         <span className="text-lg font-bold text-ink tracking-tight">
-          Mon<span className="text-accent">Budget</span>
+          Money<span className="text-accent">Pilot</span>
         </span>
         <span className="text-xs text-ink-soft font-medium">
           👋 {profile.firstName}
