@@ -45,7 +45,13 @@ export default function Page() {
       <div className="min-h-screen bg-gradient-to-br from-accent to-blue-800
                       flex items-center justify-center">
         <div className="text-center text-white">
-          <div className="text-5xl mb-4 animate-pulse">💰</div>
+         <div className="mb-4 animate-pulse">
+            <img
+              src="/moneypilot.png"
+              alt="MoneyPilot"
+              className="w-16 h-16 mx-auto object-contain"
+            />
+          </div>
           <p className="font-bold text-xl">MoneyPilot</p>
         </div>
       </div>
