@@ -71,7 +71,7 @@ export default function Page() {
       <main className="md:ml-60 pb-28 md:pb-8 px-4 py-4 md:px-8 md:py-8 max-w-2xl mx-auto md:mx-0">
         {tab === 'home'    && <HomeTab     transactions={transactions} onUpdate={refresh} profile={profile} />}
         {tab === 'money'   && <MoneyTab    transactions={transactions} onUpdate={refresh} />}
-        {tab === 'bilan' && <BilanTab transactions={transactions} onUpdate={refresh} profile={profile} />}
+        {tab === 'bilan'   && <BilanTab    transactions={transactions} />}
         {tab === 'projets' && <ProjectsTab />}
       </main>
     </div>
