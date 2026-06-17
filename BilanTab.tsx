@@ -309,6 +309,91 @@ function ChecklistSection({
 }
 
 // ─── Income List ──────────────────────────────────────────────────────────────
+function IncomeAddForm({
+  onSubmit,
+  onCancel,
+  saving,
+}: {
+  onSubmit: (data: { label: string; amount: number; isFixed: boolean }) => void;
+  onCancel: () => void;
+  saving: boolean;
+}) {
+  const [label, setLabel] = useState("");
+  const [amount, setAmount] = useState("");
+  const [isFixed, setIsFixed] = useState(true);
+
+  const amountValue = parseFloat(amount.replace(",", "."));
+  const isValid = label.trim().length > 0 && !isNaN(amountValue) && amountValue > 0;
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!isValid || saving) return;
+    onSubmit({ label: label.trim(), amount: amountValue, isFixed });
+  }
+
+  return (
+    <form
+      onSubmit={handleSubmit}
+      style={{ display: "flex", flexDirection: "column", gap: 8, padding: "12px", background: "#F8F9FC", borderRadius: 16, marginBottom: 10 }}
+    >
+      <input
+        type="text"
+        value={label}
+        onChange={(e) => setLabel(e.target.value)}
+        placeholder="Libellé (ex. Salaire)"
+        autoFocus
+        style={{ width: "100%", padding: "9px 10px", borderRadius: 10, border: "1.5px solid #E8EDF5", fontSize: 13, fontFamily: "inherit", outline: "none", boxSizing: "border-box" }}
+      />
+      <input
+        type="text"
+        inputMode="decimal"
+        value={amount}
+        onChange={(e) => setAmount(e.target.value)}
+        placeholder="Montant"
+        style={{ width: "100%", padding: "9px 10px", borderRadius: 10, border: "1.5px solid #E8EDF5", fontSize: 13, fontFamily: "monospace", outline: "none", boxSizing: "border-box" }}
+      />
+      <div style={{ display: "flex", gap: 6 }}>
+        {[{ v: true, label: "Fixe" }, { v: false, label: "Variable" }].map((opt) => (
+          <button
+            key={opt.label}
+            type="button"
+            onClick={() => setIsFixed(opt.v)}
+            style={{
+              flex: 1, padding: "8px", borderRadius: 10, border: "none", cursor: "pointer",
+              fontSize: 12, fontWeight: 700,
+              background: isFixed === opt.v ? "#2563EB" : "#fff",
+              color: isFixed === opt.v ? "#fff" : "#8896B0",
+            }}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 8, marginTop: 2 }}>
+        <button
+          type="button"
+          onClick={onCancel}
+          style={{ flex: 1, padding: "9px", background: "#fff", color: "#8896B0", border: "1.5px solid #E8EDF5", borderRadius: 10, fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+        >
+          Annuler
+        </button>
+        <button
+          type="submit"
+          disabled={!isValid || saving}
+          style={{
+            flex: 1, padding: "9px", borderRadius: 10, fontSize: 12, fontWeight: 700, border: "none",
+            cursor: isValid && !saving ? "pointer" : "default",
+            background: isValid && !saving ? "#16A34A" : "#D1D5DB",
+            color: "#fff",
+          }}
+        >
+          {saving ? "Ajout…" : "Ajouter"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
 function IncomeList({
   incomes,
   onDelete,
@@ -316,11 +401,24 @@ function IncomeList({
 }: {
   incomes: MonthlyIncome[];
   onDelete?: (id: string) => void;
-  onAdd: () => void;
+  onAdd: (data: { label: string; amount: number; isFixed: boolean }) => Promise<void>;
 }) {
+  const [showForm, setShowForm] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  async function handleSubmit(data: { label: string; amount: number; isFixed: boolean }) {
+    setSaving(true);
+    try {
+      await onAdd(data);
+      setShowForm(false);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-      {incomes.length === 0 && (
+      {incomes.length === 0 && !showForm && (
         <p style={{ fontSize: 13, color: "#8896B0", textAlign: "center", padding: "12px 0" }}>Aucun revenu saisi</p>
       )}
       {incomes.map((inc) => (
@@ -338,12 +436,18 @@ function IncomeList({
           </div>
         </div>
       ))}
-      <button
-        onClick={onAdd}
-        style={{ marginTop: 10, width: "100%", padding: "11px", background: "#EFF6FF", color: "#2563EB", border: "none", borderRadius: 14, fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
-      >
-        + Ajouter un revenu
-      </button>
+      {showForm ? (
+        <div style={{ marginTop: 10 }}>
+          <IncomeAddForm onSubmit={handleSubmit} onCancel={() => setShowForm(false)} saving={saving} />
+        </div>
+      ) : (
+        <button
+          onClick={() => setShowForm(true)}
+          style={{ marginTop: 10, width: "100%", padding: "11px", background: "#EFF6FF", color: "#2563EB", border: "none", borderRadius: 14, fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
+        >
+          + Ajouter un revenu
+        </button>
+      )}
     </div>
   );
 }
@@ -478,6 +582,16 @@ export default function BilanDashboard({ transactions = [] }: { transactions?: T
     }
   }
 
+  async function handleAddIncome(data: { label: string; amount: number; isFixed: boolean }) {
+    const created = await addMonthlyIncome({
+      label: data.label,
+      amount: data.amount,
+      isFixed: data.isFixed,
+      month,
+    });
+    setIncomes((prev) => [...prev, created]);
+  }
+
   if (loading) return <LoadingState />;
   if (error) return <ErrorState message={error} onRetry={loadAll} />;
 
@@ -600,9 +714,7 @@ export default function BilanDashboard({ transactions = [] }: { transactions?: T
         <IncomeList
           incomes={incomes}
           onDelete={handleDeleteIncome}
-          onAdd={() => {
-            // TODO: brancher un formulaire de saisie (modale ou inline) pour addMonthlyIncome
-          }}
+          onAdd={handleAddIncome}
         />
       </Card>
 
