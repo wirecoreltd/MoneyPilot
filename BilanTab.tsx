@@ -1,514 +1,380 @@
-import React, { useState, useEffect, useRef } from "react";
+'use client'
+import { useState, useRef, useEffect } from 'react'
+import { Plus, X, MessageCircle, Send, TrendingUp, TrendingDown, Wallet, Shield } from 'lucide-react'
 import {
-  AreaChart, Area, BarChart, Bar, XAxis, YAxis,
-  Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine
-} from "recharts";
+  Transaction, TransactionType, EXPENSE_CATEGORIES, INCOME_CATEGORIES,
+  addTransaction, formatAmount, computeCoachPlan, computeHealthScore,
+  currentYearMonth, UserProfile, getSavings, getDebts,
+} from '@/lib/storage'
+import CoachTip from './CoachTip'
 
-// ─── Mock data ─────────────────────────────────────────────────────────────────
-const fmt = (n: number): string =>
-  new Intl.NumberFormat("fr-MU", { style: "currency", currency: "MUR", maximumFractionDigits: 0 }).format(n);
+interface Props {
+  transactions: Transaction[]
+  onUpdate: () => void
+  profile: UserProfile
+}
 
-const MOCK_INCOMES = [
-  { id: "1", label: "Salaire", amount: 28000, isFixed: true, month: "2025-06" },
-  { id: "2", label: "Freelance", amount: 4500, isFixed: false, month: "2025-06" },
-];
+interface ChatMessage {
+  role: 'user' | 'assistant'
+  content: string
+}
 
-const MOCK_CHECKLIST = [
-  { id: "r1", source: "recurring", name: "Loyer", emoji: "🏠", amount: 9500, defaultAmount: 9500, paid: true, category: "logement" },
-  { id: "r2", source: "recurring", name: "Assurance", emoji: "🛡️", amount: 1800, defaultAmount: 1800, paid: true, category: "assurance" },
-  { id: "d1", source: "debt", name: "Prêt BCP", emoji: "💳", amount: 4200, defaultAmount: 4200, paid: false, hasTotal: true },
-  { id: "r3", source: "recurring", name: "Internet", emoji: "⚡", amount: 850, defaultAmount: 850, paid: false, category: "factures" },
-];
+const empty = {
+  type: 'expense' as TransactionType,
+  amount: '',
+  category: EXPENSE_CATEGORIES[0],
+  note: '',
+  date: new Date().toISOString().slice(0, 10),
+}
 
-const MOCK_SAVINGS = [
-  { id: "s1", name: "Fonds urgence", target: 80000, saved: 60000, emoji: "🛡️" },
-  { id: "s2", name: "Vacances", target: 30000, saved: 12000, emoji: "✈️" },
-];
+// ─── Animated counter ─────────────────────────────────────────────────────────
+function useCountUp(target: number, duration = 900) {
+  const [value, setValue] = useState(0)
+  const raf = useRef<number | null>(null)
+  useEffect(() => {
+    let start: number | null = null
+    const animate = (ts: number) => {
+      if (!start) start = ts
+      const progress = Math.min((ts - start) / duration, 1)
+      const eased = 1 - Math.pow(1 - progress, 3)
+      setValue(Math.round(eased * target))
+      if (progress < 1) raf.current = requestAnimationFrame(animate)
+    }
+    raf.current = requestAnimationFrame(animate)
+    return () => { if (raf.current) cancelAnimationFrame(raf.current) }
+  }, [target, duration])
+  return value
+}
 
-const MOCK_DEBTS = [
-  { id: "d1", type: "owe", person: "Prêt BCP", amount: 120000, remaining: 18000, minimumPayment: 4200, category: "Dette" },
-];
-
-const MOCK_PLAN = {
-  totalIncome: 32500,
-  fixedCharges: 9500,
-  debtMinimums: 4200,
-  variableEstimate: 4800,
-  freeMoney: 14000,
-  snowballSuggestion: 7000,
-  savingsSuggestion: 4200,
-  leisureSuggestion: 2800,
-  alerts: [] as string[],
-};
-
-// ─── Types ─────────────────────────────────────────────────────────────────────
-type Income = typeof MOCK_INCOMES[0];
-type ChecklistItem = typeof MOCK_CHECKLIST[0] & { hasTotal?: boolean; category?: string };
-type Saving = typeof MOCK_SAVINGS[0];
-type Debt = typeof MOCK_DEBTS[0];
-type Plan = typeof MOCK_PLAN;
-
-type ProjectionPoint = {
-  month: string;
-  label: string;
-  projectedIncome: number;
-  projectedExpenses: number;
-  projectedBalance: number;
-};
-
-type SixMonthPoint = {
-  month: string;
-  Revenus: number;
-  Dépenses: number;
-};
-
-// ─── Mock projection data ──────────────────────────────────────────────────────
-const NOW = new Date();
-
-const MOCK_PROJECTION: ProjectionPoint[] = Array.from({ length: 12 }, (_, i) => {
-  const d = new Date(NOW.getFullYear(), i, 1);
-  const label = d.toLocaleDateString("fr-FR", { month: "short" });
-  const income = 30000 + Math.round(Math.random() * 5000);
-  const expenses = 18000 + Math.round(Math.random() * 4000);
-  return {
-    month: `${NOW.getFullYear()}-${String(i + 1).padStart(2, "0")}`,
-    label,
-    projectedIncome: income,
-    projectedExpenses: expenses,
-    projectedBalance: (income - expenses) * (i + 1) * 0.7,
-  };
-});
-
-const MOCK_6M: SixMonthPoint[] = Array.from({ length: 6 }, (_, i) => {
-  const d = new Date(NOW.getFullYear(), NOW.getMonth() - (5 - i), 1);
-  return {
-    month: d.toLocaleDateString("fr-FR", { month: "short" }),
-    Revenus: 28000 + Math.round(Math.random() * 6000),
-    Dépenses: 16000 + Math.round(Math.random() * 5000),
-  };
-});
-
-// ─── Sub-components ───────────────────────────────────────────────────────────
-
-function CoachBanner({ message }: { message: string }) {
+// ─── Health gauge arc ─────────────────────────────────────────────────────────
+function HealthArc({ score, color }: { score: number; color: string }) {
+  const animated = useCountUp(score)
+  const R = 54, cx = 64, cy = 64
+  const toRad = (a: number) => (a * Math.PI) / 180
+  const startAngle = -210, endAngle = 30
+  const arcX = (a: number) => cx + R * Math.cos(toRad(a))
+  const arcY = (a: number) => cy + R * Math.sin(toRad(a))
+  const fillAngle = startAngle + (animated / 100) * (endAngle - startAngle)
+  const trackD = `M ${arcX(startAngle)} ${arcY(startAngle)} A ${R} ${R} 0 1 1 ${arcX(endAngle)} ${arcY(endAngle)}`
+  const fillD = animated > 0
+    ? `M ${arcX(startAngle)} ${arcY(startAngle)} A ${R} ${R} 0 ${fillAngle - startAngle > 180 ? 1 : 0} 1 ${arcX(fillAngle)} ${arcY(fillAngle)}`
+    : null
   return (
-    <div style={{ background: "linear-gradient(135deg, #EFF6FF 0%, #F0FDF4 100%)", border: "1.5px solid #BFDBFE", borderRadius: 20, padding: "14px 16px", display: "flex", gap: 10, alignItems: "flex-start" }}>
-      <span style={{ fontSize: 22, lineHeight: 1 }}>💡</span>
-      <div>
-        <p style={{ fontSize: 11, fontWeight: 700, color: "#2563EB", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Coach IA</p>
-        <p style={{ fontSize: 14, color: "#1E3A5F", fontWeight: 500, lineHeight: 1.45 }}>{message}</p>
-      </div>
-    </div>
-  );
+    <svg width="128" height="96" viewBox="0 0 128 96" style={{ overflow: 'visible' }}>
+      <path d={trackD} fill="none" stroke="#E8EAF0" strokeWidth={8} strokeLinecap="round" />
+      {fillD && <path d={fillD} fill="none" stroke={color} strokeWidth={8} strokeLinecap="round" style={{ transition: 'stroke 0.3s' }} />}
+      <text x={cx} y={cy + 6} textAnchor="middle" fontSize={28} fontWeight={800} fill={color} fontFamily="monospace">{animated}</text>
+      <text x={cx} y={cy + 20} textAnchor="middle" fontSize={10} fill="#8896B0">/100</text>
+    </svg>
+  )
 }
 
-function KpiCard({ label, value, color, bg, icon }: { label: string; value: string; color: string; bg: string; icon: string }) {
-  return (
-    <div style={{ background: bg, borderRadius: 20, padding: "16px 14px", flex: 1 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
-        <span style={{ fontSize: 16 }}>{icon}</span>
-        <p style={{ fontSize: 10, fontWeight: 700, color, textTransform: "uppercase", letterSpacing: "0.07em" }}>{label}</p>
-      </div>
-      <p style={{ fontSize: 22, fontWeight: 800, fontFamily: "monospace", color, letterSpacing: "-0.5px" }}>{value}</p>
-    </div>
-  );
-}
+export default function HomeTab({ transactions, onUpdate, profile }: Props) {
+  const [showForm, setShowForm] = useState(false)
+  const [showChat, setShowChat] = useState(false)
+  const [form, setForm] = useState(empty)
+  const [chatInput, setChatInput] = useState('')
+  const [chatLoading, setChatLoading] = useState(false)
+  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [totalSavings, setTotalSavings] = useState(0)
+  const [totalDebt, setTotalDebt] = useState(0)
+  const chatEndRef = useRef<HTMLDivElement>(null)
 
-function Card({ children, style = {} }: { children: React.ReactNode; style?: React.CSSProperties }) {
-  return (
-    <div style={{ background: "#fff", borderRadius: 24, padding: "18px 16px", boxShadow: "0 1px 4px rgba(0,0,0,0.07)", ...style }}>
-      {children}
-    </div>
-  );
-}
+  const now = new Date()
+  const ym = currentYearMonth()
+  const monthTxs = transactions.filter(t => t.date.startsWith(ym))
+  const income = monthTxs.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0)
+  const expenses = monthTxs.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0)
+  const balance = income - expenses
+  const recent = transactions.slice(0, 5)
+  const health = computeHealthScore(transactions, [], [], [])
+  const plan = computeCoachPlan([], [], [], ym)
+  const netWorth = totalSavings - totalDebt
+  const monthName = now.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })
+  const categories = form.type === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES
 
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return <p style={{ fontSize: 10, fontWeight: 800, color: "#8896B0", textTransform: "uppercase", letterSpacing: "0.09em", marginBottom: 14 }}>{children}</p>;
-}
+  const healthColor = health.score >= 80 ? '#16A34A' : health.score >= 60 ? '#2563EB' : health.score >= 40 ? '#D97706' : '#DC2626'
+  const healthLabel = health.score >= 80 ? 'Excellent' : health.score >= 60 ? 'Bien' : health.score >= 40 ? 'À améliorer' : 'Fragile'
 
-// ─── Health score gauge ───────────────────────────────────────────────────────
-function HealthGauge({ score = 84 }: { score?: number }) {
-  const [displayed, setDisplayed] = useState(0);
-  const raf = useRef<number | null>(null);
+  const tip = plan.alerts[0] ??
+    (balance > 0
+      ? `${profile.firstName}, tu as ${formatAmount(balance)} de solde ce mois. ${plan.freeMoney > 0 ? `Mets ${formatAmount(plan.savingsSuggestion)} de côté dès maintenant !` : ''}`
+      : `Ajoute tes revenus du mois pour que le Coach t'aide.`)
 
   useEffect(() => {
-    let start: number | null = null;
-    const duration = 1200;
-    const animate = (ts: number) => {
-      if (!start) start = ts;
-      const progress = Math.min((ts - start) / duration, 1);
-      const eased = 1 - Math.pow(1 - progress, 3);
-      setDisplayed(Math.round(eased * score));
-      if (progress < 1) raf.current = requestAnimationFrame(animate);
-    };
-    raf.current = requestAnimationFrame(animate);
-    return () => { if (raf.current) cancelAnimationFrame(raf.current); };
-  }, [score]);
+    getSavings().then(gs => setTotalSavings(gs.reduce((s, g) => s + g.saved, 0)))
+    getDebts().then(ds => setTotalDebt(ds.filter(d => d.type === 'owe').reduce((s, d) => s + d.remaining, 0)))
+  }, [])
 
-  const color = score >= 80 ? "#16A34A" : score >= 60 ? "#2563EB" : score >= 40 ? "#D97706" : "#DC2626";
-  const label = score >= 80 ? "Excellent" : score >= 60 ? "Bien" : score >= 40 ? "À améliorer" : "Fragile";
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages])
 
-  const R = 68, cx = 90, cy = 90;
-  const startAngle = -210, endAngle = 30;
-  const toRad = (a: number) => (a * Math.PI) / 180;
-  const arcX = (a: number) => cx + R * Math.cos(toRad(a));
-  const arcY = (a: number) => cy + R * Math.sin(toRad(a));
-  const fillAngle = startAngle + (displayed / 100) * (endAngle - startAngle);
+  function handleSubmit() {
+    if (!form.amount || Number(form.amount) <= 0) return
+    addTransaction({ ...form, amount: Number(form.amount) })
+    setForm(empty)
+    setShowForm(false)
+    onUpdate()
+  }
 
-  const trackD = `M ${arcX(startAngle)} ${arcY(startAngle)} A ${R} ${R} 0 1 1 ${arcX(endAngle)} ${arcY(endAngle)}`;
-  const fillD = displayed > 0
-    ? `M ${arcX(startAngle)} ${arcY(startAngle)} A ${R} ${R} 0 ${fillAngle - startAngle > 180 ? 1 : 0} 1 ${arcX(fillAngle)} ${arcY(fillAngle)}`
-    : null;
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
-      <svg width="180" height="130" viewBox="0 0 180 130">
-        <path d={trackD} fill="none" stroke="#E8EDF5" strokeWidth={10} strokeLinecap="round" />
-        {fillD && <path d={fillD} fill="none" stroke={color} strokeWidth={10} strokeLinecap="round" style={{ transition: "stroke 0.3s" }} />}
-        <text x={cx} y={cy + 8} textAnchor="middle" fontSize={36} fontWeight={800} fill={color} fontFamily="monospace">{displayed}</text>
-        <text x={cx} y={cy + 26} textAnchor="middle" fontSize={11} fill="#8896B0">/ 100 · {label}</text>
-        <text x={cx} y={cy + 42} textAnchor="middle" fontSize={10} fontWeight={700} fill={color}>Score global</text>
-      </svg>
-      <div style={{ display: "flex", justifyContent: "space-around", width: "100%", marginTop: 4 }}>
-        {[
-          { label: "Taux épargne", value: "34%" },
-          { label: "Endettement", value: "15%" },
-          { label: "Fonds urgence", value: "5 mois" },
-        ].map((m) => (
-          <div key={m.label} style={{ textAlign: "center" }}>
-            <p style={{ fontSize: 18, fontWeight: 800, fontFamily: "monospace", color: "#1E3A5F" }}>{m.value}</p>
-            <p style={{ fontSize: 10, color: "#8896B0", marginTop: 2 }}>{m.label}</p>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// ─── Income Statement ─────────────────────────────────────────────────────────
-function IncomeStatement({ plan }: { plan: Plan }) {
-  const rows = [
-    { label: "Revenus", amount: plan.totalIncome, sign: "+", color: "#16A34A" },
-    { label: "Charges fixes", amount: plan.fixedCharges, sign: "−", color: "#DC2626" },
-    { label: "Paiements de dettes", amount: plan.debtMinimums, sign: "−", color: "#DC2626" },
-    { label: "Dépenses variables", amount: plan.variableEstimate, sign: "−", color: "#D97706" },
-  ];
-  const netPct = plan.totalIncome > 0 ? Math.round((plan.freeMoney / plan.totalIncome) * 100) : 0;
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-      {rows.map((r, i) => (
-        <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid #F1F3F9" }}>
-          <span style={{ fontSize: 13, color: "#4A5568" }}>{r.label}</span>
-          <span style={{ fontFamily: "monospace", fontSize: 13, fontWeight: 700, color: r.color }}>{r.sign} {fmt(r.amount)}</span>
-        </div>
-      ))}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 14 }}>
-        <span style={{ fontSize: 15, fontWeight: 800, color: "#1E3A5F" }}>Résultat net</span>
-        <div style={{ textAlign: "right" }}>
-          <p style={{ fontFamily: "monospace", fontSize: 22, fontWeight: 800, color: plan.freeMoney >= 0 ? "#16A34A" : "#DC2626" }}>{fmt(plan.freeMoney)}</p>
-          <p style={{ fontSize: 11, color: "#8896B0" }}>{netPct}% net</p>
-        </div>
-      </div>
-      <div style={{ marginTop: 10, height: 6, background: "#F1F3F9", borderRadius: 99, overflow: "hidden" }}>
-        <div style={{ height: "100%", width: `${Math.min(100, netPct)}%`, background: plan.freeMoney >= 0 ? "#16A34A" : "#DC2626", borderRadius: 99, transition: "width 0.8s ease" }} />
-      </div>
-      {plan.freeMoney > 0 && (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginTop: 14 }}>
-          {[
-            { label: "🎯 Dettes", amount: plan.snowballSuggestion, bg: "#FEF2F2", color: "#DC2626" },
-            { label: "🐖 Épargne", amount: plan.savingsSuggestion, bg: "#EFF6FF", color: "#2563EB" },
-            { label: "🎉 Loisirs", amount: plan.leisureSuggestion, bg: "#F0FDF4", color: "#16A34A" },
-          ].map((s) => (
-            <div key={s.label} style={{ background: s.bg, borderRadius: 14, padding: "10px 8px", textAlign: "center" }}>
-              <p style={{ fontSize: 10, fontWeight: 600, color: s.color }}>{s.label}</p>
-              <p style={{ fontFamily: "monospace", fontWeight: 800, fontSize: 12, color: s.color, marginTop: 4 }}>{fmt(s.amount)}</p>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── Balance Sheet ────────────────────────────────────────────────────────────
-function BalanceSheet({ savings, debts }: { savings: Saving[]; debts: Debt[] }) {
-  const totalSavings = savings.reduce((s, g) => s + g.saved, 0);
-  const totalProjects = 12000;
-  const totalAssets = totalSavings + totalProjects;
-  const totalDebt = debts.filter((d) => d.type === "owe").reduce((s, d) => s + d.remaining, 0);
-  const netWorth = totalAssets - totalDebt;
-
-  const Section = ({
-    title,
-    rows,
-    total,
-    totalColor,
-  }: {
-    title: string;
-    rows: { label: string; amount: number }[];
-    total: number;
-    totalColor: string;
-  }) => (
-    <div style={{ marginBottom: 16 }}>
-      <p style={{ fontSize: 12, fontWeight: 800, color: "#1E3A5F", marginBottom: 8 }}>{title}</p>
-      {rows.map((r, i) => (
-        <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #F1F3F9" }}>
-          <span style={{ fontSize: 12, color: "#4A5568" }}>{r.label}</span>
-          <span style={{ fontFamily: "monospace", fontSize: 12, fontWeight: 600, color: "#4A5568" }}>{fmt(r.amount)}</span>
-        </div>
-      ))}
-      <div style={{ display: "flex", justifyContent: "space-between", paddingTop: 8 }}>
-        <span style={{ fontSize: 13, fontWeight: 800, color: "#1E3A5F" }}>Total {title.toLowerCase()}</span>
-        <span style={{ fontFamily: "monospace", fontSize: 13, fontWeight: 800, color: totalColor }}>{fmt(total)}</span>
-      </div>
-    </div>
-  );
-
-  return (
-    <div>
-      <Section title="Actifs" rows={[{ label: "Épargne objectifs", amount: totalSavings }, { label: "Projets financés", amount: totalProjects }]} total={totalAssets} totalColor="#16A34A" />
-      <div style={{ height: 1, background: "#E8EDF5", margin: "4px 0 16px" }} />
-      <Section title="Passifs" rows={[{ label: "Dettes personnelles", amount: totalDebt }]} total={totalDebt} totalColor="#DC2626" />
-      <div style={{ height: 1, background: "#E8EDF5", margin: "4px 0 12px" }} />
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <span style={{ fontSize: 14, fontWeight: 800, color: "#1E3A5F" }}>Situation financière net</span>
-        <span style={{ fontFamily: "monospace", fontSize: 20, fontWeight: 800, color: "#7C3AED" }}>{fmt(netWorth)}</span>
-      </div>
-    </div>
-  );
-}
-
-// ─── Checklist ────────────────────────────────────────────────────────────────
-function ChecklistSection({
-  checklist,
-  onToggle,
-  onDeleteRecurring,
-}: {
-  checklist: ChecklistItem[];
-  onToggle?: (item: ChecklistItem) => void;
-  onDeleteRecurring?: (id: string) => void;
-}) {
-  const paidCount = checklist.filter((i) => i.paid).length;
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
-        <p style={{ fontSize: 12, color: "#8896B0" }}>{paidCount}/{checklist.length} payés</p>
-        <button style={{ width: 34, height: 34, borderRadius: 12, background: "#EFF6FF", color: "#2563EB", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>+</button>
-      </div>
-      {checklist.length > 0 && (
-        <div style={{ height: 6, background: "#F1F3F9", borderRadius: 99, overflow: "hidden", marginBottom: 4 }}>
-          <div style={{ height: "100%", width: `${(paidCount / checklist.length) * 100}%`, background: "#16A34A", borderRadius: 99, transition: "width 0.6s ease" }} />
-        </div>
-      )}
-      {checklist.map((item) => (
-        <div key={`${item.source}-${item.id}`} style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 12px", borderRadius: 16, background: item.paid ? "#F0FDF4" : "#F8F9FC", transition: "background 0.2s" }}>
-          <button
-            onClick={() => onToggle && onToggle(item)}
-            style={{ width: 26, height: 26, borderRadius: 9, border: `2px solid ${item.paid ? "#16A34A" : "#D1D5DB"}`, background: item.paid ? "#16A34A" : "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, transition: "all 0.15s" }}
-          >
-            {item.paid && <span style={{ color: "#fff", fontSize: 13, fontWeight: 700 }}>✓</span>}
-          </button>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <p style={{ fontSize: 13, fontWeight: 600, color: item.paid ? "#16A34A" : "#1E3A5F", textDecoration: item.paid ? "line-through" : "none", opacity: item.paid ? 0.75 : 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-              {item.emoji} {item.name}
-              {item.source === "debt" && (
-                <span style={{ marginLeft: 6, fontSize: 9, fontWeight: 700, background: "#FEE2E2", color: "#DC2626", padding: "2px 6px", borderRadius: 99, verticalAlign: "middle" }}>dette</span>
-              )}
-            </p>
-            <p style={{ fontSize: 11, fontFamily: "monospace", color: "#8896B0", marginTop: 1 }}>{fmt(item.amount)}</p>
-          </div>
-          {item.source === "recurring" && (
-            <button onClick={() => onDeleteRecurring && onDeleteRecurring(item.id)} style={{ width: 28, height: 28, borderRadius: 9, background: "#F1F3F9", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#8896B0" }}>
-              <span style={{ fontSize: 12 }}>✕</span>
-            </button>
-          )}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ─── Income List ──────────────────────────────────────────────────────────────
-function IncomeList({
-  incomes,
-  onDelete,
-  onAdd,
-}: {
-  incomes: Income[];
-  onDelete?: (id: string) => void;
-  onAdd: () => void;
-}) {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-      {incomes.length === 0 && (
-        <p style={{ fontSize: 13, color: "#8896B0", textAlign: "center", padding: "12px 0" }}>Aucun revenu saisi</p>
-      )}
-      {incomes.map((inc) => (
-        <div key={inc.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid #F1F3F9" }}>
-          <div>
-            <p style={{ fontSize: 13, fontWeight: 600, color: "#1E3A5F" }}>{inc.label}</p>
-            <p style={{ fontSize: 11, color: "#8896B0" }}>{inc.isFixed ? "Fixe" : "Variable"}</p>
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontFamily: "monospace", fontSize: 13, fontWeight: 700, color: "#16A34A" }}>+{fmt(inc.amount)}</span>
-            <button
-              onClick={() => onDelete && onDelete(inc.id)}
-              style={{ width: 28, height: 28, borderRadius: 9, background: "#F1F3F9", border: "none", cursor: "pointer", color: "#8896B0", display: "flex", alignItems: "center", justifyContent: "center" }}
-            >✕</button>
-          </div>
-        </div>
-      ))}
-      <button
-        onClick={onAdd}
-        style={{ marginTop: 10, width: "100%", padding: "11px", background: "#EFF6FF", color: "#2563EB", border: "none", borderRadius: 14, fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
-      >
-        + Ajouter un revenu
-      </button>
-    </div>
-  );
-}
-
-// ─── Custom Tooltip ───────────────────────────────────────────────────────────
-const ChartTooltip = ({
-  active,
-  payload,
-  label,
-}: {
-  active?: boolean;
-  payload?: Array<{ dataKey: string; color: string; name: string; value: number }>;
-  label?: string;
-}) => {
-  if (!active || !payload?.length) return null;
-  return (
-    <div style={{ background: "#fff", border: "1px solid #E8EDF5", borderRadius: 12, padding: "8px 12px", fontSize: 12 }}>
-      <p style={{ fontWeight: 700, color: "#1E3A5F", marginBottom: 4 }}>{label}</p>
-      {payload.map((p) => (
-        <p key={p.dataKey} style={{ color: p.color, fontFamily: "monospace" }}>{p.name} : {fmt(p.value)}</p>
-      ))}
-    </div>
-  );
-};
-
-// ─── Main Dashboard ───────────────────────────────────────────────────────────
-export default function BilanDashboard({ transactions = [] }: { transactions?: unknown[] }) {
-  const [incomes, setIncomes] = useState<Income[]>(MOCK_INCOMES);
-  const [checklist, setChecklist] = useState<ChecklistItem[]>(MOCK_CHECKLIST);
-  const [savings] = useState<Saving[]>(MOCK_SAVINGS);
-  const [debts] = useState<Debt[]>(MOCK_DEBTS);
-  const plan: Plan = MOCK_PLAN;
-  const projection: ProjectionPoint[] = MOCK_PROJECTION;
-
-  const totalSavings = savings.reduce((s, g) => s + g.saved, 0);
-  const totalDebt = debts.filter((d) => d.type === "owe").reduce((s, d) => s + d.remaining, 0);
-  const netWorth = totalSavings + 12000 - totalDebt;
-  const cashflow = plan.freeMoney;
-  const endBalance = projection[projection.length - 1]?.projectedBalance ?? 0;
-
-  const tip = plan.alerts?.[0] ?? `💰 Tu peux épargner ${fmt(plan.savingsSuggestion)} ce mois tout en remboursant ${fmt(plan.snowballSuggestion)} de dettes.`;
-
-  function toggleItem(item: ChecklistItem) {
-    setChecklist((prev) => prev.map((c) => (c.id === item.id ? { ...c, paid: !c.paid } : c)));
+  async function sendChat() {
+    if (!chatInput.trim() || chatLoading) return
+    const userMsg = chatInput.trim()
+    setChatInput('')
+    const newMessages: ChatMessage[] = [...messages, { role: 'user', content: userMsg }]
+    setMessages(newMessages)
+    setChatLoading(true)
+    try {
+      const context = `Profil : ${profile.firstName}, ${profile.situation}, ${profile.children} enfants, Revenu mensuel : ${profile.monthlyIncome} Rs (${profile.incomeType}), Objectif : ${profile.mainGoal}, Dettes : ${profile.hasDebts ? 'oui' : 'non'}. Ce mois : Revenus ${formatAmount(income)}, Dépenses ${formatAmount(expenses)}, Solde ${formatAmount(balance)}. Score santé : ${health.score}/100 (${health.label}). Argent libre estimé : ${formatAmount(plan.freeMoney)}`
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-6',
+          max_tokens: 1000,
+          system: `Tu es un coach financier expert, bienveillant et direct. Tu parles en français. Tu as accès aux données financières réelles de l'utilisateur. Réponds de façon concise (3-4 phrases max), pratique et personnalisée. Pas de jargon inutile. Contexte utilisateur : ${context}`,
+          messages: newMessages.map(m => ({ role: m.role, content: m.content }))
+        })
+      })
+      const result = await response.json()
+      const reply = result.content?.[0]?.text || 'Je suis là pour t\'aider. Pose-moi une question sur tes finances.'
+      setMessages(prev => [...prev, { role: 'assistant', content: reply }])
+    } catch {
+      setMessages(prev => [...prev, { role: 'assistant', content: 'Désolé, je rencontre un problème. Réessaie dans un moment.' }])
+    }
+    setChatLoading(false)
   }
 
   return (
-    <div style={{ fontFamily: "'Inter', system-ui, sans-serif", maxWidth: 420, margin: "0 auto", padding: "16px 14px 40px", background: "#F4F6FB", minHeight: "100vh", display: "flex", flexDirection: "column", gap: 14 }}>
+    <div className="space-y-4">
 
-      {/* ① Coach IA */}
-      <CoachBanner message={`"${tip}"`} />
-
-      {/* ② KPI 2×2 */}
-      <div>
-        <SectionLabel>② KPI Principaux</SectionLabel>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-          <KpiCard label="Situation financière net" value={fmt(netWorth)} color="#7C3AED" bg="#F5F3FF" icon="💎" />
-          <KpiCard label="Dette totale" value={fmt(totalDebt)} color="#DC2626" bg="#FEF2F2" icon="💳" />
-          <KpiCard label="Épargne totale" value={fmt(totalSavings)} color="#16A34A" bg="#F0FDF4" icon="🐖" />
-          <KpiCard label="Cashflow du mois" value={fmt(cashflow)} color="#2563EB" bg="#EFF6FF" icon="📈" />
+      {/* ── Carte héro solde ──────────────────────────────────────────────── */}
+      <div className={`rounded-3xl p-5 text-white ${balance >= 0
+        ? 'bg-gradient-to-br from-accent to-blue-700'
+        : 'bg-gradient-to-br from-danger to-red-700'}`}>
+        <p className="text-xs font-semibold opacity-70 uppercase tracking-widest mb-1 capitalize">{monthName}</p>
+        <p className="text-5xl font-bold font-mono tracking-tight mb-1">{formatAmount(balance)}</p>
+        <p className="text-xs opacity-60 mb-5">solde disponible</p>
+        <div className="flex gap-5">
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-xl bg-white/20 flex items-center justify-center flex-shrink-0">
+              <TrendingUp size={14} className="text-white" />
+            </div>
+            <div>
+              <p className="text-[10px] opacity-60 uppercase tracking-wide">Revenus</p>
+              <p className="text-sm font-bold font-mono">{formatAmount(income)}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-xl bg-white/20 flex items-center justify-center flex-shrink-0">
+              <TrendingDown size={14} className="text-white" />
+            </div>
+            <div>
+              <p className="text-[10px] opacity-60 uppercase tracking-wide">Dépenses</p>
+              <p className="text-sm font-bold font-mono">{formatAmount(expenses)}</p>
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* ③ Évolution du Situation financière */}
-      <Card>
-        <SectionLabel>③ Évolution du Situation financière</SectionLabel>
-        <p style={{ fontSize: 24, fontWeight: 800, fontFamily: "monospace", color: endBalance >= 0 ? "#16A34A" : "#DC2626", marginBottom: 2 }}>{fmt(endBalance)}</p>
-        <p style={{ fontSize: 11, color: "#8896B0", marginBottom: 14 }}>solde projeté en décembre {NOW.getFullYear()}</p>
-        <ResponsiveContainer width="100%" height={160}>
-          <AreaChart data={projection} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-            <defs>
-              <linearGradient id="patGrad" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#7C3AED" stopOpacity={0.18} />
-                <stop offset="95%" stopColor="#7C3AED" stopOpacity={0} />
-              </linearGradient>
-            </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="#F1F3F9" />
-            <XAxis dataKey="label" tick={{ fontSize: 10, fill: "#8896B0" }} axisLine={false} tickLine={false} />
-            <YAxis tick={{ fontSize: 9, fill: "#8896B0" }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `${(v / 1000).toFixed(0)}k`} />
-            <Tooltip content={<ChartTooltip />} />
-            <ReferenceLine y={0} stroke="#DC2626" strokeDasharray="4 4" />
-            <Area type="monotone" dataKey="projectedBalance" stroke="#7C3AED" strokeWidth={2.5} fill="url(#patGrad)" name="Situation financière net" dot={false} />
-          </AreaChart>
-        </ResponsiveContainer>
-      </Card>
+      {/* ── 4 KPIs ───────────────────────────────────────────────────────── */}
+      <div className="grid grid-cols-2 gap-3">
+        {[
+          { label: 'Situation financière net', value: formatAmount(netWorth), icon: '💎', bg: 'bg-purple-50', color: 'text-purple-700', border: 'border-purple-100' },
+          { label: 'Épargne totale', value: formatAmount(totalSavings), icon: '🐖', bg: 'bg-green-50', color: 'text-green-700', border: 'border-green-100' },
+          { label: 'Dette restante', value: formatAmount(totalDebt), icon: '💳', bg: 'bg-red-50', color: 'text-red-700', border: 'border-red-100' },
+          { label: 'Argent libre', value: formatAmount(plan.freeMoney > 0 ? plan.freeMoney : balance), icon: '📈', bg: 'bg-blue-50', color: 'text-blue-700', border: 'border-blue-100' },
+        ].map((kpi) => (
+          <div key={kpi.label} className={`${kpi.bg} border ${kpi.border} rounded-2xl p-4`}>
+            <div className="flex items-center gap-1.5 mb-2">
+              <span className="text-base">{kpi.icon}</span>
+              <p className={`text-[10px] font-bold uppercase tracking-wider ${kpi.color}`}>{kpi.label}</p>
+            </div>
+            <p className={`text-lg font-bold font-mono ${kpi.color}`}>{kpi.value}</p>
+          </div>
+        ))}
+      </div>
 
-      {/* ④ Compte de résultat */}
-      <Card>
-        <SectionLabel>④ Compte de résultat</SectionLabel>
-        <IncomeStatement plan={plan} />
-      </Card>
+      {/* ── Santé financière ─────────────────────────────────────────────── */}
+      <div className="card-lg">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <p className="text-xs font-bold text-ink-soft uppercase tracking-wider">Santé financière</p>
+            <p className="text-base font-bold mt-0.5" style={{ color: healthColor }}>{healthLabel}</p>
+          </div>
+          <button
+            onClick={() => setShowChat(true)}
+            className="w-10 h-10 rounded-2xl bg-accent-light text-accent flex items-center justify-center active:scale-95">
+            <MessageCircle size={18} />
+          </button>
+        </div>
 
-      {/* ⑤ Revenus vs Dépenses — 6 mois */}
-      <Card>
-        <SectionLabel>⑤ Revenus vs Dépenses — 6 mois</SectionLabel>
-        <ResponsiveContainer width="100%" height={180}>
-          <BarChart data={MOCK_6M} barGap={4} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#F1F3F9" />
-            <XAxis dataKey="month" tick={{ fontSize: 10, fill: "#8896B0" }} axisLine={false} tickLine={false} />
-            <YAxis tick={{ fontSize: 9, fill: "#8896B0" }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `${(v / 1000).toFixed(0)}k`} />
-            <Tooltip content={<ChartTooltip />} />
-            <Bar dataKey="Revenus" fill="#16A34A" radius={[6, 6, 0, 0]} />
-            <Bar dataKey="Dépenses" fill="#DC2626" radius={[6, 6, 0, 0]} />
-          </BarChart>
-        </ResponsiveContainer>
-        <div style={{ display: "flex", gap: 16, justifyContent: "center", marginTop: 8 }}>
-          {[{ color: "#16A34A", label: "Revenus" }, { color: "#DC2626", label: "Dépenses" }].map((l) => (
-            <div key={l.label} style={{ display: "flex", alignItems: "center", gap: 5 }}>
-              <div style={{ width: 10, height: 10, borderRadius: 3, background: l.color }} />
-              <span style={{ fontSize: 11, color: "#8896B0" }}>{l.label}</span>
+        <div className="flex items-center gap-4">
+          <HealthArc score={health.score} color={healthColor} />
+          <div className="flex-1 space-y-2">
+            {health.details.slice(0, 3).map((d, i) => (
+              <p key={i} className="text-xs text-ink-soft leading-snug">{d}</p>
+            ))}
+          </div>
+        </div>
+
+        {/* 3 métriques clés */}
+        <div className="grid grid-cols-3 gap-2 mt-4 pt-4 border-t border-mist">
+          {[
+            { label: 'Taux épargne', value: income > 0 ? `${Math.round((totalSavings / (income || 1)) * 10)}%` : '—' },
+            { label: 'Endettement', value: income > 0 ? `${Math.round((totalDebt / (profile.monthlyIncome || 1)) * 100)}%` : '—' },
+            { label: 'Mois sécurité', value: expenses > 0 ? `${Math.round(totalSavings / (expenses || 1))}m` : '—' },
+          ].map((m) => (
+            <div key={m.label} className="text-center">
+              <p className="text-sm font-bold font-mono text-ink">{m.value}</p>
+              <p className="text-[10px] text-ink-soft mt-0.5">{m.label}</p>
             </div>
           ))}
         </div>
-      </Card>
+      </div>
 
-      {/* ⑥ Bilan patrimonial */}
-      <Card>
-        <SectionLabel>⑥ Bilan patrimonial</SectionLabel>
-        <BalanceSheet savings={savings} debts={debts} />
-      </Card>
+      {/* ── Coach tip ────────────────────────────────────────────────────── */}
+      <CoachTip message={tip} />
 
-      {/* ⑦ Santé financière */}
-      <Card>
-        <SectionLabel>⑦ Santé financière</SectionLabel>
-        <HealthGauge score={84} />
-      </Card>
+      {/* ── Bouton ajouter ───────────────────────────────────────────────── */}
+      <button onClick={() => setShowForm(true)} className="btn-primary w-full gap-2 text-base py-4">
+        <Plus size={20} /> Ajouter une transaction
+      </button>
 
-      {/* ⑧ Paiements du mois */}
-      <Card>
-        <SectionLabel>⑧ Paiements du mois</SectionLabel>
-        <ChecklistSection checklist={checklist} onToggle={toggleItem} />
-      </Card>
+      {/* ── Transactions récentes ─────────────────────────────────────────── */}
+      {recent.length > 0 && (
+        <div className="card space-y-1">
+          <p className="text-xs font-bold text-ink-soft uppercase tracking-wider mb-3">Récentes</p>
+          {recent.map(tx => (
+            <div key={tx.id} className="flex items-center justify-between py-3 border-b border-mist last:border-0">
+              <div className="flex items-center gap-3">
+                <div className={`w-10 h-10 rounded-2xl flex items-center justify-center flex-shrink-0
+                  ${tx.type === 'income' ? 'bg-positive-light' : 'bg-danger-light'}`}>
+                  <span className="text-lg">{tx.type === 'income' ? '💰' : '💸'}</span>
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-ink">{tx.note || tx.category}</p>
+                  <p className="text-xs text-ink-soft">
+                    {tx.category} · {new Date(tx.date).toLocaleDateString('fr-FR')}
+                  </p>
+                </div>
+              </div>
+              <span className={`font-mono text-sm font-bold
+                ${tx.type === 'income' ? 'text-positive' : 'text-danger'}`}>
+                {tx.type === 'income' ? '+' : '−'}{formatAmount(tx.amount)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
 
-      {/* ⑨ Revenus du mois */}
-      <Card>
-        <SectionLabel>⑨ Revenus du mois</SectionLabel>
-        <IncomeList
-          incomes={incomes}
-          onDelete={(id) => setIncomes((prev) => prev.filter((i) => i.id !== id))}
-          onAdd={() => {}}
-        />
-      </Card>
+      {/* ── Modal : ajouter transaction ───────────────────────────────────── */}
+      {showForm && (
+        <div className="bottom-sheet bg-black/40">
+          <div className="bottom-sheet-content">
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="text-lg font-bold text-ink">Nouvelle transaction</h2>
+              <button className="btn-icon bg-mist" onClick={() => setShowForm(false)}><X size={20} /></button>
+            </div>
+            <div className="flex rounded-2xl overflow-hidden border-2 border-mist-dark">
+              <button className={`flex-1 py-3 text-sm font-bold ${form.type === 'expense' ? 'bg-danger text-white' : 'bg-white text-ink-soft'}`}
+                onClick={() => setForm(f => ({ ...f, type: 'expense', category: EXPENSE_CATEGORIES[0] }))}>
+                💸 Dépense</button>
+              <button className={`flex-1 py-3 text-sm font-bold ${form.type === 'income' ? 'bg-positive text-white' : 'bg-white text-ink-soft'}`}
+                onClick={() => setForm(f => ({ ...f, type: 'income', category: INCOME_CATEGORIES[0] as any }))}>
+                💰 Revenu</button>
+            </div>
+            <div>
+              <label className="label">Montant (Rs)</label>
+              <input className="input text-2xl font-bold" type="number" placeholder="0"
+                value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))} />
+            </div>
+            <div>
+              <label className="label">Catégorie</label>
+              <select className="input" value={form.category}
+                onChange={e => setForm(f => ({ ...f, category: e.target.value as any }))}>
+                {categories.map(c => <option key={c}>{c}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="label">Note (optionnel)</label>
+              <input className="input" placeholder="Ex: Courses Jumbo"
+                value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} />
+            </div>
+            <div>
+              <label className="label">Date</label>
+              <input className="input" type="date" value={form.date}
+                onChange={e => setForm(f => ({ ...f, date: e.target.value }))} />
+            </div>
+            <button className="btn-primary w-full py-4 text-base" onClick={handleSubmit}>Enregistrer</button>
+          </div>
+        </div>
+      )}
 
+      {/* ── Chat coach IA ─────────────────────────────────────────────────── */}
+      {showChat && (
+        <div className="bottom-sheet bg-black/40">
+          <div className="bg-white rounded-t-3xl w-full max-w-lg flex flex-col" style={{ height: '80vh' }}>
+            <div className="flex items-center justify-between p-5 border-b border-mist-dark">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-accent flex items-center justify-center">
+                  <span className="text-xl">🤖</span>
+                </div>
+                <div>
+                  <p className="font-bold text-ink text-sm">Coach IA</p>
+                  <p className="text-xs text-positive">● En ligne</p>
+                </div>
+              </div>
+              <button className="btn-icon bg-mist" onClick={() => setShowChat(false)}><X size={20} /></button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              {messages.length === 0 && (
+                <div className="text-center py-8">
+                  <p className="text-4xl mb-3">💬</p>
+                  <p className="font-semibold text-ink">Pose-moi une question</p>
+                  <p className="text-sm text-ink-soft mt-1">J'ai accès à toutes tes données financières</p>
+                  <div className="mt-4 space-y-2">
+                    {['Est-ce que je peux me permettre une voiture à crédit ?', 'Comment réduire mes dépenses ce mois ?', 'Quelle dette rembourser en premier ?'].map(q => (
+                      <button key={q} onClick={() => setChatInput(q)}
+                        className="block w-full text-left text-xs bg-mist text-ink-soft p-3 rounded-2xl hover:bg-mist-dark transition-colors">
+                        {q}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {messages.map((m, i) => (
+                <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div className={`max-w-[80%] p-3 rounded-2xl text-sm leading-relaxed
+                    ${m.role === 'user' ? 'bg-accent text-white rounded-br-sm' : 'bg-mist text-ink rounded-bl-sm'}`}>
+                    {m.content}
+                  </div>
+                </div>
+              ))}
+              {chatLoading && (
+                <div className="flex justify-start">
+                  <div className="bg-mist p-3 rounded-2xl rounded-bl-sm flex gap-1">
+                    {[0, 1, 2].map(i => (
+                      <div key={i} className="w-2 h-2 rounded-full bg-ink-soft animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />
+                    ))}
+                  </div>
+                </div>
+              )}
+              <div ref={chatEndRef} />
+            </div>
+            <div className="p-4 border-t border-mist-dark flex gap-2">
+              <input className="input flex-1" placeholder="Pose ta question..."
+                value={chatInput} onChange={e => setChatInput(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && sendChat()} />
+              <button onClick={sendChat} disabled={!chatInput.trim() || chatLoading}
+                className="w-12 h-12 rounded-2xl bg-accent text-white flex items-center justify-center disabled:opacity-40 active:scale-95 transition-all flex-shrink-0">
+                <Send size={18} />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
-  );
+  )
 }
