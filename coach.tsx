@@ -1,8 +1,8 @@
 'use client'
 import { useEffect, useState, useRef } from 'react'
 import { RefreshCw, ChevronRight, AlertTriangle, TrendingUp, Shield, Zap } from 'lucide-react'
-import { getUserProfile } from '@/lib/db'
-import type { UserProfile } from '@/lib/db'
+import { getUserProfile } from '@/lib/storage'
+import type { UserProfile } from '@/lib/storage'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface CoachAnalysis {
