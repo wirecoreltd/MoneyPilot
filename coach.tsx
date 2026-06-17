@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useState, useRef } from 'react'
 import { RefreshCw, ChevronRight, AlertTriangle, TrendingUp, Shield, Zap } from 'lucide-react'
+import { getUserProfile, getDebts, getSavings, UserProfile } from '@/lib/db'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface UserProfile {
@@ -200,6 +201,20 @@ export default function CoachPage() {
   const hasFetched = useRef(false)
 
   useEffect(() => {
+    async function init() {
+      const p = await getUserProfile()   // ← async Supabase au lieu de localStorage
+      setProfile(p)
+      if (p && !hasFetched.current) {
+        hasFetched.current = true
+        fetchAnalysis(p)
+      } else {
+        setLoading(false)
+      }
+    }
+    init()
+  }, [])
+  
+  useEffect(() => {
     const p = loadProfile()
     setProfile(p)
     if (p && !hasFetched.current) {
@@ -219,13 +234,10 @@ Prénom : ${p.firstName}
 Situation familiale : ${p.situation}${p.children > 0 ? ` avec ${p.children} enfant(s)` : ''}
 Revenu mensuel net : ${p.monthlyIncome} Rs
 Type de revenu : ${p.incomeType}
-Niveau de dépenses : ${p.expenseLevel} (low=maîtrisées, medium=correctes, high=élevées, crisis=hors contrôle)
-Situation dettes : ${p.debtType}${p.debtAmount ? ` — montant total : ${p.debtAmount} Rs` : ''}
-Niveau d'épargne : ${p.savingsLevel} (none=rien, little=<3 mois, medium=3-6 mois, good=>6 mois)
-Objectif principal : ${p.mainGoal} (survive=survivre, stabilize=se stabiliser, build=construire, prosper=prospérer)
-Niveau de stress financier : ${p.stressLevel}
-Score financier initial : ${p.initialScore}/100
-    `.trim()
+A des dettes : ${p.hasDebts ? 'Oui' : 'Non'}
+Objectif principal : ${p.mainGoal}
+Devise : ${p.currency}
+`.trim()
 
     try {
       const res = await fetch('https://api.anthropic.com/v1/messages', {
