@@ -5,6 +5,7 @@ import BottomNav, { Tab } from '../BottomNav'
 import HomeTab from '../HomeTab'
 import MoneyTab from '../MoneyTab'
 import BilanTab from '../BilanTab'
+import CoachTab from '../coach'
 import ProjectsTab from '../ProjectsTab'
 import { getTransactions, Transaction, getUserProfile, UserProfile } from '@/lib/storage'
 import { supabase } from '@/lib/supabase'
@@ -83,6 +84,7 @@ export default function Page() {
         {tab === 'money'   && <MoneyTab    transactions={transactions} onUpdate={refresh} />}
         {tab === 'bilan'   && <BilanTab    transactions={transactions} />}
         {tab === 'projets' && <ProjectsTab />}
+        {tab === 'coach'   && <CoachTab />}
       </main>
     </div>
   )
