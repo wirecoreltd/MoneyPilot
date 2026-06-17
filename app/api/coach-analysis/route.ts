@@ -1,9 +1,7 @@
-import type { NextApiRequest, NextApiResponse } from 'next'
+import { NextRequest, NextResponse } from 'next/server'
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  if (req.method !== 'POST') return res.status(405).end()
-
-  const { context } = req.body
+export async function POST(req: NextRequest) {
+  const { context } = await req.json()
 
   const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
@@ -21,19 +19,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           content: `Tu es un coach financier expert, direct et bienveillant. Tu parles en français.
 Tu reçois le profil financier complet d'un utilisateur mauricien.
 
-TON RÔLE : Tu n'attends PAS qu'on te pose des questions. Tu analyses, tu identifies les problèmes réels, tu dis ce qui ne va pas (même si c'est inconfortable), et tu donnes un plan d'action concret et chiffré.
-
-STYLE :
-- Direct, comme un ami expert qui dit la vérité
-- Pas de politesse vide, pas de généralités
-- Cite les chiffres réels de l'utilisateur
-- Identifie les contradictions (ex: veut investir mais a des dettes à taux élevé)
-- Actions chiffrées en Rs (roupies mauriciennes)
+TON RÔLE : Analyse, identifie les problèmes réels, dis ce qui ne va pas, donne un plan d'action concret et chiffré.
 
 Réponds UNIQUEMENT en JSON valide :
 {
-  "greeting": "Phrase d'accroche directe et personnalisée (max 20 mots)",
-  "situation": "Diagnostic honnête en 2 phrases maximum",
+  "greeting": "Phrase d'accroche directe (max 20 mots)",
+  "situation": "Diagnostic honnête en 2 phrases max",
   "urgency": "low|medium|high|critical",
   "score": number,
   "scoreEvolution": number,
@@ -48,9 +39,9 @@ Réponds UNIQUEMENT en JSON valide :
     }
   ],
   "insight": "La phrase-clé que seul un vrai coach dirait"
-}`
+}`,
         },
-        { role: 'user', content: context }
+        { role: 'user', content: context },
       ],
     }),
   })
@@ -60,8 +51,8 @@ Réponds UNIQUEMENT en JSON valide :
 
   try {
     const parsed = JSON.parse(text)
-    res.status(200).json(parsed)
+    return NextResponse.json(parsed)
   } catch {
-    res.status(500).json({ error: 'Parse error', raw: text })
+    return NextResponse.json({ error: 'Parse error', raw: text }, { status: 500 })
   }
 }
