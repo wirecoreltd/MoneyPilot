@@ -248,7 +248,7 @@ export default function HomeTab({ transactions, onUpdate, profile }: Props) {
               <div key={d.id ?? i} className="flex items-center justify-between py-3 border-b border-mist last:border-0">
                 <div className="flex items-center gap-2">
                   <div className="w-2 h-2 rounded-full bg-danger flex-shrink-0" />
-                  <p className="text-sm text-ink">{d.label ?? d.name ?? 'Dette'}</p>
+                  <p className="text-sm text-ink">{d.person ?? 'Dette'}</p>
                 </div>
                 <span className="font-mono text-sm font-bold text-danger">{formatAmount(d.remaining)}</span>
               </div>
