@@ -438,47 +438,100 @@ function TransactionsSection({ transactions, onUpdate }: Props) {
   )
 }
 
+// ─── Sources prédéfinies par catégorie ───────────────────────────────────────
+const REVENU_PRESETS = [
+  {
+    group: '💼 Revenus d\'activité',
+    items: ['Salaire', 'Prime / Bonus', 'Freelance / Auto-entrepreneur', 'Heures supplémentaires'],
+  },
+  {
+    group: '📈 Revenus du patrimoine',
+    items: ['Retour sur investissement', 'Dividendes', 'Loyer perçu', 'Plus-value'],
+  },
+  {
+    group: '🤝 Revenus sociaux / autres',
+    items: ['Allocations familiales', 'Pension / Retraite', 'Remboursement', 'Autre'],
+  },
+]
+
+interface SavedSource { id: string; name: string; type: 'fixed' | 'variable' }
+
 // ─── Revenus ──────────────────────────────────────────────────────────────────
 function RevenusSection() {
   const [revenus, setRevenus] = useState<RevenuSource[]>([])
+  const [savedSources, setSavedSources] = useState<SavedSource[]>([])
   const [loading, setLoading] = useState(true)
-  const [open, setOpen] = useState(false) // dropdown toggle
+  const [open, setOpen] = useState(false)
   const [showForm, setShowForm] = useState(false)
-  const [form, setForm] = useState({ label: '', amount: '', type: 'fixed' as 'fixed' | 'variable' })
+  const [sourceDropdownOpen, setSourceDropdownOpen] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [form, setForm] = useState({
+    label: '', amount: '', type: 'fixed' as 'fixed' | 'variable', saveSource: false,
+  })
+  const sourceRef = useRef<HTMLDivElement>(null)
   const ym = currentYearMonth()
   const monthName = new Date().toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })
 
-  useEffect(() => { loadRevenus() }, [])
+  useEffect(() => { loadAll() }, [])
 
-  async function loadRevenus() {
+  // Close source dropdown on outside click
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (sourceRef.current && !sourceRef.current.contains(e.target as Node)) setSourceDropdownOpen(false)
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [])
+
+  async function loadAll() {
     setLoading(true)
     const { data: { user } } = await supabase.auth.getUser()
-    const { data } = await supabase
-      .from('monthly_incomes')
-      .select('*')
-      .eq('user_id', user!.id)
-      .eq('month', ym)
-      .order('created_at', { ascending: true })
-    setRevenus((data ?? []).map(r => ({
+    const [{ data: inc }, { data: src }] = await Promise.all([
+      supabase.from('monthly_incomes').select('*').eq('user_id', user!.id).eq('month', ym).order('created_at', { ascending: true }),
+      supabase.from('income_sources').select('*').eq('user_id', user!.id).order('name'),
+    ])
+    setRevenus((inc ?? []).map(r => ({
       id: r.id, label: r.label, amount: Number(r.amount),
-      type: r.is_fixed ? 'fixed' : 'variable', month: r.month
+      type: r.is_fixed ? 'fixed' : 'variable', month: r.month,
+    })))
+    setSavedSources((src ?? []).map(r => ({
+      id: r.id, name: r.name, type: r.is_fixed ? 'fixed' : 'variable',
     })))
     setLoading(false)
+  }
+
+  function pickSource(name: string, type: 'fixed' | 'variable' = 'fixed') {
+    setForm(f => ({ ...f, label: name, type }))
+    setSourceDropdownOpen(false)
   }
 
   async function handleAdd() {
     if (!form.label.trim() || !form.amount || Number(form.amount) <= 0) return
     setSaving(true)
     const { data: { user } } = await supabase.auth.getUser()
+
+    // Save source for future if checked
+    if (form.saveSource && form.label.trim()) {
+      const alreadySaved = savedSources.some(s => s.name.toLowerCase() === form.label.trim().toLowerCase())
+      if (!alreadySaved) {
+        const { data: newSrc } = await supabase.from('income_sources').insert({
+          user_id: user!.id, name: form.label.trim(), is_fixed: form.type === 'fixed',
+        }).select().single()
+        if (newSrc) setSavedSources(prev => [...prev, { id: newSrc.id, name: newSrc.name, type: newSrc.is_fixed ? 'fixed' : 'variable' }])
+      }
+    }
+
     const { data } = await supabase.from('monthly_incomes').insert({
       user_id: user!.id, label: form.label.trim(),
-      amount: Number(form.amount), is_fixed: form.type === 'fixed', month: ym
+      amount: Number(form.amount), is_fixed: form.type === 'fixed', month: ym,
     }).select().single()
     if (data) {
-      setRevenus(prev => [...prev, { id: data.id, label: data.label, amount: Number(data.amount), type: data.is_fixed ? 'fixed' : 'variable', month: data.month }])
+      setRevenus(prev => [...prev, {
+        id: data.id, label: data.label, amount: Number(data.amount),
+        type: data.is_fixed ? 'fixed' : 'variable', month: data.month,
+      }])
     }
-    setForm({ label: '', amount: '', type: 'fixed' })
+    setForm({ label: '', amount: '', type: 'fixed', saveSource: false })
     setShowForm(false)
     setSaving(false)
   }
@@ -488,9 +541,19 @@ function RevenusSection() {
     setRevenus(prev => prev.filter(r => r.id !== id))
   }
 
+  async function handleDeleteSource(id: string) {
+    await supabase.from('income_sources').delete().eq('id', id)
+    setSavedSources(prev => prev.filter(s => s.id !== id))
+  }
+
   const total = revenus.reduce((s, r) => s + r.amount, 0)
   const fixedTotal = revenus.filter(r => r.type === 'fixed').reduce((s, r) => s + r.amount, 0)
   const variableTotal = revenus.filter(r => r.type === 'variable').reduce((s, r) => s + r.amount, 0)
+
+  // All sources to show in dropdown (presets + saved custom)
+  const customSaved = savedSources.filter(
+    s => !REVENU_PRESETS.flatMap(g => g.items).includes(s.name)
+  )
 
   if (loading) return <div className="card text-center py-8 text-ink-soft">Chargement...</div>
 
@@ -500,7 +563,7 @@ function RevenusSection() {
       <div className="flex items-start gap-3 p-3 bg-green-50 border border-green-100 rounded-2xl">
         <span className="text-base">💡</span>
         <p className="text-xs text-green-700 leading-relaxed">
-          <strong>Tes sources de revenus du mois.</strong> Salaire, freelance, loyer perçu, allocations... Ajoute chaque source séparément pour avoir une vision claire. Ces données alimentent le Coach IA et le Bilan.
+          <strong>Tes sources de revenus du mois.</strong> Salaire, freelance, loyer perçu, allocations... Ajoute chaque source séparément pour une vision claire. Ces données alimentent le Coach IA et le Bilan.
         </p>
       </div>
 
@@ -519,27 +582,15 @@ function RevenusSection() {
             <ChevronDown size={20} className="text-positive"/>
           </div>
         </div>
-
-        {/* Mini breakdown always visible */}
         {total > 0 && (
           <div className="flex gap-4 mt-3 pt-3 border-t border-positive/20">
-            {fixedTotal > 0 && (
-              <div>
-                <p className="text-[10px] text-positive/60 uppercase font-bold">Fixe</p>
-                <p className="text-sm font-mono font-bold text-positive">{formatAmount(fixedTotal)}</p>
-              </div>
-            )}
-            {variableTotal > 0 && (
-              <div>
-                <p className="text-[10px] text-positive/60 uppercase font-bold">Variable</p>
-                <p className="text-sm font-mono font-bold text-positive">{formatAmount(variableTotal)}</p>
-              </div>
-            )}
+            {fixedTotal > 0 && <div><p className="text-[10px] text-positive/60 uppercase font-bold">Fixe</p><p className="text-sm font-mono font-bold text-positive">{formatAmount(fixedTotal)}</p></div>}
+            {variableTotal > 0 && <div><p className="text-[10px] text-positive/60 uppercase font-bold">Variable</p><p className="text-sm font-mono font-bold text-positive">{formatAmount(variableTotal)}</p></div>}
           </div>
         )}
       </button>
 
-      {/* Dropdown content */}
+      {/* Dropdown list */}
       {open && (
         <div className="card space-y-2 border-2 border-positive/20">
           {revenus.length === 0 ? (
@@ -559,36 +610,126 @@ function RevenusSection() {
               </div>
               <div className="flex items-center gap-2">
                 <span className="font-mono text-sm font-bold text-positive">+{formatAmount(r.amount)}</span>
-                <button onClick={() => handleDelete(r.id)}
-                  className="w-7 h-7 rounded-lg bg-mist hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center">
-                  <Trash2 size={12}/>
-                </button>
+                <button onClick={() => handleDelete(r.id)} className="w-7 h-7 rounded-lg bg-mist hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center"><Trash2 size={12}/></button>
               </div>
             </div>
           ))}
 
-          {/* Add form inline */}
+          {/* Inline add form */}
           {showForm ? (
             <div className="space-y-2 pt-2 border-t border-mist">
-              <input
-                className="input" placeholder="Source (ex: Salaire, Freelance...)"
-                value={form.label} onChange={e => setForm(f => ({...f, label: e.target.value}))}
-                autoFocus
-              />
-              <input
-                className="input" type="number" placeholder="Montant (Rs)"
-                value={form.amount} onChange={e => setForm(f => ({...f, amount: e.target.value}))}
-              />
+
+              {/* Source picker dropdown */}
+              <div ref={sourceRef} className="relative">
+                <label className="label">Source de revenu</label>
+                <button
+                  type="button"
+                  onClick={() => setSourceDropdownOpen(o => !o)}
+                  className="input flex items-center justify-between text-left w-full"
+                >
+                  <span className={form.label ? 'text-ink' : 'text-gray-400'}>{form.label || 'Choisir ou saisir...'}</span>
+                  <ChevronDown size={16} className={`text-ink-soft transition-transform flex-shrink-0 ${sourceDropdownOpen ? 'rotate-180' : ''}`}/>
+                </button>
+
+                {sourceDropdownOpen && (
+                  <div className="absolute z-50 top-full mt-1 left-0 right-0 bg-white border border-mist-dark rounded-2xl shadow-xl overflow-hidden">
+                    <div className="max-h-72 overflow-y-auto">
+
+                      {/* Saved custom sources */}
+                      {customSaved.length > 0 && (
+                        <div>
+                          <p className="text-[10px] font-bold text-ink-soft uppercase tracking-wider px-3 pt-3 pb-1">⭐ Mes sources</p>
+                          {customSaved.map(s => (
+                            <div key={s.id}
+                              onClick={() => pickSource(s.name, s.type)}
+                              className="flex items-center justify-between px-3 py-2.5 cursor-pointer hover:bg-mist transition-colors">
+                              <div className="flex items-center gap-2">
+                                {form.label === s.name && <Check size={12} className="text-positive"/>}
+                                <span className="text-sm text-ink">{s.name}</span>
+                                <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${s.type === 'fixed' ? 'bg-blue-50 text-blue-600' : 'bg-orange-50 text-orange-600'}`}>
+                                  {s.type === 'fixed' ? 'Fixe' : 'Variable'}
+                                </span>
+                              </div>
+                              <button onClick={e => { e.stopPropagation(); handleDeleteSource(s.id) }}
+                                className="w-5 h-5 rounded-md hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center flex-shrink-0">
+                                <X size={10}/>
+                              </button>
+                            </div>
+                          ))}
+                          <div className="h-px bg-mist-dark mx-3 my-1"/>
+                        </div>
+                      )}
+
+                      {/* Preset groups */}
+                      {REVENU_PRESETS.map(group => (
+                        <div key={group.group}>
+                          <p className="text-[10px] font-bold text-ink-soft uppercase tracking-wider px-3 pt-2.5 pb-1">{group.group}</p>
+                          {group.items.map(item => (
+                            <div key={item}
+                              onClick={() => pickSource(item)}
+                              className={`flex items-center gap-2 px-3 py-2.5 cursor-pointer hover:bg-mist transition-colors ${form.label === item ? 'bg-green-50' : ''}`}>
+                              {form.label === item && <Check size={12} className="text-positive flex-shrink-0"/>}
+                              <span className="text-sm text-ink">{item}</span>
+                            </div>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Free text input at bottom */}
+                    <div className="p-2 border-t border-mist-dark">
+                      <input
+                        className="input text-sm py-2"
+                        placeholder="✏️ Ou saisir manuellement..."
+                        value={form.label}
+                        onChange={e => setForm(f => ({ ...f, label: e.target.value }))}
+                        onClick={e => e.stopPropagation()}
+                        onKeyDown={e => e.key === 'Enter' && setSourceDropdownOpen(false)}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Label éditable (pré-rempli par la sélection) */}
+              <div>
+                <label className="label">Libellé <span className="text-ink-soft font-normal">(modifiable)</span></label>
+                <input
+                  className="input"
+                  placeholder="Ex: Salaire janvier..."
+                  value={form.label}
+                  onChange={e => setForm(f => ({ ...f, label: e.target.value }))}
+                />
+              </div>
+
+              <div>
+                <label className="label">Montant (Rs)</label>
+                <input className="input" type="number" placeholder="0" value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))}/>
+              </div>
+
               <div className="flex rounded-xl overflow-hidden border-2 border-mist-dark">
                 <button className={`flex-1 py-2 text-xs font-bold ${form.type === 'fixed' ? 'bg-accent text-white' : 'bg-white text-ink-soft'}`}
-                  onClick={() => setForm(f => ({...f, type: 'fixed'}))}>📅 Fixe</button>
+                  onClick={() => setForm(f => ({ ...f, type: 'fixed' }))}>📅 Fixe</button>
                 <button className={`flex-1 py-2 text-xs font-bold ${form.type === 'variable' ? 'bg-accent text-white' : 'bg-white text-ink-soft'}`}
-                  onClick={() => setForm(f => ({...f, type: 'variable'}))}>📈 Variable</button>
+                  onClick={() => setForm(f => ({ ...f, type: 'variable' }))}>📈 Variable</button>
               </div>
+
+              {/* Save source toggle */}
+              <div
+                onClick={() => setForm(f => ({ ...f, saveSource: !f.saveSource }))}
+                className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-colors ${form.saveSource ? 'bg-green-50 border-green-200' : 'bg-mist border-mist-dark'}`}>
+                <div>
+                  <p className="text-xs font-bold text-ink">⭐ Enregistrer cette source</p>
+                  <p className="text-[10px] text-ink-soft mt-0.5">Disponible dans le menu la prochaine fois</p>
+                </div>
+                <div className={`relative w-10 h-5 rounded-full transition-colors flex-shrink-0 ${form.saveSource ? 'bg-positive' : 'bg-mist-dark'}`}>
+                  <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${form.saveSource ? 'left-5' : 'left-0.5'}`}/>
+                </div>
+              </div>
+
               <div className="flex gap-2">
-                <button className="btn-ghost flex-1" onClick={() => setShowForm(false)}>Annuler</button>
-                <button className="btn-primary flex-1" style={{ backgroundColor: '#16A34A' }}
-                  onClick={handleAdd} disabled={saving}>
+                <button className="btn-ghost flex-1" onClick={() => { setShowForm(false); setForm({ label: '', amount: '', type: 'fixed', saveSource: false }) }}>Annuler</button>
+                <button className="btn-primary flex-1" style={{ backgroundColor: '#16A34A' }} onClick={handleAdd} disabled={saving}>
                   {saving ? 'Ajout...' : 'Ajouter'}
                 </button>
               </div>
@@ -606,7 +747,7 @@ function RevenusSection() {
       {/* CTA when closed */}
       {!open && (
         <button
-          onClick={() => { setOpen(true); setShowForm(true) }}
+          onClick={() => { setOpen(true); setTimeout(() => setShowForm(true), 50) }}
           className="btn-primary w-full gap-2" style={{ backgroundColor: '#16A34A' }}>
           <Plus size={18}/> Ajouter un revenu
         </button>
