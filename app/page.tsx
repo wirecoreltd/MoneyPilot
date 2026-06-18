@@ -10,9 +10,12 @@ import ProjectsTab from '../ProjectsTab'
 import { getTransactions, Transaction, getUserProfile, UserProfile } from '@/lib/storage'
 import { supabase } from '@/lib/supabase'
 
+export type MoneySubTab = 'transactions' | 'budget' | 'dettes' | 'epargne' | 'factures' | 'revenus'
+
 export default function Page() {
   const [profile,      setProfile]      = useState<UserProfile | null>(null)
   const [tab,          setTab]          = useState<Tab>('home')
+  const [moneySubTab,  setMoneySubTab]  = useState<MoneySubTab>('transactions')
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [loading,      setLoading]      = useState(true)
 
@@ -23,7 +26,6 @@ export default function Page() {
 
   useEffect(() => {
     async function init() {
-      // Vérifier si l'utilisateur est connecté
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) {
         window.location.href = '/login'
@@ -41,12 +43,22 @@ export default function Page() {
     setProfile(p)
   }
 
+  // Navigate to a specific money sub-tab
+  function goToMoney(sub: MoneySubTab) {
+    setMoneySubTab(sub)
+    setTab('money')
+  }
+
+  function goToProjects() {
+    setTab('projets')
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-accent to-blue-800
                       flex items-center justify-center">
         <div className="text-center text-white">
-         <div className="text-5xl mb-4 animate-pulse">⏳</div>
+          <div className="text-5xl mb-4 animate-pulse">⏳</div>
           <p className="font-bold text-xl">MoneyPilot</p>
         </div>
       </div>
@@ -64,10 +76,8 @@ export default function Page() {
         <span className="text-xl font-bold">
           Money<span className="text-accent">Pilot</span>
         </span>
-      
         <div className="flex items-center gap-4">
           <span>👋 {profile.firstName}</span>
-      
           <button
             onClick={async () => {
               await supabase.auth.signOut()
@@ -80,8 +90,23 @@ export default function Page() {
         </div>
       </header>
       <main className="md:ml-60 pb-28 md:pb-8 px-4 py-4 md:px-8 md:py-8 max-w-2xl mx-auto md:mx-0">
-        {tab === 'home'    && <HomeTab     transactions={transactions} onUpdate={refresh} profile={profile} />}
-        {tab === 'money'   && <MoneyTab    transactions={transactions} onUpdate={refresh} />}
+        {tab === 'home'    && (
+          <HomeTab
+            transactions={transactions}
+            onUpdate={refresh}
+            profile={profile}
+            onGoToMoney={goToMoney}
+            onGoToProjects={goToProjects}
+          />
+        )}
+        {tab === 'money'   && (
+          <MoneyTab
+            transactions={transactions}
+            onUpdate={refresh}
+            initialSubTab={moneySubTab}
+            onSubTabChange={setMoneySubTab}
+          />
+        )}
         {tab === 'bilan'   && <BilanTab    transactions={transactions} />}
         {tab === 'projets' && <ProjectsTab />}
         {tab === 'coach'   && <CoachTab />}
