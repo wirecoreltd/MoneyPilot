@@ -46,7 +46,15 @@ interface Facture {
   isRecurring: boolean
   category: string
   paid: boolean
-  month: string // YYYY-MM
+  month: string
+  note?: string
+}
+
+interface FacturePayment {
+  id: string
+  factureId: string
+  amount: number
+  paidAt: string
   note?: string
 }
 
@@ -191,7 +199,6 @@ export default function MoneyTab({ transactions, onUpdate }: Props) {
 
   return (
     <div className="space-y-4">
-      {/* Grid 3×2 */}
       <div className="grid grid-cols-3 gap-2">
         {SUBTABS.map(t => (
           <button key={t.id} onClick={() => handleSetSub(t.id)}
@@ -209,7 +216,6 @@ export default function MoneyTab({ transactions, onUpdate }: Props) {
         ))}
       </div>
 
-      {/* Info banner */}
       {showInfo && (
         <div className={`flex items-start gap-3 p-4 rounded-2xl border ${SUBTABS.find(t => t.id === showInfo)?.color}`}>
           <span className="text-xl flex-shrink-0">{SUBTABS.find(t => t.id === showInfo)?.emoji}</span>
@@ -289,7 +295,7 @@ function CategoryManager({
   )
 }
 
-// ─── Transactions (dépenses uniquement) ───────────────────────────────────────
+// ─── Transactions ─────────────────────────────────────────────────────────────
 function TransactionsSection({ transactions, onUpdate }: Props) {
   const [showForm, setShowForm] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -302,8 +308,6 @@ function TransactionsSection({ transactions, onUpdate }: Props) {
     date: new Date().toISOString().slice(0, 10),
   })
 
-  const allCats = getAllCategories(customCategories)
-
   const monthOptions = Array.from({ length: 12 }, (_, i) => {
     const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - i)
     const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
@@ -311,7 +315,6 @@ function TransactionsSection({ transactions, onUpdate }: Props) {
     return { ym, label }
   })
 
-  // Only expense transactions
   const filtered = transactions
     .filter(t => t.type === 'expense')
     .filter(t => t.date.startsWith(selectedMonth))
@@ -355,7 +358,6 @@ function TransactionsSection({ transactions, onUpdate }: Props) {
 
   return (
     <div className="space-y-3">
-      {/* Note explicative */}
       <div className="flex items-start gap-3 p-3 bg-blue-50 border border-blue-100 rounded-2xl">
         <span className="text-base">💡</span>
         <p className="text-xs text-blue-700 leading-relaxed">
@@ -474,7 +476,6 @@ function RevenusSection() {
 
   useEffect(() => { loadAll() }, [])
 
-  // Close source dropdown on outside click
   useEffect(() => {
     function handleClick(e: MouseEvent) {
       if (sourceRef.current && !sourceRef.current.contains(e.target as Node)) setSourceDropdownOpen(false)
@@ -510,7 +511,6 @@ function RevenusSection() {
     setSaving(true)
     const { data: { user } } = await supabase.auth.getUser()
 
-    // Save source for future if checked
     if (form.saveSource && form.label.trim()) {
       const alreadySaved = savedSources.some(s => s.name.toLowerCase() === form.label.trim().toLowerCase())
       if (!alreadySaved) {
@@ -550,7 +550,6 @@ function RevenusSection() {
   const fixedTotal = revenus.filter(r => r.type === 'fixed').reduce((s, r) => s + r.amount, 0)
   const variableTotal = revenus.filter(r => r.type === 'variable').reduce((s, r) => s + r.amount, 0)
 
-  // All sources to show in dropdown (presets + saved custom)
   const customSaved = savedSources.filter(
     s => !REVENU_PRESETS.flatMap(g => g.items).includes(s.name)
   )
@@ -559,19 +558,14 @@ function RevenusSection() {
 
   return (
     <div className="space-y-3">
-      {/* Note explicative */}
       <div className="flex items-start gap-3 p-3 bg-green-50 border border-green-100 rounded-2xl">
         <span className="text-base">💡</span>
         <p className="text-xs text-green-700 leading-relaxed">
-          <strong>Tes sources de revenus du mois.</strong> Salaire, freelance, loyer perçu, allocations... Ajoute chaque source séparément pour une vision claire. Ces données alimentent le Coach IA et le Bilan.
+          <strong>Tes sources de revenus du mois.</strong> Salaire, freelance, loyer perçu, allocations... Ajoute chaque source séparément pour une vision claire.
         </p>
       </div>
 
-      {/* Total card + dropdown toggle */}
-      <button
-        onClick={() => setOpen(o => !o)}
-        className="w-full card bg-positive-light border border-positive/20 text-left"
-      >
+      <button onClick={() => setOpen(o => !o)} className="w-full card bg-positive-light border border-positive/20 text-left">
         <div className="flex items-center justify-between">
           <div>
             <p className="text-xs font-bold text-positive uppercase tracking-wide capitalize">{monthName}</p>
@@ -590,7 +584,6 @@ function RevenusSection() {
         )}
       </button>
 
-      {/* Dropdown list */}
       {open && (
         <div className="card space-y-2 border-2 border-positive/20">
           {revenus.length === 0 ? (
@@ -615,34 +608,22 @@ function RevenusSection() {
             </div>
           ))}
 
-          {/* Inline add form */}
           {showForm ? (
             <div className="space-y-2 pt-2 border-t border-mist">
-
-              {/* Source picker dropdown */}
               <div ref={sourceRef} className="relative">
                 <label className="label">Source de revenu</label>
-                <button
-                  type="button"
-                  onClick={() => setSourceDropdownOpen(o => !o)}
-                  className="input flex items-center justify-between text-left w-full"
-                >
+                <button type="button" onClick={() => setSourceDropdownOpen(o => !o)} className="input flex items-center justify-between text-left w-full">
                   <span className={form.label ? 'text-ink' : 'text-gray-400'}>{form.label || 'Choisir ou saisir...'}</span>
                   <ChevronDown size={16} className={`text-ink-soft transition-transform flex-shrink-0 ${sourceDropdownOpen ? 'rotate-180' : ''}`}/>
                 </button>
-
                 {sourceDropdownOpen && (
                   <div className="absolute z-50 top-full mt-1 left-0 right-0 bg-white border border-mist-dark rounded-2xl shadow-xl overflow-hidden">
                     <div className="max-h-72 overflow-y-auto">
-
-                      {/* Saved custom sources */}
                       {customSaved.length > 0 && (
                         <div>
                           <p className="text-[10px] font-bold text-ink-soft uppercase tracking-wider px-3 pt-3 pb-1">⭐ Mes sources</p>
                           {customSaved.map(s => (
-                            <div key={s.id}
-                              onClick={() => pickSource(s.name, s.type)}
-                              className="flex items-center justify-between px-3 py-2.5 cursor-pointer hover:bg-mist transition-colors">
+                            <div key={s.id} onClick={() => pickSource(s.name, s.type)} className="flex items-center justify-between px-3 py-2.5 cursor-pointer hover:bg-mist transition-colors">
                               <div className="flex items-center gap-2">
                                 {form.label === s.name && <Check size={12} className="text-positive"/>}
                                 <span className="text-sm text-ink">{s.name}</span>
@@ -650,24 +631,17 @@ function RevenusSection() {
                                   {s.type === 'fixed' ? 'Fixe' : 'Variable'}
                                 </span>
                               </div>
-                              <button onClick={e => { e.stopPropagation(); handleDeleteSource(s.id) }}
-                                className="w-5 h-5 rounded-md hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center flex-shrink-0">
-                                <X size={10}/>
-                              </button>
+                              <button onClick={e => { e.stopPropagation(); handleDeleteSource(s.id) }} className="w-5 h-5 rounded-md hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center flex-shrink-0"><X size={10}/></button>
                             </div>
                           ))}
                           <div className="h-px bg-mist-dark mx-3 my-1"/>
                         </div>
                       )}
-
-                      {/* Preset groups */}
                       {REVENU_PRESETS.map(group => (
                         <div key={group.group}>
                           <p className="text-[10px] font-bold text-ink-soft uppercase tracking-wider px-3 pt-2.5 pb-1">{group.group}</p>
                           {group.items.map(item => (
-                            <div key={item}
-                              onClick={() => pickSource(item)}
-                              className={`flex items-center gap-2 px-3 py-2.5 cursor-pointer hover:bg-mist transition-colors ${form.label === item ? 'bg-green-50' : ''}`}>
+                            <div key={item} onClick={() => pickSource(item)} className={`flex items-center gap-2 px-3 py-2.5 cursor-pointer hover:bg-mist transition-colors ${form.label === item ? 'bg-green-50' : ''}`}>
                               {form.label === item && <Check size={12} className="text-positive flex-shrink-0"/>}
                               <span className="text-sm text-ink">{item}</span>
                             </div>
@@ -675,49 +649,26 @@ function RevenusSection() {
                         </div>
                       ))}
                     </div>
-
-                    {/* Free text input at bottom */}
                     <div className="p-2 border-t border-mist-dark">
-                      <input
-                        className="input text-sm py-2"
-                        placeholder="✏️ Ou saisir manuellement..."
-                        value={form.label}
-                        onChange={e => setForm(f => ({ ...f, label: e.target.value }))}
-                        onClick={e => e.stopPropagation()}
-                        onKeyDown={e => e.key === 'Enter' && setSourceDropdownOpen(false)}
-                      />
+                      <input className="input text-sm py-2" placeholder="✏️ Ou saisir manuellement..." value={form.label} onChange={e => setForm(f => ({ ...f, label: e.target.value }))} onClick={e => e.stopPropagation()} onKeyDown={e => e.key === 'Enter' && setSourceDropdownOpen(false)}/>
                     </div>
                   </div>
                 )}
               </div>
 
-              {/* Label éditable (pré-rempli par la sélection) */}
               <div>
                 <label className="label">Libellé <span className="text-ink-soft font-normal">(modifiable)</span></label>
-                <input
-                  className="input"
-                  placeholder="Ex: Salaire janvier..."
-                  value={form.label}
-                  onChange={e => setForm(f => ({ ...f, label: e.target.value }))}
-                />
+                <input className="input" placeholder="Ex: Salaire janvier..." value={form.label} onChange={e => setForm(f => ({ ...f, label: e.target.value }))}/>
               </div>
-
               <div>
                 <label className="label">Montant (Rs)</label>
                 <input className="input" type="number" placeholder="0" value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))}/>
               </div>
-
               <div className="flex rounded-xl overflow-hidden border-2 border-mist-dark">
-                <button className={`flex-1 py-2 text-xs font-bold ${form.type === 'fixed' ? 'bg-accent text-white' : 'bg-white text-ink-soft'}`}
-                  onClick={() => setForm(f => ({ ...f, type: 'fixed' }))}>📅 Fixe</button>
-                <button className={`flex-1 py-2 text-xs font-bold ${form.type === 'variable' ? 'bg-accent text-white' : 'bg-white text-ink-soft'}`}
-                  onClick={() => setForm(f => ({ ...f, type: 'variable' }))}>📈 Variable</button>
+                <button className={`flex-1 py-2 text-xs font-bold ${form.type === 'fixed' ? 'bg-accent text-white' : 'bg-white text-ink-soft'}`} onClick={() => setForm(f => ({ ...f, type: 'fixed' }))}>📅 Fixe</button>
+                <button className={`flex-1 py-2 text-xs font-bold ${form.type === 'variable' ? 'bg-accent text-white' : 'bg-white text-ink-soft'}`} onClick={() => setForm(f => ({ ...f, type: 'variable' }))}>📈 Variable</button>
               </div>
-
-              {/* Save source toggle */}
-              <div
-                onClick={() => setForm(f => ({ ...f, saveSource: !f.saveSource }))}
-                className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-colors ${form.saveSource ? 'bg-green-50 border-green-200' : 'bg-mist border-mist-dark'}`}>
+              <div onClick={() => setForm(f => ({ ...f, saveSource: !f.saveSource }))} className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-colors ${form.saveSource ? 'bg-green-50 border-green-200' : 'bg-mist border-mist-dark'}`}>
                 <div>
                   <p className="text-xs font-bold text-ink">⭐ Enregistrer cette source</p>
                   <p className="text-[10px] text-ink-soft mt-0.5">Disponible dans le menu la prochaine fois</p>
@@ -726,29 +677,21 @@ function RevenusSection() {
                   <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${form.saveSource ? 'left-5' : 'left-0.5'}`}/>
                 </div>
               </div>
-
               <div className="flex gap-2">
                 <button className="btn-ghost flex-1" onClick={() => { setShowForm(false); setForm({ label: '', amount: '', type: 'fixed', saveSource: false }) }}>Annuler</button>
-                <button className="btn-primary flex-1" style={{ backgroundColor: '#16A34A' }} onClick={handleAdd} disabled={saving}>
-                  {saving ? 'Ajout...' : 'Ajouter'}
-                </button>
+                <button className="btn-primary flex-1" style={{ backgroundColor: '#16A34A' }} onClick={handleAdd} disabled={saving}>{saving ? 'Ajout...' : 'Ajouter'}</button>
               </div>
             </div>
           ) : (
-            <button
-              onClick={() => setShowForm(true)}
-              className="w-full py-3 text-sm font-bold text-positive bg-positive-light hover:bg-green-100 rounded-2xl transition-colors flex items-center justify-center gap-2">
+            <button onClick={() => setShowForm(true)} className="w-full py-3 text-sm font-bold text-positive bg-positive-light hover:bg-green-100 rounded-2xl transition-colors flex items-center justify-center gap-2">
               <Plus size={16}/> Ajouter une source
             </button>
           )}
         </div>
       )}
 
-      {/* CTA when closed */}
       {!open && (
-        <button
-          onClick={() => { setOpen(true); setTimeout(() => setShowForm(true), 50) }}
-          className="btn-primary w-full gap-2" style={{ backgroundColor: '#16A34A' }}>
+        <button onClick={() => { setOpen(true); setTimeout(() => setShowForm(true), 50) }} className="btn-primary w-full gap-2" style={{ backgroundColor: '#16A34A' }}>
           <Plus size={18}/> Ajouter un revenu
         </button>
       )}
@@ -756,16 +699,43 @@ function RevenusSection() {
   )
 }
 
+// ─── Facture helpers ──────────────────────────────────────────────────────────
+async function fetchFacturePayments(factureId: string): Promise<FacturePayment[]> {
+  const { data } = await supabase.from('facture_payment_history').select('*').eq('facture_id', factureId).order('paid_at', { ascending: false })
+  return (data ?? []).map(r => ({ id: r.id, factureId: r.facture_id, amount: Number(r.amount), paidAt: r.paid_at, note: r.note ?? undefined }))
+}
+async function addFacturePayment(factureId: string, amount: number, paidAt: string, note?: string): Promise<void> {
+  await supabase.from('facture_payment_history').insert({ facture_id: factureId, amount, paid_at: paidAt, note: note || null })
+}
+async function updateFacturePayment(id: string, amount: number, paidAt: string, note?: string): Promise<void> {
+  await supabase.from('facture_payment_history').update({ amount, paid_at: paidAt, note: note || null }).eq('id', id)
+}
+async function deleteFacturePayment(id: string): Promise<void> {
+  await supabase.from('facture_payment_history').delete().eq('id', id)
+}
+
 // ─── Factures ─────────────────────────────────────────────────────────────────
 function FacturesSection() {
   const [factures, setFactures] = useState<Facture[]>([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
+  const [editingFacture, setEditingFacture] = useState<Facture | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [payingId, setPayingId] = useState<string | null>(null)
+  const [payAmount, setPayAmount] = useState('')
+  const [payDate, setPayDate] = useState(new Date().toISOString().slice(0, 10))
+  const [payNote, setPayNote] = useState('')
+  const [openHistoryId, setOpenHistoryId] = useState<string | null>(null)
+  const [paymentsMap, setPaymentsMap] = useState<Record<string, FacturePayment[]>>({})
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [editingPayment, setEditingPayment] = useState<FacturePayment | null>(null)
+  const [editPayAmount, setEditPayAmount] = useState('')
+  const [editPayDate, setEditPayDate] = useState('')
+  const [editPayNote, setEditPayNote] = useState('')
   const [form, setForm] = useState({
     name: '', amount: '', category: FACTURE_CATEGORIES[0],
-    dueDate: '', isRecurring: false, note: '',
+    dueDate: '', dueDayOfMonth: '', isRecurring: false, note: '',
   })
-  const [saving, setSaving] = useState(false)
   const ym = currentYearMonth()
 
   useEffect(() => { loadFactures() }, [])
@@ -773,12 +743,7 @@ function FacturesSection() {
   async function loadFactures() {
     setLoading(true)
     const { data: { user } } = await supabase.auth.getUser()
-    const { data } = await supabase
-      .from('factures')
-      .select('*')
-      .eq('user_id', user!.id)
-      .eq('month', ym)
-      .order('created_at', { ascending: true })
+    const { data } = await supabase.from('factures').select('*').eq('user_id', user!.id).eq('month', ym).order('created_at', { ascending: true })
     setFactures((data ?? []).map(r => ({
       id: r.id, name: r.name, amount: Number(r.amount),
       dueDate: r.due_date ?? undefined, isRecurring: r.is_recurring ?? false,
@@ -788,42 +753,138 @@ function FacturesSection() {
     setLoading(false)
   }
 
-  async function handleAdd() {
+  function resetForm() {
+    setForm({ name: '', amount: '', category: FACTURE_CATEGORIES[0], dueDate: '', dueDayOfMonth: '', isRecurring: false, note: '' })
+    setEditingFacture(null)
+  }
+
+  function openEdit(f: Facture) {
+    setEditingFacture(f)
+    const dayOfMonth = f.dueDate ? new Date(f.dueDate).getDate().toString() : ''
+    setForm({
+      name: f.name, amount: String(f.amount), category: f.category,
+      dueDate: f.dueDate ?? '', dueDayOfMonth: f.isRecurring ? dayOfMonth : '',
+      isRecurring: f.isRecurring, note: f.note ?? '',
+    })
+    setShowForm(true)
+  }
+
+  function computeDueDate(dayOfMonth: string, month: string): string | null {
+    if (!dayOfMonth) return null
+    const day = parseInt(dayOfMonth)
+    if (isNaN(day) || day < 1 || day > 31) return null
+    const [year, m] = month.split('-').map(Number)
+    const lastDay = new Date(year, m, 0).getDate()
+    const clampedDay = Math.min(day, lastDay)
+    return `${month}-${String(clampedDay).padStart(2, '0')}`
+  }
+
+  async function handleSave() {
     if (!form.name.trim() || !form.amount || Number(form.amount) <= 0) return
     setSaving(true)
     const { data: { user } } = await supabase.auth.getUser()
-    const { data } = await supabase.from('factures').insert({
-      user_id: user!.id,
-      name: form.name.trim(),
-      amount: Number(form.amount),
-      category: form.category,
-      due_date: form.dueDate || null,
-      is_recurring: form.isRecurring,
-      note: form.note || null,
-      paid: false,
-      month: ym,
-    }).select().single()
-    if (data) {
-      setFactures(prev => [...prev, {
-        id: data.id, name: data.name, amount: Number(data.amount),
-        dueDate: data.due_date ?? undefined, isRecurring: data.is_recurring,
-        category: data.category, paid: data.paid, month: data.month, note: data.note ?? undefined,
-      }])
-    }
-    setForm({ name: '', amount: '', category: FACTURE_CATEGORIES[0], dueDate: '', isRecurring: false, note: '' })
-    setShowForm(false)
-    setSaving(false)
-  }
+    const dueDate = form.isRecurring ? computeDueDate(form.dueDayOfMonth, ym) : (form.dueDate || null)
 
-  async function togglePaid(f: Facture) {
-    const newPaid = !f.paid
-    await supabase.from('factures').update({ paid: newPaid }).eq('id', f.id)
-    setFactures(prev => prev.map(x => x.id === f.id ? { ...x, paid: newPaid } : x))
+    if (editingFacture) {
+      await supabase.from('factures').update({
+        name: form.name.trim(), amount: Number(form.amount), category: form.category,
+        due_date: dueDate, is_recurring: form.isRecurring, note: form.note || null,
+      }).eq('id', editingFacture.id)
+      setFactures(prev => prev.map(f => f.id !== editingFacture.id ? f : {
+        ...f, name: form.name.trim(), amount: Number(form.amount), category: form.category,
+        dueDate: dueDate ?? undefined, isRecurring: form.isRecurring, note: form.note || undefined,
+      }))
+    } else {
+      const { data } = await supabase.from('factures').insert({
+        user_id: user!.id, name: form.name.trim(), amount: Number(form.amount),
+        category: form.category, due_date: dueDate, is_recurring: form.isRecurring,
+        note: form.note || null, paid: false, month: ym,
+      }).select().single()
+      if (data) {
+        setFactures(prev => [...prev, {
+          id: data.id, name: data.name, amount: Number(data.amount),
+          dueDate: data.due_date ?? undefined, isRecurring: data.is_recurring,
+          category: data.category, paid: data.paid, month: data.month, note: data.note ?? undefined,
+        }])
+      }
+    }
+    resetForm(); setShowForm(false); setSaving(false)
   }
 
   async function handleDelete(id: string) {
     await supabase.from('factures').delete().eq('id', id)
     setFactures(prev => prev.filter(f => f.id !== id))
+  }
+
+  async function toggleHistory(factureId: string) {
+    if (openHistoryId === factureId) { setOpenHistoryId(null); return }
+    setOpenHistoryId(factureId)
+    if (!paymentsMap[factureId]) {
+      setHistoryLoading(true)
+      const p = await fetchFacturePayments(factureId)
+      setPaymentsMap(prev => ({ ...prev, [factureId]: p }))
+      setHistoryLoading(false)
+    }
+  }
+
+  async function reloadPayments(factureId: string) {
+    const p = await fetchFacturePayments(factureId)
+    setPaymentsMap(prev => ({ ...prev, [factureId]: p }))
+  }
+
+  async function handlePay(factureId: string) {
+    const amt = Number(payAmount)
+    if (!amt || amt <= 0) return
+    const facture = factures.find(f => f.id === factureId)!
+    await addFacturePayment(factureId, amt, payDate, payNote)
+    const existingPayments = paymentsMap[factureId] ?? []
+    const totalPaid = existingPayments.reduce((s, p) => s + p.amount, 0) + amt
+    const nowPaid = totalPaid >= facture.amount
+    if (nowPaid !== facture.paid) {
+      await supabase.from('factures').update({ paid: nowPaid }).eq('id', factureId)
+      setFactures(prev => prev.map(f => f.id === factureId ? { ...f, paid: nowPaid } : f))
+    }
+    if (openHistoryId === factureId) {
+      const p = await fetchFacturePayments(factureId)
+      setPaymentsMap(prev => ({ ...prev, [factureId]: p }))
+    } else {
+      setPaymentsMap(prev => { const n = { ...prev }; delete n[factureId]; return n })
+    }
+    setPayingId(null); setPayAmount(''); setPayDate(new Date().toISOString().slice(0, 10)); setPayNote('')
+  }
+
+  async function handleEditPayment() {
+    if (!editingPayment) return
+    const newAmt = Number(editPayAmount)
+    if (!newAmt || newAmt <= 0) return
+    await updateFacturePayment(editingPayment.id, newAmt, editPayDate, editPayNote)
+    await reloadPayments(editingPayment.factureId)
+    const payments = await fetchFacturePayments(editingPayment.factureId)
+    const totalPaid = payments.reduce((s, p) => s + p.amount, 0)
+    const facture = factures.find(f => f.id === editingPayment.factureId)
+    if (facture) {
+      const nowPaid = totalPaid >= facture.amount
+      if (nowPaid !== facture.paid) {
+        await supabase.from('factures').update({ paid: nowPaid }).eq('id', facture.id)
+        setFactures(prev => prev.map(f => f.id === facture.id ? { ...f, paid: nowPaid } : f))
+      }
+    }
+    setEditingPayment(null)
+  }
+
+  async function handleDeletePayment(p: FacturePayment) {
+    await deleteFacturePayment(p.id)
+    await reloadPayments(p.factureId)
+    const payments = await fetchFacturePayments(p.factureId)
+    const totalPaid = payments.reduce((s, pay) => s + pay.amount, 0)
+    const facture = factures.find(f => f.id === p.factureId)
+    if (facture) {
+      const nowPaid = totalPaid >= facture.amount
+      if (nowPaid !== facture.paid) {
+        await supabase.from('factures').update({ paid: nowPaid }).eq('id', facture.id)
+        setFactures(prev => prev.map(f => f.id === facture.id ? { ...f, paid: nowPaid } : f))
+      }
+    }
   }
 
   const paidCount = factures.filter(f => f.paid).length
@@ -845,15 +906,13 @@ function FacturesSection() {
     <div className="space-y-3">
       <CoachTip message={tip} />
 
-      {/* Note explicative */}
       <div className="flex items-start gap-3 p-3 bg-yellow-50 border border-yellow-200 rounded-2xl">
         <span className="text-base">💡</span>
         <p className="text-xs text-yellow-800 leading-relaxed">
-          <strong>Factures ≠ Dettes.</strong> Une facture (eau, élec, internet...) se paie <strong>en une fois chaque mois</strong>. Une dette (crédit, prêt) se rembourse <strong>progressivement sur des mois/années</strong>. Gère tes dettes dans la carte <strong>Dettes</strong>.
+          <strong>Factures ≠ Dettes.</strong> Une facture (eau, élec, internet...) se paie <strong>en une fois chaque mois</strong>. Une dette (crédit, prêt) se rembourse <strong>progressivement sur des mois/années</strong>.
         </p>
       </div>
 
-      {/* Summary */}
       {factures.length > 0 && (
         <div className="grid grid-cols-3 gap-2">
           <div className="card text-center py-3">
@@ -871,7 +930,6 @@ function FacturesSection() {
         </div>
       )}
 
-      {/* Progress bar */}
       {factures.length > 0 && (
         <div className="space-y-1">
           <div className="flex justify-between text-xs text-ink-soft">
@@ -879,13 +937,12 @@ function FacturesSection() {
             <span>{Math.round((paidCount / factures.length) * 100)}%</span>
           </div>
           <div className="w-full h-2.5 bg-mist-dark rounded-full overflow-hidden">
-            <div className="h-full bg-positive rounded-full transition-all duration-500"
-              style={{ width: `${(paidCount / factures.length) * 100}%` }}/>
+            <div className="h-full bg-positive rounded-full transition-all duration-500" style={{ width: `${(paidCount / factures.length) * 100}%` }}/>
           </div>
         </div>
       )}
 
-      <button onClick={() => setShowForm(true)} className="btn-primary w-full gap-2" style={{ backgroundColor: '#CA8A04' }}>
+      <button onClick={() => { resetForm(); setShowForm(true) }} className="btn-primary w-full gap-2" style={{ backgroundColor: '#CA8A04' }}>
         <Plus size={18}/> Ajouter une facture
       </button>
 
@@ -897,19 +954,38 @@ function FacturesSection() {
         </div>
       ) : (
         <>
-          {/* Récurrentes */}
           {recurringFactures.length > 0 && (
             <div className="space-y-2">
               <p className="text-xs font-bold text-ink-soft uppercase tracking-wider">🔄 Récurrentes</p>
-              {recurringFactures.map(f => <FactureCard key={f.id} facture={f} onToggle={togglePaid} onDelete={handleDelete}/>)}
+              {recurringFactures.map(f => (
+                <FactureCard key={f.id} facture={f} onEdit={openEdit} onDelete={handleDelete}
+                  payments={paymentsMap[f.id] ?? []} showHistory={openHistoryId === f.id}
+                  historyLoading={historyLoading && openHistoryId === f.id && !paymentsMap[f.id]}
+                  onToggleHistory={() => toggleHistory(f.id)} payingId={payingId}
+                  payAmount={payAmount} payDate={payDate} payNote={payNote}
+                  onSetPayingId={(id) => { setPayingId(id); setPayAmount(''); setPayDate(new Date().toISOString().slice(0, 10)); setPayNote('') }}
+                  onPayAmountChange={setPayAmount} onPayDateChange={setPayDate} onPayNoteChange={setPayNote}
+                  onPay={() => handlePay(f.id)}
+                  onEditPayment={(p) => { setEditingPayment(p); setEditPayAmount(String(p.amount)); setEditPayDate(p.paidAt); setEditPayNote(p.note || '') }}
+                  onDeletePayment={handleDeletePayment}/>
+              ))}
             </div>
           )}
-
-          {/* Ponctuelles */}
           {ponctuellesFactures.length > 0 && (
             <div className="space-y-2">
               <p className="text-xs font-bold text-ink-soft uppercase tracking-wider">📄 Ponctuelles</p>
-              {ponctuellesFactures.map(f => <FactureCard key={f.id} facture={f} onToggle={togglePaid} onDelete={handleDelete}/>)}
+              {ponctuellesFactures.map(f => (
+                <FactureCard key={f.id} facture={f} onEdit={openEdit} onDelete={handleDelete}
+                  payments={paymentsMap[f.id] ?? []} showHistory={openHistoryId === f.id}
+                  historyLoading={historyLoading && openHistoryId === f.id && !paymentsMap[f.id]}
+                  onToggleHistory={() => toggleHistory(f.id)} payingId={payingId}
+                  payAmount={payAmount} payDate={payDate} payNote={payNote}
+                  onSetPayingId={(id) => { setPayingId(id); setPayAmount(''); setPayDate(new Date().toISOString().slice(0, 10)); setPayNote('') }}
+                  onPayAmountChange={setPayAmount} onPayDateChange={setPayDate} onPayNoteChange={setPayNote}
+                  onPay={() => handlePay(f.id)}
+                  onEditPayment={(p) => { setEditingPayment(p); setEditPayAmount(String(p.amount)); setEditPayDate(p.paidAt); setEditPayNote(p.note || '') }}
+                  onDeletePayment={handleDeletePayment}/>
+              ))}
             </div>
           )}
         </>
@@ -919,44 +995,66 @@ function FacturesSection() {
         <div className="bottom-sheet bg-black/40">
           <div className="bottom-sheet-content">
             <div className="flex items-center justify-between mb-2">
-              <h2 className="text-lg font-bold text-ink">Nouvelle facture</h2>
-              <button className="btn-icon bg-mist" onClick={() => setShowForm(false)}><X size={20}/></button>
+              <h2 className="text-lg font-bold text-ink">{editingFacture ? 'Modifier la facture' : 'Nouvelle facture'}</h2>
+              <button className="btn-icon bg-mist" onClick={() => { setShowForm(false); resetForm() }}><X size={20}/></button>
             </div>
-
-            {/* Recurring toggle */}
             <div className="flex items-center justify-between p-3 bg-yellow-50 rounded-2xl border border-yellow-200">
               <div>
                 <p className="text-sm font-bold text-yellow-800">🔄 Facture récurrente</p>
                 <p className="text-xs text-yellow-600 mt-0.5">Revient chaque mois (eau, élec, abonnement...)</p>
               </div>
-              <button onClick={() => setForm(f => ({...f, isRecurring: !f.isRecurring}))}
+              <button onClick={() => setForm(f => ({ ...f, isRecurring: !f.isRecurring }))}
                 className={`relative w-12 h-6 rounded-full transition-colors flex-shrink-0 ${form.isRecurring ? 'bg-yellow-500' : 'bg-mist-dark'}`}>
                 <span className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-all ${form.isRecurring ? 'left-7' : 'left-1'}`}/>
               </button>
             </div>
-
             <div><label className="label">Nom de la facture</label>
-              <input className="input" placeholder="Ex: Facture CEB, Abonnement Netflix..." value={form.name} onChange={e => setForm(f => ({...f, name: e.target.value}))}/></div>
-
+              <input className="input" placeholder="Ex: Facture CEB, Abonnement Netflix..." value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))}/></div>
             <div><label className="label">Montant (Rs)</label>
-              <input className="input" type="number" placeholder="0" value={form.amount} onChange={e => setForm(f => ({...f, amount: e.target.value}))}/></div>
-
+              <input className="input" type="number" placeholder="0" value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))}/></div>
             <div>
               <label className="label">Catégorie</label>
-              <select className="input" value={form.category} onChange={e => setForm(f => ({...f, category: e.target.value}))}>
+              <select className="input" value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))}>
                 {FACTURE_CATEGORIES.map(c => <option key={c}>{c}</option>)}
               </select>
             </div>
-
-            <div><label className="label">Date d'échéance (optionnel)</label>
-              <input className="input" type="date" value={form.dueDate} onChange={e => setForm(f => ({...f, dueDate: e.target.value}))}/></div>
-
+            {form.isRecurring ? (
+              <div>
+                <label className="label">Jour d'échéance du mois</label>
+                <input className="input" type="number" min="1" max="31" placeholder="Ex: 15 (= le 15 de chaque mois)" value={form.dueDayOfMonth} onChange={e => setForm(f => ({ ...f, dueDayOfMonth: e.target.value }))}/>
+                {form.dueDayOfMonth && (
+                  <p className="text-xs text-yellow-700 mt-1">
+                    📅 Ce mois : échéance le {computeDueDate(form.dueDayOfMonth, ym) ? new Date(computeDueDate(form.dueDayOfMonth, ym)!).toLocaleDateString('fr-FR') : '—'}
+                  </p>
+                )}
+              </div>
+            ) : (
+              <div><label className="label">Date d'échéance (optionnel)</label>
+                <input className="input" type="date" value={form.dueDate} onChange={e => setForm(f => ({ ...f, dueDate: e.target.value }))}/></div>
+            )}
             <div><label className="label">Note (optionnel)</label>
-              <input className="input" placeholder="Ex: Facture reçue le 5..." value={form.note} onChange={e => setForm(f => ({...f, note: e.target.value}))}/></div>
-
-            <button className="btn-primary w-full py-4" onClick={handleAdd} style={{ backgroundColor: '#CA8A04' }} disabled={saving}>
-              {saving ? 'Ajout...' : 'Ajouter la facture'}
+              <input className="input" placeholder="Ex: Facture reçue le 5..." value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))}/></div>
+            <button className="btn-primary w-full py-4" onClick={handleSave} style={{ backgroundColor: '#CA8A04' }} disabled={saving}>
+              {saving ? 'Enregistrement...' : editingFacture ? 'Enregistrer les modifications' : 'Ajouter la facture'}
             </button>
+          </div>
+        </div>
+      )}
+
+      {editingPayment && (
+        <div className="bottom-sheet bg-black/40">
+          <div className="bottom-sheet-content">
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="text-lg font-bold text-ink">Modifier le paiement</h2>
+              <button className="btn-icon bg-mist" onClick={() => setEditingPayment(null)}><X size={20}/></button>
+            </div>
+            <div><label className="label">Montant (Rs)</label><input className="input" type="number" value={editPayAmount} onChange={e => setEditPayAmount(e.target.value)}/></div>
+            <div><label className="label">Date</label><input className="input" type="date" value={editPayDate} onChange={e => setEditPayDate(e.target.value)}/></div>
+            <div><label className="label">Note (optionnel)</label><input className="input" placeholder="Ex: Virement..." value={editPayNote} onChange={e => setEditPayNote(e.target.value)}/></div>
+            <div className="flex gap-2">
+              <button className="btn-ghost flex-1" onClick={() => setEditingPayment(null)}>Annuler</button>
+              <button className="btn-primary flex-1" style={{ backgroundColor: '#CA8A04' }} onClick={handleEditPayment}>Enregistrer</button>
+            </div>
           </div>
         </div>
       )}
@@ -964,42 +1062,111 @@ function FacturesSection() {
   )
 }
 
-function FactureCard({ facture: f, onToggle, onDelete }: {
-  facture: Facture
-  onToggle: (f: Facture) => void
-  onDelete: (id: string) => void
+// ─── FactureCard ──────────────────────────────────────────────────────────────
+function FactureCard({
+  facture: f, onEdit, onDelete, payments, showHistory, historyLoading,
+  onToggleHistory, payingId, payAmount, payDate, payNote,
+  onSetPayingId, onPayAmountChange, onPayDateChange, onPayNoteChange,
+  onPay, onEditPayment, onDeletePayment,
+}: {
+  facture: Facture; onEdit: (f: Facture) => void; onDelete: (id: string) => void
+  payments: FacturePayment[]; showHistory: boolean; historyLoading: boolean
+  onToggleHistory: () => void; payingId: string | null
+  payAmount: string; payDate: string; payNote: string
+  onSetPayingId: (id: string) => void; onPayAmountChange: (v: string) => void
+  onPayDateChange: (v: string) => void; onPayNoteChange: (v: string) => void
+  onPay: () => void; onEditPayment: (p: FacturePayment) => void
+  onDeletePayment: (p: FacturePayment) => void
 }) {
   const isDue = f.dueDate ? new Date(f.dueDate) < new Date() && !f.paid : false
+  const totalPaid = payments.reduce((s, p) => s + p.amount, 0)
+  const remaining = Math.max(0, f.amount - totalPaid)
+  const isPaying = payingId === f.id
 
   return (
-    <div className={`card flex items-center gap-3 transition-all ${f.paid ? 'opacity-60' : ''} ${isDue ? 'border-l-4 border-l-danger' : ''}`}>
-      {/* Checkbox */}
-      <button
-        onClick={() => onToggle(f)}
-        className={`w-7 h-7 rounded-xl border-2 flex items-center justify-center flex-shrink-0 transition-all
-          ${f.paid ? 'bg-positive border-positive' : 'border-mist-dark bg-white'}`}>
-        {f.paid && <span className="text-white text-xs font-bold">✓</span>}
-      </button>
-
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
+    <div className={`card space-y-3 transition-all ${f.paid ? 'opacity-70' : ''} ${isDue ? 'border-l-4 border-l-danger' : ''}`}>
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5 flex-wrap mb-1">
+            {f.isRecurring && <span className="text-[10px] bg-yellow-50 text-yellow-700 border border-yellow-200 px-1.5 py-0.5 rounded-full font-medium">🔄 Récurrente</span>}
+            <span className="text-[10px] bg-yellow-50 text-yellow-700 border border-yellow-200 px-1.5 py-0.5 rounded-full font-medium">{f.category}</span>
+            {isDue && !f.paid && <span className="text-[10px] bg-danger text-white px-1.5 py-0.5 rounded-full font-bold">En retard</span>}
+            {f.paid && <span className="text-[10px] bg-positive-light text-positive px-1.5 py-0.5 rounded-full font-bold">✓ Payée</span>}
+          </div>
           <p className={`text-sm font-semibold ${f.paid ? 'line-through text-ink-soft' : 'text-ink'}`}>{f.name}</p>
-          {isDue && !f.paid && <span className="text-[10px] bg-danger text-white px-1.5 py-0.5 rounded-full font-bold">En retard</span>}
+          <div className="flex items-center gap-3 mt-1 flex-wrap">
+            {f.dueDate && <span className="text-xs text-ink-soft">📅 {new Date(f.dueDate).toLocaleDateString('fr-FR')}</span>}
+            {f.note && <span className="text-xs text-ink-soft italic">{f.note}</span>}
+          </div>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-[10px] bg-yellow-50 text-yellow-700 border border-yellow-200 px-1.5 py-0.5 rounded-full font-medium">{f.category}</span>
-          {f.dueDate && <span className="text-[10px] text-ink-soft">📅 {new Date(f.dueDate).toLocaleDateString('fr-FR')}</span>}
-          {f.note && <span className="text-[10px] text-ink-soft italic">{f.note}</span>}
+        <div className="flex flex-col items-end gap-1 flex-shrink-0">
+          <p className="font-mono font-bold text-base text-ink">{formatAmount(f.amount)}</p>
+          {totalPaid > 0 && !f.paid && <p className="text-xs font-mono text-positive">+{formatAmount(totalPaid)} payé</p>}
+          <div className="flex gap-1 mt-0.5">
+            <button className={`w-8 h-8 rounded-xl flex items-center justify-center transition-colors ${showHistory ? 'bg-yellow-500 text-white' : 'bg-mist hover:bg-yellow-50 text-ink-soft hover:text-yellow-600'}`} onClick={onToggleHistory}><History size={14}/></button>
+            <button className="w-8 h-8 rounded-xl bg-mist hover:bg-accent-light text-ink-soft hover:text-accent flex items-center justify-center" onClick={() => onEdit(f)}><Pencil size={14}/></button>
+            <button className="w-8 h-8 rounded-xl bg-mist hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center" onClick={() => onDelete(f.id)}><Trash2 size={14}/></button>
+          </div>
         </div>
       </div>
 
-      <div className="flex items-center gap-1 flex-shrink-0">
-        <span className={`font-mono text-sm font-bold ${f.paid ? 'text-positive' : 'text-ink'}`}>{formatAmount(f.amount)}</span>
-        <button onClick={() => onDelete(f.id)}
-          className="w-7 h-7 rounded-lg bg-mist hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center">
-          <Trash2 size={12}/>
-        </button>
-      </div>
+      {totalPaid > 0 && (
+        <div className="space-y-1">
+          <div className="w-full h-2 bg-mist-dark rounded-full overflow-hidden">
+            <div className="h-full bg-positive rounded-full transition-all duration-500" style={{ width: `${Math.min(100, (totalPaid / f.amount) * 100)}%` }}/>
+          </div>
+          <div className="flex justify-between text-xs text-ink-soft">
+            <span className="font-mono">{formatAmount(totalPaid)} payés</span>
+            <span className="font-mono">{remaining > 0 ? `${formatAmount(remaining)} restant` : '✅ Soldée'}</span>
+          </div>
+        </div>
+      )}
+
+      {showHistory && (
+        <div className="bg-mist rounded-2xl overflow-hidden">
+          <div className="px-3 py-2.5 border-b border-mist-dark flex items-center justify-between">
+            <p className="text-xs font-bold text-ink-soft uppercase tracking-wide">Historique</p>
+            {payments.length > 0 && <span className="text-xs font-mono font-bold text-positive">Total : {formatAmount(payments.reduce((s, p) => s + p.amount, 0))}</span>}
+          </div>
+          {historyLoading ? (
+            <p className="text-xs text-ink-soft text-center py-4">Chargement...</p>
+          ) : payments.length === 0 ? (
+            <p className="text-xs text-ink-soft text-center italic py-4">Aucun paiement enregistré</p>
+          ) : payments.map(p => (
+            <div key={p.id} className="flex items-center justify-between px-3 py-2.5 border-b border-mist-dark last:border-0 hover:bg-white transition-colors">
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-mono font-bold text-positive">+{formatAmount(p.amount)}</p>
+                <p className="text-xs text-ink-soft">{new Date(p.paidAt).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })}</p>
+                {p.note && <p className="text-xs text-ink-soft italic truncate">{p.note}</p>}
+              </div>
+              <div className="flex gap-1 ml-2 flex-shrink-0">
+                <button onClick={() => onEditPayment(p)} className="w-7 h-7 rounded-lg bg-white hover:bg-accent-light text-ink-soft hover:text-accent flex items-center justify-center"><Pencil size={12}/></button>
+                <button onClick={() => onDeletePayment(p)} className="w-7 h-7 rounded-lg bg-white hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center"><Trash2 size={12}/></button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {isPaying ? (
+        <div className="space-y-2 p-3 bg-yellow-50 rounded-2xl border border-yellow-200">
+          <p className="text-xs font-bold text-yellow-800 uppercase tracking-wide">Enregistrer un paiement</p>
+          {remaining < f.amount && <p className="text-xs text-yellow-700">Restant à payer : <strong>{formatAmount(remaining)}</strong></p>}
+          <input className="input bg-white" type="number" placeholder="Montant (Rs)" value={payAmount} onChange={e => onPayAmountChange(e.target.value)} autoFocus/>
+          <input className="input bg-white" type="date" value={payDate} onChange={e => onPayDateChange(e.target.value)}/>
+          <input className="input bg-white" placeholder="📝 Note (optionnel)" value={payNote} onChange={e => onPayNoteChange(e.target.value)}/>
+          <div className="flex gap-2">
+            <button className="btn-ghost flex-1 bg-white" onClick={() => onSetPayingId('')}>Annuler</button>
+            <button className="btn-primary flex-1" style={{ backgroundColor: '#CA8A04' }} onClick={onPay}>Enregistrer</button>
+          </div>
+        </div>
+      ) : (
+        !f.paid && (
+          <button className="w-full py-2.5 text-sm font-bold text-yellow-800 bg-yellow-50 hover:bg-yellow-100 border border-yellow-200 rounded-2xl active:scale-95 transition-all flex items-center justify-center gap-2" onClick={() => onSetPayingId(f.id)}>
+            <Plus size={15}/> Enregistrer un paiement
+          </button>
+        )
+      )}
     </div>
   )
 }
@@ -1060,7 +1227,6 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
     : `Crée un plafond par catégorie pour mieux contrôler où va ton argent.`
 
   const usedCategories = budgets.filter(b => !editingBudget || b.id !== editingBudget.id).map(b => b.name)
-  const allCats = getAllCategories(customCategories).filter(c => !usedCategories.includes(c))
 
   function handleAddCustom(cat: string) {
     const updated = [...customCategories, cat]
@@ -1501,8 +1667,6 @@ function DettesSection() {
   return (
     <div className="space-y-3">
       <CoachTip message={tip} />
-
-      {/* Note explicative */}
       <div className="flex items-start gap-3 p-3 bg-red-50 border border-red-100 rounded-2xl">
         <span className="text-base">💡</span>
         <p className="text-xs text-red-700 leading-relaxed">
@@ -1552,8 +1716,7 @@ function DettesSection() {
           </div>
           {totalMonthlyMin > 0 && (
             <div className="w-full h-2 bg-blue-200 rounded-full overflow-hidden">
-              <div className="h-full bg-blue-500 rounded-full transition-all duration-500"
-                style={{ width: `${Math.min(100, (totalMonthlyPaid / totalMonthlyMin) * 100)}%` }}/>
+              <div className="h-full bg-blue-500 rounded-full transition-all duration-500" style={{ width: `${Math.min(100, (totalMonthlyPaid / totalMonthlyMin) * 100)}%` }}/>
             </div>
           )}
         </div>
@@ -1572,14 +1735,8 @@ function DettesSection() {
         return (
           <div key={personName}>
             {isGrouped && (
-              <button
-                onClick={() => setExpandedCreditors(prev => {
-                  const next = new Set(prev)
-                  next.has(personName) ? next.delete(personName) : next.add(personName)
-                  return next
-                })}
-                className="w-full flex items-center justify-between p-3 bg-orange-50 border border-orange-200 rounded-2xl mb-2"
-              >
+              <button onClick={() => setExpandedCreditors(prev => { const next = new Set(prev); next.has(personName) ? next.delete(personName) : next.add(personName); return next })}
+                className="w-full flex items-center justify-between p-3 bg-orange-50 border border-orange-200 rounded-2xl mb-2">
                 <div className="flex items-center gap-2">
                   <span className="text-base">👤</span>
                   <div className="text-left">
@@ -1710,11 +1867,8 @@ function DettesSection() {
                     </div>
                   ) : (
                     <div className="flex justify-center">
-                      <button
-                        className="px-6 py-2.5 text-sm font-bold text-white rounded-2xl active:scale-95 transition-all"
-                        style={{ backgroundColor: '#DC2626' }}
-                        onClick={() => { setPayingId(d.id); setPayAmount(String(d.minimumPayment || '')); setPayDate(new Date().toISOString().slice(0, 10)); setPayNote('') }}
-                      >
+                      <button className="px-6 py-2.5 text-sm font-bold text-white rounded-2xl active:scale-95 transition-all" style={{ backgroundColor: '#DC2626' }}
+                        onClick={() => { setPayingId(d.id); setPayAmount(String(d.minimumPayment || '')); setPayDate(new Date().toISOString().slice(0, 10)); setPayNote('') }}>
                         + Enregistrer un remboursement
                       </button>
                     </div>
@@ -1966,7 +2120,7 @@ function EpargneSection() {
       <div className="flex items-start gap-3 p-3 bg-green-50 border border-green-100 rounded-2xl">
         <span className="text-base">💡</span>
         <p className="text-xs text-green-700 leading-relaxed">
-          <strong>Objectifs d'épargne à long terme.</strong> Fonds d'urgence, vacances, achat voiture... Chaque objectif a un montant cible. Règle d'or : épargne d'abord, dépense ensuite. Les objectifs sont triés par avancement.
+          <strong>Objectifs d'épargne à long terme.</strong> Fonds d'urgence, vacances, achat voiture... Règle d'or : épargne d'abord, dépense ensuite. Les objectifs sont triés par avancement.
         </p>
       </div>
 
