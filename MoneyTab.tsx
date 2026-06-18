@@ -13,9 +13,16 @@ import {
 } from '@/lib/storage'
 import CoachTip from './CoachTip'
 import { supabase } from '@/lib/supabase'
+import { MoneySubTab } from '@/app/page'
 
-type SubTab = 'transactions' | 'budget' | 'dettes' | 'epargne' | 'factures' | 'revenus'
-interface Props { transactions: Transaction[]; onUpdate: () => void }
+type SubTab = MoneySubTab
+
+interface Props {
+  transactions: Transaction[]
+  onUpdate: () => void
+  initialSubTab?: SubTab
+  onSubTabChange?: (sub: SubTab) => void
+}
 
 interface DebtPaymentHistory {
   id: string
@@ -37,7 +44,6 @@ interface SavingsDeposit {
 
 interface Creditor { id: string; name: string }
 
-// ─── Facture types ────────────────────────────────────────────────────────────
 interface Facture {
   id: string
   name: string
@@ -58,7 +64,6 @@ interface FacturePayment {
   note?: string
 }
 
-// ─── Revenu types ─────────────────────────────────────────────────────────────
 interface RevenuSource {
   id: string
   label: string
@@ -128,7 +133,7 @@ const SUBTABS = [
     id: 'factures' as SubTab,
     emoji: '🧾', label: 'Factures',
     shortDesc: 'Factures à payer ce mois',
-    fullDesc: 'Suis tes factures récurrentes (eau, élec, internet) et ponctuelles reçues. Différent des dettes : une facture est payée en une fois chaque mois.',
+    fullDesc: 'Suis tes factures récurrentes (eau, élec, internet) et ponctuelles reçues.',
     color: 'bg-yellow-50 border-yellow-200 text-yellow-700',
     activeColor: 'bg-yellow-500 text-white'
   },
@@ -158,7 +163,6 @@ const SUBTABS = [
   },
 ]
 
-// ─── Confettis ────────────────────────────────────────────────────────────────
 function Confetti({ onDone }: { onDone: () => void }) {
   useEffect(() => {
     const timer = setTimeout(onDone, 3000)
@@ -191,11 +195,23 @@ function Confetti({ onDone }: { onDone: () => void }) {
   )
 }
 
-// ─── Main MoneyTab ─────────────────────────────────────────────────────────────
-export default function MoneyTab({ transactions, onUpdate }: Props) {
-  const [sub, setSub] = useState<SubTab>(loadSubTab)
+export default function MoneyTab({ transactions, onUpdate, initialSubTab, onSubTabChange }: Props) {
+  const [sub, setSub] = useState<SubTab>(initialSubTab ?? loadSubTab())
   const [showInfo, setShowInfo] = useState<SubTab | null>(null)
-  function handleSetSub(id: SubTab) { setSub(id); localStorage.setItem(SUBTAB_KEY, id) }
+
+  // Sync when parent changes initialSubTab (e.g. from HomeTab navigation)
+  useEffect(() => {
+    if (initialSubTab && initialSubTab !== sub) {
+      setSub(initialSubTab)
+      localStorage.setItem(SUBTAB_KEY, initialSubTab)
+    }
+  }, [initialSubTab])
+
+  function handleSetSub(id: SubTab) {
+    setSub(id)
+    localStorage.setItem(SUBTAB_KEY, id)
+    onSubTabChange?.(id)
+  }
 
   return (
     <div className="space-y-4">
@@ -296,7 +312,7 @@ function CategoryManager({
 }
 
 // ─── Transactions ─────────────────────────────────────────────────────────────
-function TransactionsSection({ transactions, onUpdate }: Props) {
+function TransactionsSection({ transactions, onUpdate }: { transactions: Transaction[]; onUpdate: () => void }) {
   const [showForm, setShowForm] = useState(false)
   const [loading, setLoading] = useState(false)
   const [search, setSearch] = useState('')
@@ -458,7 +474,6 @@ const REVENU_PRESETS = [
 
 interface SavedSource { id: string; name: string; type: 'fixed' | 'variable' }
 
-// ─── Revenus ──────────────────────────────────────────────────────────────────
 function RevenusSection() {
   const [revenus, setRevenus] = useState<RevenuSource[]>([])
   const [savedSources, setSavedSources] = useState<SavedSource[]>([])
@@ -714,7 +729,6 @@ async function deleteFacturePayment(id: string): Promise<void> {
   await supabase.from('facture_payment_history').delete().eq('id', id)
 }
 
-// ─── Factures ─────────────────────────────────────────────────────────────────
 function FacturesSection() {
   const [factures, setFactures] = useState<Facture[]>([])
   const [loading, setLoading] = useState(true)
@@ -905,7 +919,6 @@ function FacturesSection() {
   return (
     <div className="space-y-3">
       <CoachTip message={tip} />
-
       <div className="flex items-start gap-3 p-3 bg-yellow-50 border border-yellow-200 rounded-2xl">
         <span className="text-base">💡</span>
         <p className="text-xs text-yellow-800 leading-relaxed">
@@ -1022,11 +1035,6 @@ function FacturesSection() {
               <div>
                 <label className="label">Jour d'échéance du mois</label>
                 <input className="input" type="number" min="1" max="31" placeholder="Ex: 15 (= le 15 de chaque mois)" value={form.dueDayOfMonth} onChange={e => setForm(f => ({ ...f, dueDayOfMonth: e.target.value }))}/>
-                {form.dueDayOfMonth && (
-                  <p className="text-xs text-yellow-700 mt-1">
-                    📅 Ce mois : échéance le {computeDueDate(form.dueDayOfMonth, ym) ? new Date(computeDueDate(form.dueDayOfMonth, ym)!).toLocaleDateString('fr-FR') : '—'}
-                  </p>
-                )}
               </div>
             ) : (
               <div><label className="label">Date d'échéance (optionnel)</label>
@@ -1062,7 +1070,6 @@ function FacturesSection() {
   )
 }
 
-// ─── FactureCard ──────────────────────────────────────────────────────────────
 function FactureCard({
   facture: f, onEdit, onDelete, payments, showHistory, historyLoading,
   onToggleHistory, payingId, payAmount, payDate, payNote,
@@ -1201,7 +1208,7 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
       const { data: dh } = await supabase.from('debt_payment_history').select('amount, category, debt_id, paid_at, note')
         .in('debt_id', debtIds.length > 0 ? debtIds : ['00000000-0000-0000-0000-000000000000'])
         .gte('paid_at', `${ym}-01`).lte('paid_at', lastDate)
-      setDebtPayments((dh ?? []).map(r => ({ category: r.category ?? 'Autre', amount: Number(r.amount), debtId: r.debt_id, paidAt: r.paid_at, note: r.note })))
+      setDebtPayments((dh ?? []).map(r => ({ category: r.category ?? 'Autre', amount: Number(r.amount) })))
     }
     load().finally(() => setLoading(false))
   }, [ym])
@@ -1225,8 +1232,6 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
     ? `⚠️ Tu dépasses le plafond en : ${overBudget.map(b => b.name).join(', ')}. Réduis ces dépenses !`
     : budgets.length > 0 ? `✅ Tous tes budgets sont respectés ce mois-ci. Continue !`
     : `Crée un plafond par catégorie pour mieux contrôler où va ton argent.`
-
-  const usedCategories = budgets.filter(b => !editingBudget || b.id !== editingBudget.id).map(b => b.name)
 
   function handleAddCustom(cat: string) {
     const updated = [...customCategories, cat]
@@ -1260,7 +1265,7 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
       <div className="flex items-start gap-3 p-3 bg-orange-50 border border-orange-200 rounded-2xl">
         <span className="text-lg">💡</span>
         <p className="text-xs text-orange-700 leading-relaxed">
-          <strong>Plafonds de dépenses par catégorie.</strong> Fixe une limite mensuelle pour chaque poste (alimentation, transport...). Les dépenses ponctuelles, charges récurrentes payées et remboursements de dettes s'ajoutent automatiquement.
+          <strong>Plafonds de dépenses par catégorie.</strong> Fixe une limite mensuelle pour chaque poste.
         </p>
       </div>
       <button onClick={openAdd} className="btn-primary w-full gap-2" style={{ backgroundColor: '#F97316' }}><Plus size={18}/> Nouveau plafond</button>
@@ -1273,10 +1278,7 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
         const over  = spent > b.limit
         const near  = pct >= 80 && !over
         const isExpanded = expandedBudgets.has(b.id)
-        const recurringContrib = recurringPayments.filter(r => { const pay = getPaymentForMonth(r, ym); return pay.paid && RECURRING_TO_BUDGET[r.category] === b.name })
-        const debtContrib = (debtPayments as any[]).filter(dp => dp.category === b.name)
         const txContrib = transactions.filter(t => t.type === 'expense' && t.date.startsWith(ym) && t.category === b.name)
-        const hasDetails = recurringContrib.length > 0 || debtContrib.length > 0 || txContrib.length > 0
 
         return (
           <div key={b.id} className="card space-y-3">
@@ -1299,32 +1301,6 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
               <span className={`font-mono font-bold ${over ? 'text-danger' : 'text-ink'}`}>{formatAmount(spent)} dépensés</span>
               <span className="font-mono text-ink-soft">plafond : {formatAmount(b.limit)}</span>
             </div>
-            {hasDetails && (
-              <button onClick={() => toggleExpanded(b.id)} className="flex items-center gap-1.5 text-xs text-ink-soft hover:text-ink transition-colors">
-                {isExpanded ? <ChevronUp size={14}/> : <ChevronDown size={14}/>}
-                {isExpanded ? 'Voir moins' : 'Voir plus'}
-              </button>
-            )}
-            {isExpanded && hasDetails && (
-              <div className="pt-1 border-t border-mist-dark space-y-1">
-                {txContrib.map(t => (
-                  <div key={t.id} className="flex items-center justify-between text-xs text-ink-soft">
-                    <span>💸 {t.note || t.category} <span className="text-mist-dark">· {new Date(t.date).toLocaleDateString('fr-FR')}</span></span>
-                    <span className="font-mono">{formatAmount(t.amount)}</span>
-                  </div>
-                ))}
-                {recurringContrib.map(r => {
-                  const pay = getPaymentForMonth(r, ym)
-                  return <div key={r.id} className="flex items-center justify-between text-xs text-ink-soft"><span>🔄 {r.name}</span><span className="font-mono">{formatAmount(pay.amount)}</span></div>
-                })}
-                {debtContrib.map((dp: any, i: number) => (
-                  <div key={i} className="flex items-center justify-between text-xs text-ink-soft">
-                    <span>💳 Remboursement{dp.note && <span className="italic"> · {dp.note}</span>}{dp.paidAt && <span className="text-mist-dark"> · {new Date(dp.paidAt).toLocaleDateString('fr-FR')}</span>}</span>
-                    <span className="font-mono">{formatAmount(dp.amount)}</span>
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
         )
       })}
@@ -1338,18 +1314,7 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
             </div>
             <div>
               <label className="label">Catégorie de dépense</label>
-              {editingBudget ? (
-                <select className="input" value={form.name} onChange={e => setForm(f => ({...f, name: e.target.value}))}>
-                  {getAllCategories(customCategories).map(c => <option key={c}>{c}</option>)}
-                </select>
-              ) : (
-                <>
-                  <CategoryManager value={form.name} onChange={v => setForm(f => ({...f, name: v}))} customCategories={customCategories} onAddCustom={handleAddCustom} context="budget"/>
-                  {form.name && budgets.some(b => b.name === form.name) && (
-                    <p className="text-xs text-danger mt-1 font-semibold">⚠️ Un plafond existe déjà pour cette catégorie</p>
-                  )}
-                </>
-              )}
+              <CategoryManager value={form.name} onChange={v => setForm(f => ({...f, name: v}))} customCategories={customCategories} onAddCustom={handleAddCustom} context="budget"/>
             </div>
             <div><label className="label">Plafond mensuel (Rs)</label><input className="input" type="number" placeholder="Ex: 15000" value={form.limit} onChange={e => setForm(f => ({...f, limit: e.target.value}))}/></div>
             <div>
@@ -1358,7 +1323,7 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
                 {COLORS.map(c => <button key={c} style={{ backgroundColor: c }} className={`w-10 h-10 rounded-2xl border-2 transition-transform ${form.color === c ? 'border-ink scale-110' : 'border-transparent'}`} onClick={() => setForm(f => ({...f, color: c}))}/>)}
               </div>
             </div>
-            <button className="btn-primary w-full py-4" onClick={handleSave} style={{ backgroundColor: '#F97316' }} disabled={!editingBudget && budgets.some(b => b.name === form.name)}>
+            <button className="btn-primary w-full py-4" onClick={handleSave} style={{ backgroundColor: '#F97316' }}>
               {editingBudget ? 'Enregistrer les modifications' : 'Créer le plafond'}
             </button>
           </div>
@@ -1368,7 +1333,7 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
   )
 }
 
-// ─── Helpers dettes ───────────────────────────────────────────────────────────
+// ─── Dettes helpers ───────────────────────────────────────────────────────────
 function daysUntil(dateStr: string): number {
   const now = new Date(); now.setHours(0,0,0,0)
   const target = new Date(dateStr); target.setHours(0,0,0,0)
@@ -1393,11 +1358,11 @@ async function updatePayment(id: string, amount: number, date: string, note?: st
 async function deletePayment(id: string): Promise<void> {
   await supabase.from('debt_payment_history').delete().eq('id', id)
 }
-async function fetchCreditors(): Promise<Creditor[]> {
+async function fetchCreditors(): Promise<{ id: string; name: string }[]> {
   const { data } = await supabase.from('debt_creditors').select('*').order('name')
   return (data ?? []).map(r => ({ id: r.id, name: r.name }))
 }
-async function saveCreditor(name: string): Promise<Creditor> {
+async function saveCreditor(name: string): Promise<{ id: string; name: string }> {
   const { data: { user } } = await supabase.auth.getUser()
   const { data, error } = await supabase.from('debt_creditors').insert({ name, user_id: user!.id }).select().single()
   if (error) throw error
@@ -1407,9 +1372,8 @@ async function deleteCreditor(id: string): Promise<void> {
   await supabase.from('debt_creditors').delete().eq('id', id)
 }
 
-// ─── Creditor Picker ──────────────────────────────────────────────────────────
 function CreditorPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  const [creditors, setCreditors] = useState<Creditor[]>([])
+  const [creditors, setCreditors] = useState<{ id: string; name: string }[]>([])
   const [open, setOpen] = useState(false)
   const [newName, setNewName] = useState('')
   const [adding, setAdding] = useState(false)
@@ -1429,7 +1393,7 @@ function CreditorPicker({ value, onChange }: { value: string; onChange: (v: stri
     setCreditors(prev => [...prev, c].sort((a, b) => a.name.localeCompare(b.name)))
     onChange(c.name); setNewName(''); setOpen(false); setAdding(false)
   }
-  async function handleDelete(c: Creditor, e: React.MouseEvent) {
+  async function handleDelete(c: { id: string; name: string }, e: React.MouseEvent) {
     e.stopPropagation()
     await deleteCreditor(c.id)
     setCreditors(prev => prev.filter(x => x.id !== c.id))
@@ -1476,7 +1440,6 @@ function CreditorPicker({ value, onChange }: { value: string; onChange: (v: stri
   )
 }
 
-// ─── Dettes ───────────────────────────────────────────────────────────────────
 function DettesSection() {
   const [debts, setDebts] = useState<Debt[]>([])
   const [loading, setLoading] = useState(true)
@@ -1670,7 +1633,7 @@ function DettesSection() {
       <div className="flex items-start gap-3 p-3 bg-red-50 border border-red-100 rounded-2xl">
         <span className="text-base">💡</span>
         <p className="text-xs text-red-700 leading-relaxed">
-          <strong>Dettes ≠ Factures.</strong> Une dette (crédit voiture, prêt bancaire...) se rembourse <strong>progressivement sur des mois ou des années</strong>, avec un solde qui diminue. Une facture mensuelle → carte <strong>Factures</strong>.
+          <strong>Dettes ≠ Factures.</strong> Une dette se rembourse progressivement sur plusieurs mois/années.
         </p>
       </div>
 
@@ -1725,7 +1688,7 @@ function DettesSection() {
       <button onClick={() => { resetForm(); setShowForm(true) }} className="btn-primary w-full gap-2" style={{ backgroundColor: '#DC2626' }}><Plus size={18}/> Ajouter une dette / prêt</button>
 
       {debts.length === 0 ? (
-        <div className="card text-center py-10"><p className="text-3xl mb-2">🤝</p><p className="font-semibold text-ink">Aucune dette enregistrée</p><p className="text-sm text-ink-soft mt-1">Crédit voiture, prêt bancaire, argent dû à un ami...</p></div>
+        <div className="card text-center py-10"><p className="text-3xl mb-2">🤝</p><p className="font-semibold text-ink">Aucune dette enregistrée</p></div>
       ) : Object.entries(groupedDebts).map(([personName, personDebts]) => {
         const isGrouped = personDebts.length > 1
         const isExpanded = expandedCreditors.has(personName)
@@ -1753,7 +1716,6 @@ function DettesSection() {
 
             {(!isGrouped || isExpanded) && personDebts.map(d => {
               const paidPct      = d.amount > 0 ? Math.round(((d.amount - d.remaining) / d.amount) * 100) : 0
-              const monthsLeft   = d.minimumPayment > 0 ? Math.ceil(d.remaining / d.minimumPayment) : null
               const isRecurring  = (d as any).recurring ?? false
               const debtCategory = (d as any).category ?? 'Autre'
               const endDate      = projectedEndDate(d.remaining, d.minimumPayment)
@@ -1786,7 +1748,6 @@ function DettesSection() {
                         {d.minimumPayment > 0 && (
                           <span className="text-xs text-ink-soft">
                             Min. <span className="font-semibold text-ink">{formatAmount(d.minimumPayment)}</span>/mois
-                            {monthsLeft && !isRecurring && <span className="text-warning font-medium"> · ~{monthsLeft} mois</span>}
                           </span>
                         )}
                         {endDate && !isRecurring && <span className="text-xs text-ink-soft">Fin : <span className="font-semibold text-ink">{endDate}</span></span>}
@@ -1856,7 +1817,6 @@ function DettesSection() {
                   {payingId === d.id ? (
                     <div className="space-y-2 p-3 bg-danger-light rounded-2xl">
                       <p className="text-xs font-bold text-danger uppercase tracking-wide">Enregistrer un remboursement</p>
-                      <p className="text-xs text-ink-soft">Catégorie : <strong className="text-ink">{debtCategory}</strong></p>
                       <input className="input bg-white" type="number" placeholder="Montant (Rs)" value={payAmount} onChange={e => setPayAmount(e.target.value)} autoFocus/>
                       <input className="input bg-white" type="date" value={payDate} onChange={e => setPayDate(e.target.value)}/>
                       <input className="input bg-white" placeholder="📝 Note (optionnel)" value={payNote} onChange={e => setPayNote(e.target.value)}/>
@@ -1924,9 +1884,8 @@ function DettesSection() {
               <CreditorPicker value={form.person} onChange={v => setForm(f => ({...f, person: v}))}/>
             </div>
             <div>
-              <label className="label">Catégorie <span className="text-danger">*</span></label>
+              <label className="label">Catégorie</label>
               <CategoryManager value={form.category} onChange={v => setForm(f => ({...f, category: v}))} customCategories={customCategories} onAddCustom={handleAddCustom} context="dettes"/>
-              <p className="text-xs text-ink-soft mt-1">Les remboursements s'ajouteront au budget de cette catégorie</p>
             </div>
             <div><label className="label">Montant total (Rs)</label><input className="input" type="number" placeholder="Ex: 150000" value={form.amount} onChange={e => setForm(f => ({...f, amount: e.target.value}))}/></div>
             <div><label className="label">Remboursement minimum / mois (Rs)</label><input className="input" type="number" placeholder="Ex: 3000" value={form.minimumPayment} onChange={e => setForm(f => ({...f, minimumPayment: e.target.value}))}/></div>
@@ -1982,7 +1941,6 @@ function suggestedMonthly(remaining: number, targetDate: string): number | null 
   return Math.ceil(remaining / months)
 }
 
-// ─── Épargne ──────────────────────────────────────────────────────────────────
 function EpargneSection() {
   const [goals, setGoals] = useState<SavingsGoal[]>([])
   const [loading, setLoading] = useState(true)
@@ -2087,30 +2045,6 @@ function EpargneSection() {
     await reloadDeposits(d.goalId)
   }
 
-  function getGoalStats(g: SavingsGoal, deposits: SavingsDeposit[]) {
-    if (!deposits || deposits.length === 0) return { avgMonthly: 0, lastDeposit: null, monthsActive: 0 }
-    const contributions = deposits.filter(d => !d.isWithdrawal)
-    if (contributions.length === 0) return { avgMonthly: 0, lastDeposit: deposits[0] ?? null, monthsActive: 0 }
-    const oldest = new Date(contributions[contributions.length - 1].depositedAt)
-    const monthsActive = Math.max(1, monthsBetween(oldest, new Date()) + 1)
-    const totalContributed = contributions.reduce((s, d) => s + d.amount, 0)
-    return { avgMonthly: Math.round(totalContributed / monthsActive), lastDeposit: deposits[0] ?? null, monthsActive }
-  }
-
-  function getPaceBadge(g: SavingsGoal): React.ReactNode {
-    const targetDate = (g as any).targetDate
-    if (!targetDate || g.target <= 0) return null
-    const monthsLeft = monthsBetween(new Date(), new Date(targetDate))
-    if (monthsLeft <= 0) return <span className="text-xs bg-danger-light text-danger px-2 py-0.5 rounded-full font-bold">⚠️ Date dépassée</span>
-    const needed = (g.target - g.saved) / monthsLeft
-    const deposits = depositsMap[g.id]
-    if (!deposits || deposits.length === 0) return null
-    const { avgMonthly } = getGoalStats(g, deposits)
-    if (avgMonthly === 0) return null
-    if (avgMonthly >= needed) return <span className="text-xs bg-positive-light text-positive px-2 py-0.5 rounded-full font-bold">🔥 En avance !</span>
-    return <span className="text-xs bg-warning-light text-warning px-2 py-0.5 rounded-full font-bold">⚠️ En retard</span>
-  }
-
   if (loading) return <div className="card text-center py-8 text-ink-soft">Chargement...</div>
 
   return (
@@ -2120,7 +2054,7 @@ function EpargneSection() {
       <div className="flex items-start gap-3 p-3 bg-green-50 border border-green-100 rounded-2xl">
         <span className="text-base">💡</span>
         <p className="text-xs text-green-700 leading-relaxed">
-          <strong>Objectifs d'épargne à long terme.</strong> Fonds d'urgence, vacances, achat voiture... Règle d'or : épargne d'abord, dépense ensuite. Les objectifs sont triés par avancement.
+          <strong>Objectifs d'épargne à long terme.</strong> Règle d'or : épargne d'abord, dépense ensuite.
         </p>
       </div>
 
@@ -2128,14 +2062,13 @@ function EpargneSection() {
         <div className="card border border-positive/20 text-center">
           <p className="text-xs font-bold text-positive uppercase tracking-wide">Total épargné</p>
           <p className="text-2xl font-bold font-mono text-positive mt-1">{formatAmount(totalSaved)}</p>
-          <p className="text-xs text-ink-soft mt-1">sur {goals.length} objectif{goals.length > 1 ? 's' : ''}</p>
         </div>
       )}
 
       <button onClick={() => setShowForm(true)} className="btn-primary w-full gap-2" style={{ backgroundColor: '#16A34A' }}><Plus size={18}/> Nouvel objectif d'épargne</button>
 
       {goals.length === 0 ? (
-        <div className="card text-center py-10"><p className="text-3xl mb-2">🐖</p><p className="font-semibold text-ink">Aucun objectif d'épargne</p><p className="text-sm text-ink-soft mt-1">Fonds d'urgence, vacances, voiture...</p></div>
+        <div className="card text-center py-10"><p className="text-3xl mb-2">🐖</p><p className="font-semibold text-ink">Aucun objectif d'épargne</p></div>
       ) : sortedGoals.map(g => {
         const pct  = Math.min(100, g.target > 0 ? (g.saved / g.target) * 100 : 0)
         const done = g.saved >= g.target
@@ -2143,8 +2076,6 @@ function EpargneSection() {
         const suggested = suggestedMonthly(g.target - g.saved, targetDate)
         const showHistory = openHistoryId === g.id
         const deposits = depositsMap[g.id] ?? []
-        const { avgMonthly, lastDeposit } = getGoalStats(g, deposits)
-        const paceBadge = getPaceBadge(g)
 
         return (
           <div key={g.id} className={`card space-y-3 ${done ? 'border-2 border-positive/40' : ''}`}>
@@ -2154,10 +2085,9 @@ function EpargneSection() {
                 <div className="min-w-0">
                   <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
                     {done && <span className="text-xs bg-positive text-white px-2 py-0.5 rounded-full font-bold">✅ Objectif atteint !</span>}
-                    {!done && paceBadge}
                   </div>
                   <p className="font-bold text-ink leading-tight">{g.name}</p>
-                  {targetDate && <p className="text-xs text-ink-soft mt-0.5">🎯 Objectif : {new Date(targetDate).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })}</p>}
+                  {targetDate && <p className="text-xs text-ink-soft mt-0.5">🎯 {new Date(targetDate).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })}</p>}
                   {!done && <p className="text-xs text-ink-soft">{formatAmount(g.target - g.saved)} restant</p>}
                 </div>
               </div>
@@ -2168,55 +2098,12 @@ function EpargneSection() {
             </div>
 
             <div className="w-full h-3 bg-mist-dark rounded-full overflow-hidden">
-              <div className="h-full rounded-full transition-all duration-700" style={{ width: `${pct}%`, backgroundColor: done ? '#16A34A' : '#2563EB', opacity: done ? 1 : 0.7 + pct * 0.003 }}/>
+              <div className="h-full rounded-full transition-all duration-700" style={{ width: `${pct}%`, backgroundColor: done ? '#16A34A' : '#2563EB' }}/>
             </div>
             <div className="flex justify-between text-xs">
               <span className="font-mono font-bold text-accent">{formatAmount(g.saved)}</span>
               <span className="font-mono text-ink-soft">{pct.toFixed(0)}% · objectif {formatAmount(g.target)}</span>
             </div>
-
-            {depositsMap[g.id] && depositsMap[g.id].length > 0 && (
-              <div className="flex gap-3 text-xs text-ink-soft bg-mist rounded-xl px-3 py-2">
-                {avgMonthly > 0 && <span>📊 Moy. <strong className="text-ink">{formatAmount(avgMonthly)}</strong>/mois</span>}
-                {lastDeposit && <span>🕐 Dernier : <strong className="text-ink">{new Date(lastDeposit.depositedAt).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}</strong></span>}
-              </div>
-            )}
-
-            {suggested && !done && (
-              <div className="flex items-center gap-2 bg-blue-50 border border-blue-100 rounded-xl px-3 py-2">
-                <span className="text-sm">💡</span>
-                <p className="text-xs text-blue-700">Mets de côté <strong>{formatAmount(suggested)}/mois</strong> pour atteindre ton objectif à temps</p>
-              </div>
-            )}
-
-            {showHistory && (
-              <div className="bg-mist rounded-2xl overflow-hidden">
-                <div className="px-3 py-2.5 border-b border-mist-dark flex items-center justify-between">
-                  <p className="text-xs font-bold text-ink-soft uppercase tracking-wide">Historique</p>
-                  {deposits.length > 0 && <span className="text-xs font-mono font-bold text-positive">+{formatAmount(deposits.filter(d => !d.isWithdrawal).reduce((s, d) => s + d.amount, 0))}</span>}
-                </div>
-                {historyLoading && !depositsMap[g.id] ? (
-                  <p className="text-xs text-ink-soft text-center py-4">Chargement...</p>
-                ) : deposits.length === 0 ? (
-                  <p className="text-xs text-ink-soft text-center italic py-4">Aucun versement enregistré</p>
-                ) : deposits.map(dep => (
-                  <div key={dep.id} className="flex items-center justify-between px-3 py-2.5 border-b border-mist-dark last:border-0 hover:bg-white transition-colors">
-                    <div className="flex-1 min-w-0">
-                      <p className={`text-xs font-mono font-bold ${dep.isWithdrawal ? 'text-danger' : 'text-positive'}`}>
-                        {dep.isWithdrawal ? '−' : '+'}{formatAmount(dep.amount)}
-                        {dep.isWithdrawal && <span className="ml-1 text-xs font-normal text-ink-soft">(retrait)</span>}
-                      </p>
-                      <p className="text-xs text-ink-soft">{new Date(dep.depositedAt).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })}</p>
-                      {dep.note && <p className="text-xs text-ink-soft italic truncate">{dep.note}</p>}
-                    </div>
-                    <div className="flex gap-1 ml-2 flex-shrink-0">
-                      <button onClick={() => { setEditingDeposit(dep); setEditDepAmount(String(dep.amount)); setEditDepNote(dep.note || ''); setEditDepDate(dep.depositedAt) }} className="w-7 h-7 rounded-lg bg-white hover:bg-accent-light text-ink-soft hover:text-accent flex items-center justify-center"><Pencil size={12}/></button>
-                      <button onClick={() => handleDeleteDeposit(dep)} className="w-7 h-7 rounded-lg bg-white hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center"><Trash2 size={12}/></button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
 
             {depositGoalId === g.id ? (
               <div className="space-y-2 p-3 rounded-2xl" style={{ backgroundColor: isWithdrawal ? '#FEF2F2' : '#F0FDF4' }}>
@@ -2226,7 +2113,7 @@ function EpargneSection() {
                 </div>
                 <input className="input bg-white" type="number" placeholder="Montant (Rs)" value={depositAmount} onChange={e => setDepositAmount(e.target.value)} autoFocus/>
                 <input className="input bg-white" type="date" value={depositDate} onChange={e => setDepositDate(e.target.value)}/>
-                <input className="input bg-white" placeholder="📝 Note (optionnel, ex: Bonus janvier)" value={depositNote} onChange={e => setDepositNote(e.target.value)}/>
+                <input className="input bg-white" placeholder="📝 Note (optionnel)" value={depositNote} onChange={e => setDepositNote(e.target.value)}/>
                 <div className="flex gap-2">
                   <button className="btn-ghost flex-1 bg-white" onClick={() => { setDepositGoalId(null); setDepositAmount(''); setDepositNote(''); setIsWithdrawal(false) }}>Annuler</button>
                   <button className="btn-primary flex-1" style={{ backgroundColor: isWithdrawal ? '#DC2626' : '#16A34A' }} onClick={handleDeposit}>Enregistrer</button>
@@ -2253,28 +2140,10 @@ function EpargneSection() {
               <h2 className="text-lg font-bold text-ink">Supprimer l'objectif ?</h2>
               <button className="btn-icon bg-mist" onClick={() => setConfirmDeleteId(null)}><X size={20}/></button>
             </div>
-            <p className="text-sm text-ink-soft">Cette action est irréversible. Tout l'historique sera perdu.</p>
+            <p className="text-sm text-ink-soft">Cette action est irréversible.</p>
             <div className="flex gap-2 mt-3">
               <button className="btn-ghost flex-1" onClick={() => setConfirmDeleteId(null)}>Annuler</button>
               <button className="btn-primary flex-1" style={{ backgroundColor: '#DC2626' }} onClick={async () => { await deleteSavingsGoal(confirmDeleteId); setGoals(prev => prev.filter(g => g.id !== confirmDeleteId)); setConfirmDeleteId(null) }}>Supprimer</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {editingDeposit && (
-        <div className="bottom-sheet bg-black/40">
-          <div className="bottom-sheet-content">
-            <div className="flex items-center justify-between mb-2">
-              <h2 className="text-lg font-bold text-ink">Modifier le versement</h2>
-              <button className="btn-icon bg-mist" onClick={() => setEditingDeposit(null)}><X size={20}/></button>
-            </div>
-            <div><label className="label">Montant (Rs)</label><input className="input" type="number" value={editDepAmount} onChange={e => setEditDepAmount(e.target.value)}/></div>
-            <div><label className="label">Date</label><input className="input" type="date" value={editDepDate} onChange={e => setEditDepDate(e.target.value)}/></div>
-            <div><label className="label">Note (optionnel)</label><input className="input" placeholder="Ex: Bonus janvier..." value={editDepNote} onChange={e => setEditDepNote(e.target.value)}/></div>
-            <div className="flex gap-2">
-              <button className="btn-ghost flex-1" onClick={() => setEditingDeposit(null)}>Annuler</button>
-              <button className="btn-primary flex-1" style={{ backgroundColor: '#16A34A' }} onClick={handleEditDeposit}>Enregistrer</button>
             </div>
           </div>
         </div>
@@ -2290,15 +2159,7 @@ function EpargneSection() {
             <div><label className="label">Icône</label><div className="flex gap-2 flex-wrap">{EMOJIS.map(e => (<button key={e} className={`text-2xl p-2 rounded-2xl transition-colors ${form.emoji === e ? 'bg-accent-light' : 'bg-mist'}`} onClick={() => setForm(f => ({...f, emoji: e}))}>{e}</button>))}</div></div>
             <div><label className="label">Nom de l'objectif</label><input className="input" placeholder="Ex: Fonds d'urgence, Vacances..." value={form.name} onChange={e => setForm(f => ({...f, name: e.target.value}))}/></div>
             <div><label className="label">Montant cible (Rs)</label><input className="input" type="number" placeholder="Ex: 50000" value={form.target} onChange={e => setForm(f => ({...f, target: e.target.value}))}/></div>
-            <div>
-              <label className="label">Date cible (optionnel)</label>
-              <input className="input" type="date" value={form.targetDate} onChange={e => setForm(f => ({...f, targetDate: e.target.value}))}/>
-              {form.targetDate && form.target && (
-                <p className="text-xs text-blue-600 mt-1">
-                  💡 Tu devras mettre de côté environ <strong>{formatAmount(suggestedMonthly(Number(form.target), form.targetDate) ?? 0)}/mois</strong>
-                </p>
-              )}
-            </div>
+            <div><label className="label">Date cible (optionnel)</label><input className="input" type="date" value={form.targetDate} onChange={e => setForm(f => ({...f, targetDate: e.target.value}))}/></div>
             <button className="btn-primary w-full py-4" onClick={handleAdd} style={{ backgroundColor: '#16A34A' }}>Créer l'objectif</button>
           </div>
         </div>
