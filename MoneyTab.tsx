@@ -142,7 +142,7 @@ const SUBTABS = [
   },
   {
     id: 'epargne' as SubTab,
-    emoji: '🐖', label: 'Épargne',
+    emoji: '🪙', label: 'Épargne',
     shortDesc: 'Mes objectifs d\'économies',
     fullDesc: 'Crée des objectifs d\'épargne avec un montant cible. Règle d\'or : épargne d\'abord, dépense ensuite.',
     color: 'bg-green-50 border-green-200 text-green-700',
