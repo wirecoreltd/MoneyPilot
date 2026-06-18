@@ -290,6 +290,9 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
   const [totalFactures, setTotalFactures] = useState(0)
   const [debts, setDebts] = useState<Debt[]>([])
   const [projects, setProjects] = useState<Project[]>([])
+  // ── Dettes du mois (KPI) ──────────────────────────────────────────────────
+  const [paidTotal, setPaidTotal] = useState(0)
+  const [totalDue, setTotalDue] = useState(0)
   const chatEndRef = useRef<HTMLDivElement>(null)
 
   const ym = currentYearMonth()
@@ -314,11 +317,26 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
 
   useEffect(() => {
     getSavings().then(gs => setTotalSavings(gs.reduce((s, g) => s + g.saved, 0)))
-    getDebts().then(ds => {
+    getDebts().then(async ds => {
       setDebts(ds)
       setTotalDebt(ds.filter(d => d.type === 'owe').reduce((s, d) => s + d.remaining, 0))
+
+      // ── Dettes du mois ──
+      const owedDebts = ds.filter(d => d.type === 'owe' && d.minimumPayment > 0)
+      const due = owedDebts.reduce((s, d) => s + d.minimumPayment, 0)
+      setTotalDue(due)
+      if (owedDebts.length > 0) {
+        const { data } = await supabase
+          .from('debt_payment_checks')
+          .select('amount, paid')
+          .in('debt_id', owedDebts.map(d => d.id))
+          .eq('month', ym)
+        const paid = (data ?? []).filter(c => c.paid).reduce((s, c) => s + Number(c.amount), 0)
+        setPaidTotal(paid)
+      }
     })
     getProjects().then(setProjects)
+
     async function loadFactures() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
@@ -387,7 +405,7 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
       action: () => onGoToMoney('factures'),
     },
     {
-      label: 'Dette restante', value: formatAmount(totalDebt),
+      label: 'Dettes du mois', value: `${formatAmount(paidTotal)} / ${formatAmount(totalDue)}`,
       icon: '💳', bg: 'bg-red-50', color: 'text-red-700', border: 'border-red-100',
       action: () => onGoToMoney('dettes'),
     },
@@ -415,7 +433,7 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
         <p className="text-sm text-purple-800 leading-snug">{dailyThought}</p>
       </div>
 
-      {/* ── KPIs cliquables ───────────────────────────────────────────────── */}
+      {/* ── KPIs cliquables (grille 2 colonnes) ──────────────────────────── */}
       <div className="grid grid-cols-2 gap-3">
         {kpis.map((kpi) => (
           <button
@@ -434,6 +452,47 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
           </button>
         ))}
       </div>
+
+      {/* ── KPI Projets (pleine largeur, sous la grille) ─────────────────── */}
+      {projects.length > 0 && (
+        <button
+          onClick={onGoToProjects}
+          className="bg-blue-50 border border-blue-100 rounded-2xl p-4 text-left w-full active:scale-95 transition-all"
+        >
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-1.5">
+              <span className="text-base">🎯</span>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-blue-700">
+                Projets ({projects.length})
+              </p>
+            </div>
+            <ChevronRight size={12} className="text-blue-700 opacity-50" />
+          </div>
+          <div className="space-y-2">
+            {projects.slice(0, 3).map(p => {
+              const pct = Math.min(100, (p.savedAmount / p.targetAmount) * 100)
+              return (
+                <div key={p.id} className="flex items-center gap-2">
+                  <span className="text-sm w-5">{p.emoji}</span>
+                  <p className="text-xs text-blue-800 font-medium flex-1 truncate">{p.name}</p>
+                  <div className="w-20 h-1.5 bg-blue-100 rounded-full overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-blue-500"
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                  <span className="text-[10px] font-mono text-blue-600 w-8 text-right">{pct.toFixed(0)}%</span>
+                </div>
+              )
+            })}
+            {projects.length > 3 && (
+              <p className="text-[10px] text-blue-500 text-center">
+                +{projects.length - 3} autre{projects.length - 3 > 1 ? 's' : ''}
+              </p>
+            )}
+          </div>
+        </button>
+      )}
 
       {/* ── Situation financière ─────────────────────────────────────────── */}
       <div className="card-lg">
