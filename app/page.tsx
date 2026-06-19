@@ -72,23 +72,24 @@ export default function Page() {
   return (
     <div className="min-h-screen bg-mist">
       <BottomNav active={tab} onChange={setTab} />
-      <header className="hidden md:flex sticky top-0 z-40 bg-white border-b border-mist-dark px-8 py-4 justify-between items-center">
-        <span className="text-xl font-bold">
-          Money<span className="text-accent">Pilot</span>
-        </span>
-        <div className="flex items-center gap-4">
-          <span>👋 {profile.firstName}</span>
-          <button
-            onClick={async () => {
-              await supabase.auth.signOut()
-              window.location.href = '/login'
-            }}
-            className="text-red-600 font-semibold"
-          >
-            🚪 Déconnexion
-          </button>
-        </div>
-      </header>
+        <header className="flex md:hidden sticky top-0 z-30 bg-white border-b border-mist-dark px-4 py-3 justify-between items-center">
+      <span className="text-lg font-bold">
+        Money<span className="text-accent">Pilot</span>
+      </span>
+      <div className="flex items-center gap-3">
+        <span className="text-sm font-medium">👋 {profile.firstName}</span>
+        <button
+          onClick={async () => {
+            await supabase.auth.signOut()
+            window.location.href = '/login'
+          }}
+          className="text-red-600 font-semibold text-sm flex items-center gap-1"
+        >
+          <span>↪️</span>
+          <span className="hidden sm:inline">Déconnexion</span>
+        </button>
+      </div>
+    </header>
       <main className="md:ml-60 pb-28 md:pb-8 px-4 py-4 md:px-8 md:py-8 max-w-2xl mx-auto md:mx-0">
         {tab === 'home'    && (
           <HomeTab
