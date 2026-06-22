@@ -632,6 +632,9 @@ function RevenusSection() {
     const [{ data: inc }, { data: src }] = await Promise.all([
       supabase.from('monthly_incomes').select('*').eq('user_id', user!.id).eq('month', ym).order('created_at', { ascending: true }),
       supabase.from('income_sources').select('*').eq('user_id', user!.id).order('name'),
+      console.log('YM', ym)
+console.log('USER', user?.id)
+console.log('INCOMES', inc)
     ])
     const incData: RevenuSource[] = (inc ?? []).map(r => ({
       id: r.id, label: r.label, amount: Number(r.amount),
