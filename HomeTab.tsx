@@ -144,33 +144,9 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
   const ym = currentYearMonth()
   const monthTxs = transactions.filter(t => t.date.startsWith(ym))
   const income = monthTxs.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0)
-  const expenses = monthTxs.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0)
-
-  console.log('YM', ym)
-console.log(
-  'TRANSACTIONS TYPES',
-  transactions.map(t => ({
-    type: t.type,
-    amount: t.amount,
-    category: t.category
-  }))
-)
-console.log('MONTH TXS', monthTxs)
-console.log('INCOME TXS', monthTxs.filter(t => t.type === 'income'))
-console.log('INCOME KPI', income)
-  
-console.table(
-  transactions.map(t => ({
-    id: t.id,
-    type: t.type,
-    amount: t.amount,
-    category: t.category,
-    date: t.date
-  }))
-)
-  
+  const expenses = monthTxs.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0)   
   const totalTransactions = expenses
-  const balance = income - expenses
+  const balance = monthlyIncome - expenses
   const recent = transactions.slice(0, 5)
   const health = computeHealthScore(transactions, [], [], [])
   const plan = computeCoachPlan([], [], [], ym)
@@ -264,7 +240,7 @@ console.table(
 
   const kpis = [
     {
-      label: 'Revenus', value: formatAmount(income),
+      label: 'Revenus', value: formatAmount(monthlyIncome),
       icon: '💰', bg: 'bg-green-50', color: 'text-green-700', border: 'border-green-100',
       action: () => onGoToMoney('revenus'),
     },
