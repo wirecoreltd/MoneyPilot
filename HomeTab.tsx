@@ -145,6 +145,14 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
   const monthTxs = transactions.filter(t => t.date.startsWith(ym))
   const income = monthTxs.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0)
   const expenses = monthTxs.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0)
+
+  console.log('YM', ym)
+console.log('ALL TRANSACTIONS', transactions)
+console.log('MONTH TXS', monthTxs)
+console.log('INCOME TXS', monthTxs.filter(t => t.type === 'income'))
+console.log('INCOME KPI', income)
+
+  
   const totalTransactions = expenses
   const balance = income - expenses
   const recent = transactions.slice(0, 5)
