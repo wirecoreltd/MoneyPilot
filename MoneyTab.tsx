@@ -95,8 +95,18 @@ function loadCustomCategories(): string[] {
 function saveCustomCategories(cats: string[]) {
   localStorage.setItem(CUSTOM_CATEGORIES_KEY, JSON.stringify(cats))
 }
+
+// "Autre" always stays last
 function getAllCategories(custom: string[]): string[] {
-  return [...DEFAULT_CATEGORIES, ...custom]
+  const base = DEFAULT_CATEGORIES.filter(c => c !== 'Autre')
+  const customFiltered = custom.filter(c => c !== 'Autre')
+  return [...base, ...customFiltered, 'Autre']
+}
+
+function getFacureCategories(custom: string[] = []): string[] {
+  const base = FACTURE_CATEGORIES.filter(c => c !== 'Autre')
+  const customFiltered = custom.filter(c => c !== 'Autre')
+  return [...base, ...customFiltered, 'Autre']
 }
 
 const SUBTAB_KEY = 'moneyapp_subtab'
@@ -312,6 +322,8 @@ function CategoryManager({
 }
 
 // ─── Transactions ─────────────────────────────────────────────────────────────
+const SHOW_MORE_LIMIT = 3
+
 function TransactionsSection({ transactions, onUpdate }: { transactions: Transaction[]; onUpdate: () => void }) {
   const [showForm, setShowForm] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -319,19 +331,24 @@ function TransactionsSection({ transactions, onUpdate }: { transactions: Transac
   const [selectedMonth, setSelectedMonth] = useState(currentYearMonth())
   const [editingTx, setEditingTx] = useState<Transaction | null>(null)
   const [customCategories, setCustomCategories] = useState<string[]>(loadCustomCategories)
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set())
+  const [showMoreCategories, setShowMoreCategories] = useState<Set<string>>(new Set())
+  const [budgets, setBudgets] = useState<BudgetCategory[]>([])
   const [form, setForm] = useState({
     amount: '', category: EXPENSE_CATEGORIES[0] as any, note: '',
     date: new Date().toISOString().slice(0, 10),
   })
 
+  useEffect(() => { getBudgets().then(setBudgets) }, [])
+
   const monthOptions = Array.from({ length: 12 }, (_, i) => {
     const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - i)
-    const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+    const ymOpt = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
     const label = d.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })
-    return { ym, label }
+    return { ym: ymOpt, label }
   })
 
-  const filtered = transactions
+  const allFiltered = transactions
     .filter(t => t.type === 'expense')
     .filter(t => t.date.startsWith(selectedMonth))
     .filter(t => {
@@ -344,12 +361,43 @@ function TransactionsSection({ transactions, onUpdate }: { transactions: Transac
     .filter(t => t.type === 'expense' && t.date.startsWith(selectedMonth))
     .reduce((s, t) => s + t.amount, 0)
 
-  function handleAddCustom(cat: string) {
-    const updated = [...customCategories, cat]
-    setCustomCategories(updated)
-    saveCustomCategories(updated)
+  // Group by category
+  const grouped: Record<string, Transaction[]> = {}
+  for (const tx of allFiltered) {
+    if (!grouped[tx.category]) grouped[tx.category] = []
+    grouped[tx.category].push(tx)
   }
 
+  // Spent per category (whole month, for budget comparison)
+  const spentPerCat: Record<string, number> = {}
+  transactions.filter(t => t.type === 'expense' && t.date.startsWith(selectedMonth)).forEach(t => {
+    spentPerCat[t.category] = (spentPerCat[t.category] || 0) + t.amount
+  })
+
+  function getBudgetStatus(cat: string): 'over' | 'near' | 'ok' | 'none' {
+    const budget = budgets.find(b => b.name === cat)
+    if (!budget) return 'none'
+    const pct = (spentPerCat[cat] || 0) / budget.limit
+    if (pct > 1) return 'over'
+    if (pct >= 0.8) return 'near'
+    return 'ok'
+  }
+
+  function toggleCategory(cat: string) {
+    setExpandedCategories(prev => {
+      const next = new Set(prev); next.has(cat) ? next.delete(cat) : next.add(cat); return next
+    })
+  }
+  function toggleShowMore(cat: string) {
+    setShowMoreCategories(prev => {
+      const next = new Set(prev); next.has(cat) ? next.delete(cat) : next.add(cat); return next
+    })
+  }
+
+  function handleAddCustom(cat: string) {
+    const updated = [...customCategories, cat]
+    setCustomCategories(updated); saveCustomCategories(updated)
+  }
   function openAdd() {
     setEditingTx(null)
     setForm({ amount: '', category: EXPENSE_CATEGORIES[0] as any, note: '', date: new Date().toISOString().slice(0, 10) })
@@ -364,7 +412,10 @@ function TransactionsSection({ transactions, onUpdate }: { transactions: Transac
     if (!form.amount || Number(form.amount) <= 0) return
     setLoading(true)
     if (editingTx) {
-      await supabase.from('transactions').update({ type: 'expense', amount: Number(form.amount), category: form.category, note: form.note, date: form.date }).eq('id', editingTx.id)
+      await supabase.from('transactions').update({
+        type: 'expense', amount: Number(form.amount),
+        category: form.category, note: form.note, date: form.date,
+      }).eq('id', editingTx.id)
     } else {
       await addTransaction({ type: 'expense', amount: Number(form.amount), category: form.category, note: form.note, date: form.date })
     }
@@ -372,12 +423,16 @@ function TransactionsSection({ transactions, onUpdate }: { transactions: Transac
   }
   async function handleDelete(id: string) { await deleteTransaction(id); onUpdate() }
 
+  const categoryEntries = Object.entries(grouped).sort((a, b) =>
+    b[1].reduce((s, t) => s + t.amount, 0) - a[1].reduce((s, t) => s + t.amount, 0)
+  )
+
   return (
     <div className="space-y-3">
       <div className="flex items-start gap-3 p-3 bg-blue-50 border border-blue-100 rounded-2xl">
         <span className="text-base">💡</span>
         <p className="text-xs text-blue-700 leading-relaxed">
-          <strong>Dépenses ponctuelles uniquement.</strong> Les revenus → carte <strong>Revenus</strong>. Les factures récurrentes → carte <strong>Factures</strong>. Les remboursements de crédit → carte <strong>Dettes</strong>.
+          <strong>Dépenses ponctuelles uniquement.</strong> Revenus → <strong>Revenus</strong>. Factures → <strong>Factures</strong>. Crédits → <strong>Dettes</strong>.
         </p>
       </div>
 
@@ -398,37 +453,109 @@ function TransactionsSection({ transactions, onUpdate }: { transactions: Transac
 
       <button onClick={openAdd} className="btn-primary w-full gap-2"><Plus size={18}/> Ajouter une dépense</button>
 
-      <div className="space-y-2">
-        {filtered.length === 0 ? (
-          <div className="card text-center py-10">
-            <p className="text-3xl mb-2">💸</p>
-            <p className="font-semibold text-ink">{search ? 'Aucun résultat' : 'Aucune dépense ce mois'}</p>
-            <p className="text-sm text-ink-soft mt-1">{search ? `Rien pour "${search}"` : 'Appuie sur "Ajouter" pour commencer'}</p>
-          </div>
-        ) : filtered.map(tx => (
-          <div key={tx.id} className="card flex items-center justify-between gap-3">
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="w-10 h-10 rounded-2xl flex items-center justify-center flex-shrink-0 bg-danger-light">
-                <span className="text-lg">💸</span>
-              </div>
-              <div className="min-w-0">
-                <p className="text-sm font-semibold text-ink truncate">{tx.note || tx.category}</p>
-                <p className="text-xs text-ink-soft">{tx.category} · {new Date(tx.date).toLocaleDateString('fr-FR')}</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-1 flex-shrink-0">
-              <span className="font-mono text-sm font-bold text-danger">−{formatAmount(tx.amount)}</span>
-              <button className="w-8 h-8 rounded-xl bg-mist hover:bg-accent-light text-ink-soft hover:text-accent flex items-center justify-center active:scale-95" onClick={() => openEdit(tx)}><Pencil size={13}/></button>
-              <button className="w-8 h-8 rounded-xl bg-mist hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center active:scale-95" onClick={() => handleDelete(tx.id)}><Trash2 size={13}/></button>
-            </div>
-          </div>
-        ))}
-      </div>
+      {allFiltered.length === 0 ? (
+        <div className="card text-center py-10">
+          <p className="text-3xl mb-2">💸</p>
+          <p className="font-semibold text-ink">{search ? 'Aucun résultat' : 'Aucune dépense ce mois'}</p>
+          <p className="text-sm text-ink-soft mt-1">{search ? `Rien pour "${search}"` : 'Appuie sur "Ajouter" pour commencer'}</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {categoryEntries.map(([cat, txs]) => {
+            const catTotal = txs.reduce((s, t) => s + t.amount, 0)
+            const status = getBudgetStatus(cat)
+            const budget = budgets.find(b => b.name === cat)
+            const isExpanded = expandedCategories.has(cat)
+            const showAll = showMoreCategories.has(cat)
+            const visibleTxs = showAll ? txs : txs.slice(0, SHOW_MORE_LIMIT)
+            const hasMore = txs.length > SHOW_MORE_LIMIT
 
-      {filtered.length > 0 && (
-        <div className="card bg-mist flex items-center justify-between py-3 px-4">
-          <span className="text-xs text-ink-soft font-semibold">{filtered.length} dépense{filtered.length > 1 ? 's' : ''}</span>
-          <span className="font-mono text-sm font-bold text-danger">−{formatAmount(filtered.reduce((s, t) => s + t.amount, 0))}</span>
+            const headerBg =
+              status === 'over' ? 'bg-red-50 border-red-200' :
+              status === 'near' ? 'bg-orange-50 border-orange-200' :
+              'bg-mist border-mist-dark'
+            const headerText =
+              status === 'over' ? 'text-danger' :
+              status === 'near' ? 'text-orange-600' :
+              'text-ink'
+            const badgeEl = status === 'over'
+              ? <span className="text-[10px] bg-danger text-white px-1.5 py-0.5 rounded-full font-bold">⚠️ Dépassé</span>
+              : status === 'near'
+              ? <span className="text-[10px] bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded-full font-bold">⚡ Proche</span>
+              : null
+
+            return (
+              <div key={cat} className={`rounded-2xl border overflow-hidden ${headerBg}`}>
+                <button
+                  className="w-full flex items-center justify-between px-4 py-3 text-left"
+                  onClick={() => toggleCategory(cat)}
+                >
+                  <div className="flex items-center gap-2 flex-wrap min-w-0">
+                    <span className={`text-sm font-bold ${headerText}`}>{cat}</span>
+                    {badgeEl}
+                    <span className="text-xs text-ink-soft">{txs.length} dépense{txs.length > 1 ? 's' : ''}</span>
+                    {budget && (
+                      <span className={`text-[10px] font-mono ${status === 'over' ? 'text-danger' : status === 'near' ? 'text-orange-600' : 'text-ink-soft'}`}>
+                        {formatAmount(catTotal)} / {formatAmount(budget.limit)}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <span className={`font-mono text-sm font-bold ${headerText}`}>−{formatAmount(catTotal)}</span>
+                    <ChevronDown size={16} className={`${headerText} transition-transform ${isExpanded ? 'rotate-180' : ''}`}/>
+                  </div>
+                </button>
+
+                {budget && (
+                  <div className="px-4 pb-2">
+                    <div className="w-full h-1.5 bg-white/60 rounded-full overflow-hidden">
+                      <div className="h-full rounded-full transition-all duration-500"
+                        style={{
+                          width: `${Math.min(100, (catTotal / budget.limit) * 100)}%`,
+                          backgroundColor: status === 'over' ? '#DC2626' : status === 'near' ? '#D97706' : '#16A34A',
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {isExpanded && (
+                  <div className="bg-white border-t border-mist-dark">
+                    {visibleTxs.map(tx => (
+                      <div key={tx.id} className="flex items-center justify-between px-4 py-3 border-b border-mist last:border-0">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-8 h-8 rounded-xl bg-danger-light flex items-center justify-center flex-shrink-0">
+                            <span className="text-sm">💸</span>
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold text-ink truncate">{tx.note || tx.category}</p>
+                            <p className="text-xs text-ink-soft">{new Date(tx.date).toLocaleDateString('fr-FR')}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1 flex-shrink-0">
+                          <span className="font-mono text-sm font-bold text-danger">−{formatAmount(tx.amount)}</span>
+                          <button className="w-8 h-8 rounded-xl bg-mist hover:bg-accent-light text-ink-soft hover:text-accent flex items-center justify-center active:scale-95" onClick={() => openEdit(tx)}><Pencil size={13}/></button>
+                          <button className="w-8 h-8 rounded-xl bg-mist hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center active:scale-95" onClick={() => handleDelete(tx.id)}><Trash2 size={13}/></button>
+                        </div>
+                      </div>
+                    ))}
+                    {hasMore && (
+                      <button onClick={() => toggleShowMore(cat)}
+                        className="w-full py-2.5 text-xs font-bold text-accent bg-accent-light hover:bg-blue-100 transition-colors flex items-center justify-center gap-1">
+                        {showAll
+                          ? <><ChevronUp size={13}/> Voir moins</>
+                          : <><ChevronDown size={13}/> Voir {txs.length - SHOW_MORE_LIMIT} de plus</>}
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+          <div className="card bg-mist flex items-center justify-between py-3 px-4">
+            <span className="text-xs text-ink-soft font-semibold">{allFiltered.length} dépense{allFiltered.length > 1 ? 's' : ''}</span>
+            <span className="font-mono text-sm font-bold text-danger">−{formatAmount(allFiltered.reduce((s, t) => s + t.amount, 0))}</span>
+          </div>
         </div>
       )}
 
@@ -506,10 +633,12 @@ function RevenusSection() {
       supabase.from('monthly_incomes').select('*').eq('user_id', user!.id).eq('month', ym).order('created_at', { ascending: true }),
       supabase.from('income_sources').select('*').eq('user_id', user!.id).order('name'),
     ])
-    setRevenus((inc ?? []).map(r => ({
+    const incData = (inc ?? []).map(r => ({
       id: r.id, label: r.label, amount: Number(r.amount),
       type: r.is_fixed ? 'fixed' : 'variable', month: r.month,
-    })))
+    }))
+    setRevenus(incData)
+    if (incData.length > 0) setOpen(true)
     setSavedSources((src ?? []).map(r => ({
       id: r.id, name: r.name, type: r.is_fixed ? 'fixed' : 'variable',
     })))
@@ -548,6 +677,7 @@ function RevenusSection() {
     }
     setForm({ label: '', amount: '', type: 'fixed', saveSource: false })
     setShowForm(false)
+    setOpen(true)
     setSaving(false)
   }
 
@@ -1028,7 +1158,7 @@ function FacturesSection() {
             <div>
               <label className="label">Catégorie</label>
               <select className="input" value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))}>
-                {FACTURE_CATEGORIES.map(c => <option key={c}>{c}</option>)}
+                {getFacureCategories().map(c => <option key={c}>{c}</option>)}
               </select>
             </div>
             {form.isRecurring ? (
@@ -1390,7 +1520,14 @@ function CreditorPicker({ value, onChange }: { value: string; onChange: (v: stri
     if (!newName.trim()) return
     setAdding(true)
     const c = await saveCreditor(newName.trim())
-    setCreditors(prev => [...prev, c].sort((a, b) => a.name.localeCompare(b.name)))
+    setCreditors(prev => {
+      const updated = [...prev, c]
+      return updated.sort((a, b) => {
+        if (a.name === 'Autre') return 1
+        if (b.name === 'Autre') return -1
+        return a.name.localeCompare(b.name)
+      })
+    })
     onChange(c.name); setNewName(''); setOpen(false); setAdding(false)
   }
   async function handleDelete(c: { id: string; name: string }, e: React.MouseEvent) {
