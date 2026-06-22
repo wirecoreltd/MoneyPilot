@@ -33,30 +33,6 @@ const empty = {
   date: new Date().toISOString().slice(0, 10),
 }
 
-const LOGO_URL = ''
-const APP_NAME = 'MoneyApp'
-const APP_SLOGAN = 'Votre copilote financier au quotidien.'
-
-function AppBrandHeader() {
-  return (
-    <div className="flex items-center justify-between gap-3 mb-1">
-      <div className="min-w-0">
-        <p className="text-sm font-bold text-ink leading-tight">{APP_NAME}</p>
-        <p className="text-xs text-ink-soft leading-snug mt-0.5">{APP_SLOGAN}</p>
-      </div>
-      <div className="flex flex-col items-center gap-1 flex-shrink-0">
-        {LOGO_URL ? (
-          <img src={LOGO_URL} alt={APP_NAME} className="w-11 h-11 rounded-2xl object-cover" />
-        ) : (
-          <div className="w-11 h-11 rounded-2xl bg-accent-light flex items-center justify-center">
-            <Wallet size={22} className="text-accent" />
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
 const DAILY_THOUGHTS = [
   "Chaque petit pas que tu fais aujourd'hui compte, sois fier du chemin parcouru.",
   "Prendre soin de tes finances, c'est aussi prendre soin de toi. Respire, tu avances bien.",
