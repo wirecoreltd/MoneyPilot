@@ -10,6 +10,19 @@ import {
 import CoachTip from './CoachTip'
 import { supabase } from '@/lib/supabase'
 
+function AppBrandHeader() {
+  return (
+    <div className="flex items-center justify-between py-2">
+      <div className="flex items-center gap-2">
+        <div className="w-8 h-8 rounded-xl bg-accent flex items-center justify-center">
+          <Wallet size={16} className="text-white" />
+        </div>
+        <span className="text-lg font-bold text-ink">MoneyPilot</span>
+      </div>
+    </div>
+  )
+}
+
 export type MoneySubTab = 'transactions' | 'revenus' | 'factures' | 'dettes' | 'epargne' | 'budget'
 interface Props {
   transactions: Transaction[]
