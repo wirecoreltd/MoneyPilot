@@ -1,5 +1,6 @@
 'use client'
 import { useEffect, useState, useRef } from 'react'
+import type { UserProfile, MonthlyIncome } from '@/lib/storage'
 import { RefreshCw, ChevronRight, AlertTriangle, TrendingUp, Shield, Zap } from 'lucide-react'
 import {
   getUserProfile,
