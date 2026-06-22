@@ -10,8 +10,6 @@ import {
 import CoachTip from './CoachTip'
 import { supabase } from '@/lib/supabase'
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
 export type MoneySubTab = 'transactions' | 'revenus' | 'factures' | 'dettes' | 'epargne' | 'budget'
 
 interface Props {
@@ -34,8 +32,6 @@ const empty = {
   note: '',
   date: new Date().toISOString().slice(0, 10),
 }
-
-// ─── Logo + slogan ────────────────────────────────────────────────────────────
 
 const LOGO_URL = ''
 const APP_NAME = 'MoneyApp'
@@ -60,8 +56,6 @@ function AppBrandHeader() {
     </div>
   )
 }
-
-// ─── Pensée positive du jour ──────────────────────────────────────────────────
 
 const DAILY_THOUGHTS = [
   "Chaque petit pas que tu fais aujourd'hui compte, sois fier du chemin parcouru.",
@@ -103,8 +97,6 @@ function getDailyThought(): string {
   return DAILY_THOUGHTS[dayOfYear % DAILY_THOUGHTS.length]
 }
 
-// ─── Animated counter ─────────────────────────────────────────────────────────
-
 function useCountUp(target: number, duration = 900) {
   const [value, setValue] = useState(0)
   const raf = useRef<number | null>(null)
@@ -122,8 +114,6 @@ function useCountUp(target: number, duration = 900) {
   }, [target, duration])
   return value
 }
-
-// ─── Health gauge arc ─────────────────────────────────────────────────────────
 
 function HealthArc({ score, color }: { score: number; color: string }) {
   const animated = useCountUp(score)
@@ -147,137 +137,6 @@ function HealthArc({ score, color }: { score: number; color: string }) {
   )
 }
 
-// ─── Carte dettes du mois ─────────────────────────────────────────────────────
-
-interface DebtMonthCardProps {
-  debts: Debt[]
-  month: string
-  onClick: () => void
-}
-
-function DebtMonthCard({ debts, month, onClick }: DebtMonthCardProps) {
-  const [paidTotal, setPaidTotal] = useState(0)
-  const owedDebts = debts.filter(d => d.type === 'owe' && d.minimumPayment > 0)
-  const totalDue = owedDebts.reduce((s, d) => s + d.minimumPayment, 0)
-
-  useEffect(() => {
-    if (owedDebts.length === 0) return
-    async function loadPaid() {
-      const { data } = await supabase
-        .from('debt_payment_checks')
-        .select('amount, paid')
-        .in('debt_id', owedDebts.map(d => d.id))
-        .eq('month', month)
-      const paid = (data ?? []).filter(c => c.paid).reduce((s, c) => s + Number(c.amount), 0)
-      setPaidTotal(paid)
-    }
-    loadPaid()
-  }, [debts, month])
-
-  if (owedDebts.length === 0) return null
-
-  const pct = totalDue > 0 ? Math.min(100, (paidTotal / totalDue) * 100) : 0
-  const allPaid = paidTotal >= totalDue
-  const barColor = allPaid ? '#16A34A' : pct > 50 ? '#2563EB' : '#D97706'
-
-  return (
-    <button onClick={onClick} className="card-lg w-full text-left space-y-3 active:scale-[0.99] transition-all">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="text-base">💳</span>
-          <p className="text-xs font-bold text-ink-soft uppercase tracking-wider">Dettes du mois</p>
-        </div>
-        <ChevronRight size={16} className="text-ink-soft" />
-      </div>
-
-      <div className="w-full h-2.5 bg-mist-dark rounded-full overflow-hidden">
-        <div
-          className="h-full rounded-full transition-all duration-700"
-          style={{ width: `${pct}%`, backgroundColor: barColor }}
-        />
-      </div>
-
-      <div className="flex justify-between items-end">
-        <div>
-          <p className="text-lg font-bold font-mono" style={{ color: barColor }}>
-            {formatAmount(paidTotal)}
-          </p>
-          <p className="text-[10px] text-ink-soft">payé ce mois</p>
-        </div>
-        <div className="text-right">
-          <p className="text-sm font-bold font-mono text-ink-soft">{formatAmount(totalDue)}</p>
-          <p className="text-[10px] text-ink-soft">prévu ({owedDebts.length} dette{owedDebts.length > 1 ? 's' : ''})</p>
-        </div>
-      </div>
-
-      {allPaid && (
-        <p className="text-xs font-bold text-positive bg-positive-light rounded-xl px-3 py-1.5 text-center">
-          ✅ Toutes les dettes du mois sont réglées !
-        </p>
-      )}
-    </button>
-  )
-}
-
-// ─── Carte projets ────────────────────────────────────────────────────────────
-
-interface ProjectsCardProps {
-  projects: Project[]
-  onClick: () => void
-}
-
-function ProjectsCard({ projects, onClick }: ProjectsCardProps) {
-  if (projects.length === 0) return null
-
-  const top = projects.slice(0, 3)
-
-  return (
-    <button onClick={onClick} className="card-lg w-full text-left space-y-3 active:scale-[0.99] transition-all">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="text-base">🎯</span>
-          <p className="text-xs font-bold text-ink-soft uppercase tracking-wider">
-            Projets ({projects.length})
-          </p>
-        </div>
-        <ChevronRight size={16} className="text-ink-soft" />
-      </div>
-
-      <div className="space-y-2.5">
-        {top.map(p => {
-          const pct = Math.min(100, (p.savedAmount / p.targetAmount) * 100)
-          const done = p.savedAmount >= p.targetAmount
-          const barColor = done ? '#16A34A' : '#2563EB'
-
-          return (
-            <div key={p.id} className="space-y-1">
-              <div className="flex justify-between items-center">
-                <span className="text-xs font-semibold text-ink flex items-center gap-1.5">
-                  <span>{p.emoji}</span> {p.name}
-                </span>
-                <span className="text-[10px] font-mono text-ink-soft">{pct.toFixed(0)}%</span>
-              </div>
-              <div className="w-full h-2 bg-mist-dark rounded-full overflow-hidden">
-                <div
-                  className="h-full rounded-full transition-all duration-700"
-                  style={{ width: `${pct}%`, backgroundColor: barColor }}
-                />
-              </div>
-            </div>
-          )
-        })}
-        {projects.length > 3 && (
-          <p className="text-[10px] text-ink-soft text-center">
-            + {projects.length - 3} autre{projects.length - 3 > 1 ? 's' : ''} projet{projects.length - 3 > 1 ? 's' : ''}
-          </p>
-        )}
-      </div>
-    </button>
-  )
-}
-
-// ─── HomeTab ──────────────────────────────────────────────────────────────────
-
 export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, onGoToProjects }: Props) {
   const [showForm, setShowForm] = useState(false)
   const [showChat, setShowChat] = useState(false)
@@ -290,7 +149,6 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
   const [totalFactures, setTotalFactures] = useState(0)
   const [debts, setDebts] = useState<Debt[]>([])
   const [projects, setProjects] = useState<Project[]>([])
-  // ── Dettes du mois (KPI) ──────────────────────────────────────────────────
   const [paidTotal, setPaidTotal] = useState(0)
   const [totalDue, setTotalDue] = useState(0)
   const chatEndRef = useRef<HTMLDivElement>(null)
@@ -317,24 +175,30 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
 
   useEffect(() => {
     getSavings().then(gs => setTotalSavings(gs.reduce((s, g) => s + g.saved, 0)))
+
     getDebts().then(async ds => {
       setDebts(ds)
       setTotalDebt(ds.filter(d => d.type === 'owe').reduce((s, d) => s + d.remaining, 0))
 
-      // ── Dettes du mois ──
+      // ── Dettes du mois : utilise debt_payment_history (bonne table) ──
       const owedDebts = ds.filter(d => d.type === 'owe' && d.minimumPayment > 0)
       const due = owedDebts.reduce((s, d) => s + d.minimumPayment, 0)
       setTotalDue(due)
+
       if (owedDebts.length > 0) {
+        const [year, month] = ym.split('-').map(Number)
+        const lastDay = new Date(year, month, 0).getDate()
         const { data } = await supabase
-          .from('debt_payment_checks')
-          .select('amount, paid')
+          .from('debt_payment_history')
+          .select('amount')
           .in('debt_id', owedDebts.map(d => d.id))
-          .eq('month', ym)
-        const paid = (data ?? []).filter(c => c.paid).reduce((s, c) => s + Number(c.amount), 0)
+          .gte('paid_at', `${ym}-01`)
+          .lte('paid_at', `${ym}-${String(lastDay).padStart(2, '0')}`)
+        const paid = (data ?? []).reduce((s, c) => s + Number(c.amount), 0)
         setPaidTotal(paid)
       }
     })
+
     getProjects().then(setProjects)
 
     async function loadFactures() {
@@ -378,15 +242,13 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
         })
       })
       const result = await response.json()
-      const reply = result.content?.[0]?.text || 'Je suis là pour t\'aider. Pose-moi une question sur tes finances.'
+      const reply = result.content?.[0]?.text || "Je suis là pour t'aider. Pose-moi une question sur tes finances."
       setMessages(prev => [...prev, { role: 'assistant', content: reply }])
     } catch {
       setMessages(prev => [...prev, { role: 'assistant', content: 'Désolé, je rencontre un problème. Réessaie dans un moment.' }])
     }
     setChatLoading(false)
   }
-
-  // ─── KPIs avec navigation ──────────────────────────────────────────────────
 
   const kpis = [
     {
@@ -405,7 +267,8 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
       action: () => onGoToMoney('factures'),
     },
     {
-      label: 'Dettes du mois', value: `${formatAmount(paidTotal)} / ${formatAmount(totalDue)}`,
+      label: 'Dettes du mois',
+      value: totalDue > 0 ? `${formatAmount(paidTotal)} / ${formatAmount(totalDue)}` : formatAmount(totalDebt),
       icon: '💳', bg: 'bg-red-50', color: 'text-red-700', border: 'border-red-100',
       action: () => onGoToMoney('dettes'),
     },
@@ -424,16 +287,14 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
   return (
     <div className="space-y-4">
 
-      {/* ── Logo + slogan ────────────────────────────────────────────────── */}
       <AppBrandHeader />
 
-      {/* ── Pensée positive du jour ──────────────────────────────────────── */}
       <div className="card bg-purple-50 border border-purple-100">
         <p className="text-[10px] font-bold text-purple-600 uppercase tracking-wider mb-1">✨ Pensée du jour</p>
         <p className="text-sm text-purple-800 leading-snug">{dailyThought}</p>
       </div>
 
-      {/* ── KPIs cliquables (grille 2 colonnes) ──────────────────────────── */}
+      {/* ── KPIs cliquables ──────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 gap-3">
         {kpis.map((kpi) => (
           <button
@@ -453,7 +314,7 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
         ))}
       </div>
 
-      {/* ── KPI Projets (pleine largeur, sous la grille) ─────────────────── */}
+      {/* ── Projets ──────────────────────────────────────────────────────── */}
       {projects.length > 0 && (
         <button
           onClick={onGoToProjects}
@@ -471,14 +332,15 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
           <div className="space-y-2">
             {projects.slice(0, 3).map(p => {
               const pct = Math.min(100, (p.savedAmount / p.targetAmount) * 100)
+              const done = p.savedAmount >= p.targetAmount
               return (
                 <div key={p.id} className="flex items-center gap-2">
                   <span className="text-sm w-5">{p.emoji}</span>
                   <p className="text-xs text-blue-800 font-medium flex-1 truncate">{p.name}</p>
                   <div className="w-20 h-1.5 bg-blue-100 rounded-full overflow-hidden">
                     <div
-                      className="h-full rounded-full bg-blue-500"
-                      style={{ width: `${pct}%` }}
+                      className="h-full rounded-full"
+                      style={{ width: `${pct}%`, backgroundColor: done ? '#16A34A' : '#3B82F6' }}
                     />
                   </div>
                   <span className="text-[10px] font-mono text-blue-600 w-8 text-right">{pct.toFixed(0)}%</span>
@@ -486,9 +348,7 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
               )
             })}
             {projects.length > 3 && (
-              <p className="text-[10px] text-blue-500 text-center">
-                +{projects.length - 3} autre{projects.length - 3 > 1 ? 's' : ''}
-              </p>
+              <p className="text-[10px] text-blue-500 text-center">+{projects.length - 3} autre{projects.length - 3 > 1 ? 's' : ''}</p>
             )}
           </div>
         </button>
@@ -507,7 +367,6 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
             <MessageCircle size={18} />
           </button>
         </div>
-
         <div className="flex items-center gap-4">
           <HealthArc score={health.score} color={healthColor} />
           <div className="flex-1 space-y-2">
@@ -516,7 +375,6 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
             ))}
           </div>
         </div>
-
         <div className="grid grid-cols-3 gap-2 mt-4 pt-4 border-t border-mist">
           {[
             { label: 'Taux épargne', value: income > 0 ? `${Math.round((totalSavings / (income || 1)) * 10)}%` : '—' },
@@ -529,17 +387,15 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
             </div>
           ))}
         </div>
-      </div>      
+      </div>
 
-      {/* ── Coach tip ────────────────────────────────────────────────────── */}
       <CoachTip message={tip} />
 
-      {/* ── Bouton ajouter ───────────────────────────────────────────────── */}
       <button onClick={() => setShowForm(true)} className="btn-primary w-full gap-2 text-base py-4">
         <Plus size={20} /> Ajouter une transaction
       </button>
 
-      {/* ── Transactions récentes ─────────────────────────────────────────── */}
+      {/* ── Transactions récentes cliquables ─────────────────────────────── */}
       {recent.length > 0 && (
         <button
           onClick={() => onGoToMoney('transactions')}
@@ -565,8 +421,7 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
                   </p>
                 </div>
               </div>
-              <span className={`font-mono text-sm font-bold
-                ${tx.type === 'income' ? 'text-positive' : 'text-danger'}`}>
+              <span className={`font-mono text-sm font-bold ${tx.type === 'income' ? 'text-positive' : 'text-danger'}`}>
                 {tx.type === 'income' ? '+' : '−'}{formatAmount(tx.amount)}
               </span>
             </div>
