@@ -15,8 +15,6 @@ import {
   formatAmount,
   formatDebtEndDate,
 } from '@/lib/storage'
-import type { UserProfile } from '@/lib/storage'
-
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface CoachAnalysis {
   greeting: string
