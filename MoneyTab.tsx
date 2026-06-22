@@ -633,9 +633,9 @@ function RevenusSection() {
       supabase.from('monthly_incomes').select('*').eq('user_id', user!.id).eq('month', ym).order('created_at', { ascending: true }),
       supabase.from('income_sources').select('*').eq('user_id', user!.id).order('name'),
     ])
-    const incData = (inc ?? []).map(r => ({
+    const incData: RevenuSource[] = (inc ?? []).map(r => ({
       id: r.id, label: r.label, amount: Number(r.amount),
-      type: r.is_fixed ? 'fixed' : 'variable', month: r.month,
+      type: (r.is_fixed ? 'fixed' : 'variable') as 'fixed' | 'variable', month: r.month,
     }))
     setRevenus(incData)
     if (incData.length > 0) setOpen(true)
