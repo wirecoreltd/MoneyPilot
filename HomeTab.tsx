@@ -11,7 +11,6 @@ import CoachTip from './CoachTip'
 import { supabase } from '@/lib/supabase'
 
 export type MoneySubTab = 'transactions' | 'revenus' | 'factures' | 'dettes' | 'epargne' | 'budget'
-
 interface Props {
   transactions: Transaction[]
   onUpdate: () => void
