@@ -147,7 +147,14 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
   const expenses = monthTxs.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0)
 
   console.log('YM', ym)
-console.log('ALL TRANSACTIONS', transactions)
+console.log(
+  'TRANSACTIONS TYPES',
+  transactions.map(t => ({
+    type: t.type,
+    amount: t.amount,
+    category: t.category
+  }))
+)
 console.log('MONTH TXS', monthTxs)
 console.log('INCOME TXS', monthTxs.filter(t => t.type === 'income'))
 console.log('INCOME KPI', income)
