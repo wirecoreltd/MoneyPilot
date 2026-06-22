@@ -158,7 +158,16 @@ console.log(
 console.log('MONTH TXS', monthTxs)
 console.log('INCOME TXS', monthTxs.filter(t => t.type === 'income'))
 console.log('INCOME KPI', income)
-
+  
+console.table(
+  transactions.map(t => ({
+    id: t.id,
+    type: t.type,
+    amount: t.amount,
+    category: t.category,
+    date: t.date
+  }))
+)
   
   const totalTransactions = expenses
   const balance = income - expenses
