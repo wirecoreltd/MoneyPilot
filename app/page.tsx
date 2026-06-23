@@ -88,11 +88,11 @@ export default function Page() {
               👋 {profile.firstName}
             </span>
             <button
-              onClick={handleSignOut}
-              className="flex items-center justify-center w-10 h-10 rounded-full bg-red-600 text-white border border-red-700 active:scale-95 transition-all"
-            >
-              ⏻
-            </button>
+            onClick={handleSignOut}
+            className="flex items-center justify-center w-7 h-7 rounded-full bg-red-600 text-white active:scale-95 transition-all"
+          >
+            <span className="text-xs leading-none">⏻</span>
+          </button>
           </div>
         </div>
       </header>
