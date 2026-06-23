@@ -78,22 +78,22 @@ export default function Page() {
     <div className="min-h-screen bg-mist">
 
       {/* ── Header mobile uniquement ── */}
-      <header className="md:hidden sticky top-0 z-40 bg-white border-b border-mist-dark">
-        <div className="flex items-center">
-          <span className="text-lg mr-1">👋</span>
+        <header className="md:hidden sticky top-0 z-40 bg-white border-b border-mist-dark">
+          <div className="flex items-center justify-center px-2 py-2">
+            <span className="text-lg mr-1">👋</span>
         
-          <span className="text-sm font-semibold text-ink">
-            {profile.firstName}
-          </span>
+            <p className="text-sm font-bold text-ink truncate">
+              {profile.firstName}
+            </p>
         
-          <button
-            onClick={handleSignOut}
-            className="ml-5 flex items-center justify-center text-red-600 active:scale-95 transition-all"
-          >
-            <span className="text-xl leading-none">⏻</span>
-          </button>
-        </div>
-      </header>
+            <button
+              onClick={handleSignOut}
+              className="ml-7 flex items-center justify-center text-red-500 hover:text-red-600 transition-colors"
+            >
+              <span className="text-xl">⏻</span>
+            </button>
+          </div>
+        </header>
 
       {/* ── Sidebar desktop (profile + déconnexion passés en props) ── */}
       <BottomNav
