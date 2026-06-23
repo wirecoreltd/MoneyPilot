@@ -75,38 +75,38 @@ export default function Page() {
   }
 
   return (
-    <div className="min-h-screen bg-mist">
-     
+    <div className="min-h-screen bg-mist">     
+       
        {/* ── Header mobile uniquement ── */}
-        <header className="md:hidden sticky top-0 z-40 bg-white border-b border-mist-dark">
-          <div className="flex items-center justify-between px-4 py-3">
-        
-            {/* Logo gauche */}
-            <div>
-              <span className="text-lg font-bold text-ink tracking-tight">
-                Money<span className="text-accent">Pilot</span>
-              </span>
-              <p className="text-xs text-ink-soft mt-0.5">
-                Votre copilote financier au quotidien.
-              </p>
-            </div>
-        
-            {/* User + déconnexion droite */}
-            <div className="flex flex-col items-center gap-1">
-              <div className="flex items-center gap-1">
-                <span className="text-base">👋</span>
-                <p className="text-sm font-bold text-ink">{profile.firstName}</p>
+          <header className="md:hidden sticky top-0 z-40 bg-white border-b border-mist-dark">
+            <div className="flex items-center justify-between px-4 py-3">
+          
+              {/* Logo gauche */}
+              <div>
+                <span className="text-lg font-bold text-ink tracking-tight">
+                  Money<span className="text-accent">Pilot</span>
+                </span>
+                <p className="text-xs text-ink-soft mt-0.5">
+                  Votre copilote financier au quotidien.
+                </p>
               </div>
-              <button
-                onClick={handleSignOut}
-                className="flex items-center justify-center text-red-500 hover:text-red-600 transition-colors"
-              >
-                <span className="text-lg">⏻</span>
-              </button>
+          
+              {/* User + déconnexion droite */}
+              <div className="flex flex-col items-center gap-1">
+                <div className="flex items-center gap-1">
+                  <span className="text-base">👋</span>
+                  <p className="text-sm font-bold text-ink">{profile.firstName}</p>
+                </div>
+                <button
+                  onClick={handleSignOut}
+                  className="flex items-center justify-center text-red-500 hover:text-red-600 transition-colors"
+                >
+                  <LogOut size={16} />
+                </button>
+              </div>
+          
             </div>
-        
-          </div>
-        </header>
+          </header>
 
       {/* ── Sidebar desktop (profile + déconnexion passés en props) ── */}
       <BottomNav
