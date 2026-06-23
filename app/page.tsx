@@ -9,6 +9,8 @@ import CoachTab from '../coach'
 import ProjectsTab from '../ProjectsTab'
 import { getTransactions, Transaction, getUserProfile, UserProfile } from '@/lib/storage'
 import { supabase } from '@/lib/supabase'
+import { LogOut } from "lucide-react";
+
 
 export type MoneySubTab = 'transactions' | 'budget' | 'dettes' | 'epargne' | 'factures' | 'revenus'
 
