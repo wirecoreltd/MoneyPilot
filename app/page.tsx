@@ -76,22 +76,35 @@ export default function Page() {
 
   return (
     <div className="min-h-screen bg-mist">
-
-      {/* ── Header mobile uniquement ── */}
+     
+       {/* ── Header mobile uniquement ── */}
         <header className="md:hidden sticky top-0 z-40 bg-white border-b border-mist-dark">
-          <div className="flex items-center justify-center px-2 py-2">
-            <span className="text-lg mr-1">👋</span>
+          <div className="flex items-center justify-between px-4 py-3">
         
-            <p className="text-sm font-bold text-ink truncate">
-              {profile.firstName}
-            </p>
+            {/* Logo gauche */}
+            <div>
+              <span className="text-lg font-bold text-ink tracking-tight">
+                Money<span className="text-accent">Pilot</span>
+              </span>
+              <p className="text-xs text-ink-soft mt-0.5">
+                Votre copilote financier au quotidien.
+              </p>
+            </div>
         
-            <button
-              onClick={handleSignOut}
-              className="ml-7 flex items-center justify-center text-red-500 hover:text-red-600 transition-colors"
-            >
-              <span className="text-xl">⏻</span>
-            </button>
+            {/* User + déconnexion droite */}
+            <div className="flex flex-col items-center gap-1">
+              <div className="flex items-center gap-1">
+                <span className="text-base">👋</span>
+                <p className="text-sm font-bold text-ink">{profile.firstName}</p>
+              </div>
+              <button
+                onClick={handleSignOut}
+                className="flex items-center justify-center text-red-500 hover:text-red-600 transition-colors"
+              >
+                <span className="text-lg">⏻</span>
+              </button>
+            </div>
+        
           </div>
         </header>
 
