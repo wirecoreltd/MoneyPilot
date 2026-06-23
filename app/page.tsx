@@ -86,25 +86,15 @@ export default function Page() {
 
           {/* Profil + déconnexion */}
           <div className="flex items-center gap-3">
-            {/* Avatar initiale */}
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-full bg-accent flex items-center justify-center flex-shrink-0">
-                <span className="text-white text-sm font-bold">
-                  {profile.firstName?.charAt(0).toUpperCase()}
-                </span>
-              </div>
-              <span className="text-sm font-semibold text-ink">
-                {profile.firstName}
-              </span>
-            </div>
+            <span className="text-sm font-semibold text-ink">
+              👋 {profile.firstName}
+            </span>
 
-            {/* Bouton déconnexion */}
             <button
               onClick={handleSignOut}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-50 text-red-600 text-xs font-bold border border-red-100 active:scale-95 transition-all"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-70 text-red-600 text-xs font-bold border border-red-100 active:scale-95 transition-all"
             >
-              <span>↪️</span>
-              <span>Sortir</span>
+              ⏻
             </button>
           </div>
         </div>
