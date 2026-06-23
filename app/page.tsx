@@ -79,21 +79,19 @@ export default function Page() {
 
       {/* ── Header mobile uniquement ── */}
       <header className="md:hidden sticky top-0 z-40 bg-white border-b border-mist-dark">
-        <div className="flex items-center justify-between px-4 py-3">
-          <span className="text-lg font-bold text-ink">
-            Money<span className="text-accent">Pilot</span>
+        <div className="flex items-center">
+          <span className="text-lg mr-1">👋</span>
+        
+          <span className="text-sm font-semibold text-ink">
+            {profile.firstName}
           </span>
-          <div className="flex items-center gap-3">
-            <span className="text-sm font-semibold text-ink">
-              👋 {profile.firstName}
-            </span>
-            <button
+        
+          <button
             onClick={handleSignOut}
-            className="flex items-center justify-center w-7 h-7 rounded-full bg-red-600 text-white active:scale-95 transition-all"
+            className="ml-5 flex items-center justify-center text-red-600 active:scale-95 transition-all"
           >
-            <span className="text-xs leading-none">⏻</span>
+            <span className="text-xl leading-none">⏻</span>
           </button>
-          </div>
         </div>
       </header>
 
