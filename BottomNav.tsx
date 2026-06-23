@@ -93,20 +93,20 @@ export default function BottomNav({ active, onChange, profile, onSignOut }: Prop
        {/* ── Profil + déconnexion en bas de la sidebar ── */}
           {profile && onSignOut && (
             <div className="mt-auto pt-4 border-t border-mist-dark">
-              <div className="flex items-center justify-center gap-3 px-2 py-2">
-                <span className="text-lg">👋</span>
-          
-                <p className="text-sm font-bold text-ink truncate">
-                  {profile.firstName}
-                </p>
-          
-                <button
-                  onClick={onSignOut}
-                  className="flex items-center justify-center text-red-500 hover:text-red-600 transition-colors"
-                >
-                  <span className="text-xl">⏻</span>
-                </button>
-              </div>
+              <div className="flex items-center justify-center px-2 py-2">
+  <span className="text-lg mr-1">👋</span>
+
+  <p className="text-sm font-bold text-ink truncate">
+    {profile.firstName}
+  </p>
+
+  <button
+    onClick={onSignOut}
+    className="ml-5 flex items-center justify-center text-red-500 hover:text-red-600 transition-colors"
+  >
+    <span className="text-xl">⏻</span>
+  </button>
+</div>
             </div>
           )}
       </aside>
