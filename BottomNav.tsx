@@ -1,5 +1,6 @@
 'use client'
 import { Home, Wallet, BarChart3, Rocket, BrainCircuit } from 'lucide-react'
+import type { UserProfile } from '@/lib/storage'
 
 export type Tab = 'home' | 'money' | 'bilan' | 'projets' | 'coach'
 
@@ -11,13 +12,17 @@ const nav = [
   { id: 'coach'   as Tab, label: 'Coach',    icon: BrainCircuit },
 ]
 
-export default function BottomNav({ active, onChange }: {
+interface Props {
   active: Tab
   onChange: (t: Tab) => void
-}) {
+  profile?: UserProfile | null
+  onSignOut?: () => void
+}
+
+export default function BottomNav({ active, onChange, profile, onSignOut }: Props) {
   return (
     <>
-      {/* Mobile bottom bar */}
+      {/* ── Mobile bottom bar ── */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-mist-dark flex z-50">
         {nav.map(({ id, label, icon: Icon }) => {
           const isCoach = id === 'coach'
@@ -32,13 +37,11 @@ export default function BottomNav({ active, onChange }: {
                             ? isCoach ? 'text-violet-600' : 'text-accent'
                             : 'text-ink-soft'}`}
             >
-              {/* Coach gets a subtle glow pill when active */}
               {isCoach && isActive && (
                 <span className="absolute top-1.5 inset-x-2 h-8 rounded-xl bg-violet-50 -z-10" />
               )}
               <Icon size={22} strokeWidth={isActive ? 2.5 : 1.8} />
               {label}
-              {/* Dot indicator on Coach tab when not active — invites curiosity */}
               {isCoach && !isActive && (
                 <span className="absolute top-2 right-[calc(50%-14px)] w-1.5 h-1.5 rounded-full bg-violet-500" />
               )}
@@ -47,9 +50,10 @@ export default function BottomNav({ active, onChange }: {
         })}
       </nav>
 
-      {/* Desktop sidebar */}
+      {/* ── Desktop sidebar ── */}
       <aside className="hidden md:flex flex-col w-60 bg-white border-r border-mist-dark
                         min-h-screen p-5 fixed top-0 left-0 gap-1">
+        {/* Logo */}
         <div className="mb-8 px-2 pt-2">
           <span className="text-2xl font-bold text-ink tracking-tight">
             Money<span className="text-accent">Pilot</span>
@@ -57,6 +61,7 @@ export default function BottomNav({ active, onChange }: {
           <p className="text-xs text-ink-soft mt-1">Votre copilote financier au quotidien.</p>
         </div>
 
+        {/* Nav items */}
         {nav.map(({ id, label, icon: Icon }) => {
           const isCoach = id === 'coach'
           const isActive = active === id
@@ -76,7 +81,6 @@ export default function BottomNav({ active, onChange }: {
             >
               <Icon size={18} strokeWidth={isActive ? 2.5 : 1.8} />
               {label}
-              {/* Subtle badge on desktop to signal AI activity */}
               {isCoach && !isActive && (
                 <span className="ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-600">
                   IA
@@ -85,6 +89,30 @@ export default function BottomNav({ active, onChange }: {
             </button>
           )
         })}
+
+        {/* ── Profil + déconnexion en bas de la sidebar ── */}
+        {profile && onSignOut && (
+          <div className="mt-auto pt-4 border-t border-mist-dark">
+            <div className="flex items-center gap-3 px-2 py-2 mb-1">
+              <div className="w-8 h-8 rounded-full bg-accent flex items-center justify-center flex-shrink-0">
+                <span className="text-white text-sm font-bold">
+                  {profile.firstName?.charAt(0).toUpperCase()}
+                </span>
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-ink truncate">{profile.firstName}</p>
+                <p className="text-[10px] text-ink-soft">Connecté</p>
+              </div>
+            </div>
+            <button
+              onClick={onSignOut}
+              className="w-full flex items-center gap-2 px-4 py-2.5 rounded-2xl text-sm font-semibold text-red-500 hover:bg-red-50 transition-colors text-left"
+            >
+              <span>↪️</span>
+              Déconnexion
+            </button>
+          </div>
+        )}
       </aside>
     </>
   )
