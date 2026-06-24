@@ -7,10 +7,10 @@ import MoneyTab from '../MoneyTab'
 import BilanTab from '../BilanTab'
 import CoachTab from '../coach'
 import ProjectsTab from '../ProjectsTab'
+import HistoriqueTab from '../HistoriqueTab'
 import { getTransactions, Transaction, getUserProfile, UserProfile } from '@/lib/storage'
 import { supabase } from '@/lib/supabase'
-import { LogOut } from "lucide-react";
-
+import { LogOut } from "lucide-react"
 
 export type MoneySubTab = 'transactions' | 'budget' | 'dettes' | 'epargne' | 'factures' | 'revenus'
 
@@ -75,40 +75,40 @@ export default function Page() {
   }
 
   return (
-    <div className="min-h-screen bg-mist">     
-       
-       {/* ── Header mobile uniquement ── */}
-          <header className="md:hidden sticky top-0 z-40 bg-white border-b border-mist-dark">
-            <div className="flex items-center justify-between px-4 py-3">
-          
-              {/* Logo gauche */}
-              <div>
-                <span className="text-lg font-bold text-ink tracking-tight">
-                  Money<span className="text-accent">Pilot</span>
-                </span>
-                <p className="text-xs text-ink-soft mt-0.5">
-                  Votre copilote financier au quotidien.
-                </p>
-              </div>
-          
-              {/* User + déconnexion droite */}
-              <div className="flex flex-col items-center gap-1">
-                <div className="flex items-center gap-1">
-                  <span className="text-base">👋</span>
-                  <p className="text-sm font-bold text-ink">{profile.firstName}</p>
-                </div>
-                <button
-                  onClick={handleSignOut}
-                  className="flex items-center justify-center text-red-500 hover:text-red-600 transition-colors"
-                >
-                  <LogOut size={16} />
-                </button>
-              </div>
-          
-            </div>
-          </header>
+    <div className="min-h-screen bg-mist">
 
-      {/* ── Sidebar desktop (profile + déconnexion passés en props) ── */}
+      {/* ── Header mobile uniquement ── */}
+      <header className="md:hidden sticky top-0 z-40 bg-white border-b border-mist-dark">
+        <div className="flex items-center justify-between px-4 py-3">
+
+          {/* Logo gauche */}
+          <div>
+            <span className="text-lg font-bold text-ink tracking-tight">
+              Money<span className="text-accent">Pilot</span>
+            </span>
+            <p className="text-xs text-ink-soft mt-0.5">
+              Votre copilote financier au quotidien.
+            </p>
+          </div>
+
+          {/* User + déconnexion droite */}
+          <div className="flex flex-col items-center gap-1">
+            <div className="flex items-center gap-1">
+              <span className="text-base">👋</span>
+              <p className="text-sm font-bold text-ink">{profile.firstName}</p>
+            </div>
+            <button
+              onClick={handleSignOut}
+              className="flex items-center justify-center text-red-500 hover:text-red-600 transition-colors"
+            >
+              <LogOut size={16} />
+            </button>
+          </div>
+
+        </div>
+      </header>
+
+      {/* ── Sidebar desktop ── */}
       <BottomNav
         active={tab}
         onChange={setTab}
@@ -138,9 +138,10 @@ export default function Page() {
           />
         )}
 
-        {tab === 'bilan'   && <BilanTab    transactions={transactions} />}
-        {tab === 'projets' && <ProjectsTab />}
-        {tab === 'coach'   && <CoachTab />}
+        {tab === 'historique' && <HistoriqueTab />}
+        {tab === 'bilan'      && <BilanTab transactions={transactions} />}
+        {tab === 'projets'    && <ProjectsTab />}
+        {tab === 'coach'      && <CoachTab />}
 
       </main>
     </div>
