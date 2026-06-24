@@ -1,15 +1,16 @@
 'use client'
-import { Home, Wallet, BarChart3, Rocket, BrainCircuit } from 'lucide-react'
+import { Home, Wallet, BarChart3, Rocket, BrainCircuit, CalendarDays } from 'lucide-react'
 import type { UserProfile } from '@/lib/storage'
 
-export type Tab = 'home' | 'money' | 'bilan' | 'projets' | 'coach'
+export type Tab = 'home' | 'money' | 'bilan' | 'projets' | 'coach' | 'historique'
 
 const nav = [
-  { id: 'home'    as Tab, label: 'Accueil',  icon: Home         },
-  { id: 'money'   as Tab, label: 'Argent',   icon: Wallet       },
-  { id: 'bilan'   as Tab, label: 'Bilan',    icon: BarChart3    },
-  { id: 'projets' as Tab, label: 'Projets',  icon: Rocket       },
-  { id: 'coach'   as Tab, label: 'Coach',    icon: BrainCircuit },
+  { id: 'home'       as Tab, label: 'Accueil',    icon: Home         },
+  { id: 'money'      as Tab, label: 'Argent',     icon: Wallet       },
+  { id: 'historique' as Tab, label: 'Historique', icon: CalendarDays },
+  { id: 'bilan'      as Tab, label: 'Bilan',      icon: BarChart3    },
+  { id: 'projets'    as Tab, label: 'Projets',    icon: Rocket       },
+  { id: 'coach'      as Tab, label: 'Coach',      icon: BrainCircuit },
 ]
 
 interface Props {
@@ -40,8 +41,8 @@ export default function BottomNav({ active, onChange, profile, onSignOut }: Prop
               {isCoach && isActive && (
                 <span className="absolute top-1.5 inset-x-2 h-8 rounded-xl bg-violet-50 -z-10" />
               )}
-              <Icon size={22} strokeWidth={isActive ? 2.5 : 1.8} />
-              {label}
+              <Icon size={20} strokeWidth={isActive ? 2.5 : 1.8} />
+              <span className="text-[10px] font-semibold">{label}</span>
               {isCoach && !isActive && (
                 <span className="absolute top-2 right-[calc(50%-14px)] w-1.5 h-1.5 rounded-full bg-violet-500" />
               )}
@@ -90,25 +91,23 @@ export default function BottomNav({ active, onChange, profile, onSignOut }: Prop
           )
         })}
 
-       {/* ── Profil + déconnexion en bas de la sidebar ── */}
-          {profile && onSignOut && (
-            <div className="mt-auto pt-4 border-t border-mist-dark">
-              <div className="flex items-center justify-center px-2 py-2">
-                <span className="text-lg mr-1">👋</span>
-              
-                <p className="text-sm font-bold text-ink truncate">
-                  {profile.firstName}
-                </p>
-              
-                <button
-                  onClick={onSignOut}
-                  className="ml-7 flex items-center justify-center text-red-500 hover:text-red-600 transition-colors"
-                >
-                  <span className="text-xl">⏻</span>
-                </button>
-              </div>
+        {/* ── Profil + déconnexion en bas de la sidebar ── */}
+        {profile && onSignOut && (
+          <div className="mt-auto pt-4 border-t border-mist-dark">
+            <div className="flex items-center justify-center px-2 py-2">
+              <span className="text-lg mr-1">👋</span>
+              <p className="text-sm font-bold text-ink truncate">
+                {profile.firstName}
+              </p>
+              <button
+                onClick={onSignOut}
+                className="ml-7 flex items-center justify-center text-red-500 hover:text-red-600 transition-colors"
+              >
+                <span className="text-xl">⏻</span>
+              </button>
             </div>
-          )}
+          </div>
+        )}
       </aside>
     </>
   )
