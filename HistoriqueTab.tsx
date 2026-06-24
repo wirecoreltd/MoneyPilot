@@ -259,7 +259,7 @@ export default function HistoriqueTab() {
       }))
   }, [filtered])
 
-  // ── Totaux ────────────────────────────────────────────────────────────────
+  // ── Totaux (toujours sur events complet, pas filtered) ───────────────────
   const totals = useMemo(() => {
     const t = { expense: 0, income: 0, facture: 0, dette: 0, epargne: 0 }
     for (const e of events) t[e.type] += e.amount
@@ -268,6 +268,12 @@ export default function HistoriqueTab() {
 
   const totalOut = totals.expense + totals.facture + totals.dette + totals.epargne
   const totalIn  = totals.income
+
+  function handleCardClick(type: EventType | 'all') {
+    setActiveFilter(prev => prev === type ? 'all' : type)
+    // Réinitialise l'expand pour que l'utilisateur voit la liste proprement
+    setExpandedDays(new Set())
+  }
 
   function toggleDay(date: string) {
     setExpandedDays(prev => {
@@ -323,58 +329,97 @@ export default function HistoriqueTab() {
         </div>
       )}
 
-      {/* ── Totaux ── */}
+      {/* ── Cartes cliquables (totaux + filtre en un) ── */}
       {events.length > 0 && (
-        <>
+        <div className="space-y-2">
+          {/* Ligne 1 : Revenus + Sorties totales */}
           <div className="grid grid-cols-2 gap-2">
-            <div className="card bg-positive-light border border-positive/20 text-center py-3">
-              <p className="text-xs font-bold text-positive uppercase tracking-wide">Revenus</p>
-              <p className="text-xl font-bold font-mono text-positive mt-1">+{formatAmount(totalIn)}</p>
-            </div>
-            <div className="card bg-danger-light border border-danger/20 text-center py-3">
-              <p className="text-xs font-bold text-danger uppercase tracking-wide">Sorties</p>
-              <p className="text-xl font-bold font-mono text-danger mt-1">−{formatAmount(totalOut)}</p>
-            </div>
-          </div>
-          <div className="grid grid-cols-3 gap-2">
-            {(Object.entries(totals) as [EventType, number][])
-              .filter(([type]) => type !== 'income')
-              .map(([type, amt]) => {
-                const cfg = TYPE_CONFIG[type]
-                return (
-                  <div key={type} className={`card ${cfg.bg} border ${cfg.border} text-center py-2.5`}>
-                    <p className={`text-[10px] font-bold uppercase tracking-wide ${cfg.color}`}>{cfg.emoji} {cfg.label}</p>
-                    <p className={`text-sm font-bold font-mono ${cfg.color} mt-0.5`}>{formatAmount(amt)}</p>
-                  </div>
-                )
-              })}
-          </div>
-        </>
-      )}
+            {/* Carte Revenus */}
+            <button
+              onClick={() => handleCardClick('income')}
+              className={`card text-center py-3 transition-all active:scale-[0.97] border-2 ${
+                activeFilter === 'income'
+                  ? 'bg-positive text-white border-positive shadow-md'
+                  : 'bg-positive-light border-positive/20'
+              }`}
+            >
+              <p className={`text-[10px] font-bold uppercase tracking-wide ${activeFilter === 'income' ? 'text-white/80' : 'text-positive'}`}>
+                💰 Revenus {activeFilter === 'income' ? '✓' : ''}
+              </p>
+              <p className={`text-xl font-bold font-mono mt-1 ${activeFilter === 'income' ? 'text-white' : 'text-positive'}`}>
+                +{formatAmount(totals.income)}
+              </p>
+              <p className={`text-[10px] mt-0.5 ${activeFilter === 'income' ? 'text-white/70' : 'text-positive/60'}`}>
+                {events.filter(e => e.type === 'income').length} opération{events.filter(e => e.type === 'income').length > 1 ? 's' : ''}
+              </p>
+            </button>
 
-      {/* ── Filtres par type ── */}
-      {events.length > 0 && (
-        <div className="flex gap-2 flex-wrap">
-          <button
-            onClick={() => setActiveFilter('all')}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors ${activeFilter === 'all' ? 'bg-ink text-white border-ink' : 'bg-white text-ink-soft border-mist-dark'}`}
-          >
-            Tout ({events.length})
-          </button>
-          {(Object.keys(TYPE_CONFIG) as EventType[]).map(type => {
-            const count = events.filter(e => e.type === type).length
-            if (count === 0) return null
-            const cfg = TYPE_CONFIG[type]
-            return (
-              <button
-                key={type}
-                onClick={() => setActiveFilter(activeFilter === type ? 'all' : type)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors ${activeFilter === type ? `${cfg.bg} ${cfg.color} ${cfg.border}` : 'bg-white text-ink-soft border-mist-dark'}`}
-              >
-                {cfg.emoji} {cfg.label} ({count})
+            {/* Carte Toutes sorties */}
+            <button
+              onClick={() => handleCardClick('all')}
+              className={`card text-center py-3 transition-all active:scale-[0.97] border-2 ${
+                activeFilter === 'all'
+                  ? 'bg-ink text-white border-ink shadow-md'
+                  : 'bg-danger-light border-danger/20'
+              }`}
+            >
+              <p className={`text-[10px] font-bold uppercase tracking-wide ${activeFilter === 'all' ? 'text-white/80' : 'text-danger'}`}>
+                📊 Tout voir {activeFilter === 'all' ? '✓' : ''}
+              </p>
+              <p className={`text-xl font-bold font-mono mt-1 ${activeFilter === 'all' ? 'text-white' : 'text-danger'}`}>
+                −{formatAmount(totalOut)}
+              </p>
+              <p className={`text-[10px] mt-0.5 ${activeFilter === 'all' ? 'text-white/70' : 'text-danger/60'}`}>
+                {events.length} opérations
+              </p>
+            </button>
+          </div>
+
+          {/* Ligne 2 : détail par type de sortie */}
+          <div className="grid grid-cols-3 gap-2">
+            {(['expense', 'facture', 'dette', 'epargne'] as EventType[]).map(type => {
+              const cfg = TYPE_CONFIG[type]
+              const count = events.filter(e => e.type === type).length
+              const amt = totals[type]
+              if (count === 0) return null
+              const isActive = activeFilter === type
+              return (
+                <button
+                  key={type}
+                  onClick={() => handleCardClick(type)}
+                  className={`card text-center py-2.5 transition-all active:scale-[0.97] border-2 ${
+                    isActive
+                      ? `border-current shadow-md ${cfg.color} ${cfg.bg}`
+                      : `${cfg.bg} ${cfg.border}`
+                  }`}
+                  style={isActive ? { boxShadow: '0 0 0 2px currentColor' } : {}}
+                >
+                  <p className={`text-[10px] font-bold uppercase tracking-wide ${cfg.color}`}>
+                    {cfg.emoji} {cfg.label} {isActive ? '✓' : ''}
+                  </p>
+                  <p className={`text-sm font-bold font-mono mt-0.5 ${cfg.color}`}>
+                    {formatAmount(amt)}
+                  </p>
+                  <p className={`text-[10px] mt-0.5 opacity-60 ${cfg.color}`}>
+                    {count} op.
+                  </p>
+                </button>
+              )
+            })}
+          </div>
+
+          {/* Indication filtre actif */}
+          {activeFilter !== 'all' && (
+            <div className="flex items-center justify-between px-3 py-2 bg-mist rounded-xl">
+              <p className="text-xs text-ink-soft">
+                Filtre actif : <strong className="text-ink">{TYPE_CONFIG[activeFilter].emoji} {TYPE_CONFIG[activeFilter].label}</strong>
+                {' '}· {filtered.length} résultat{filtered.length > 1 ? 's' : ''}
+              </p>
+              <button onClick={() => setActiveFilter('all')} className="text-xs font-bold text-accent">
+                Tout voir
               </button>
-            )
-          })}
+            </div>
+          )}
         </div>
       )}
 
