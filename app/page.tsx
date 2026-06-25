@@ -90,14 +90,16 @@ export default function Page() {
         <div className="flex items-center justify-between px-4 py-3">
 
           {/* Logo gauche */}
-          <div>
+          <div className="flex items-center gap-2">
             <img src="/moneypilot.png" alt="MoneyPilot" className="h-8 w-auto" />
-            <span className="text-lg font-bold text-ink tracking-tight">
-              Money<span className="text-accent">Pilot</span>
-            </span>
-            <p className="text-xs text-orange-400 mt-0.5 text-center">
-              Votre copilote financier au quotidien.
-            </p>
+            <div>
+              <span className="text-lg font-bold text-ink tracking-tight">
+                Money<span className="text-accent">Pilot</span>
+              </span>
+              <p className="text-xs text-orange-400 mt-0.5">
+                Votre copilote financier au quotidien.
+              </p>
+            </div>
           </div>
 
           {/* User + déconnexion droite */}
