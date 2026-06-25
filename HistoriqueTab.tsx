@@ -79,6 +79,7 @@ export default function HistoriqueTab() {
   const [loading, setLoading]         = useState(false)
   const [expandedDays, setExpandedDays] = useState<Set<string>>(new Set())
   const [activeFilter, setActiveFilter] = useState<FilterType>('all')
+  const [showAll, setShowAll] = useState(false)
 
   // ── Dates effectives ────────────────────────────────────────────────────────
   const { dateFrom, dateTo } = useMemo(() => {
@@ -230,8 +231,7 @@ export default function HistoriqueTab() {
     return events.filter(e => e.type === activeFilter)
   }, [events, activeFilter])
 
-  const dayGroups: DayGroup[] = useMemo(() => {
-    console.log('RECALC dayGroups, filtered.length=', filtered.length, 'types=', filtered.map(e => e.type))
+  const allDayGroups: DayGroup[] = useMemo(() => {
     const map: Record<string, HistoriqueEvent[]> = {}
     for (const e of filtered) {
       if (!map[e.date]) map[e.date] = []
@@ -242,8 +242,15 @@ export default function HistoriqueTab() {
       .map(([date, evts]) => ({ date, label: formatDayLabel(date), events: evts }))
   }, [filtered])
 
+  const dayGroups = showAll ? allDayGroups : allDayGroups.slice(0, 5)
+
   function handleCardClick(f: FilterType) {
-    setActiveFilter(prev => prev === f ? 'all' : f)  
+    setActiveFilter(prev => {
+      if (prev === f) return 'all'
+      return f
+    })
+    setShowAll(false)
+    setExpandedDays(new Set())
   }
 
   function toggleDay(date: string) {
@@ -452,13 +459,16 @@ export default function HistoriqueTab() {
       )}
 
       {/* Bande filtre actif (hors budget/projet) */}
+      {/* Bande filtre actif (hors budget/projet) */}
       {activeFilter !== 'all' && activeFilter !== 'budget' && activeFilter !== 'projet' && (
         <div className="flex items-center justify-between px-3 py-2 bg-mist rounded-xl">
           <p className="text-xs text-ink-soft">
             Filtre : <strong className="text-ink">{TYPE_CONFIG[activeFilter].emoji} {TYPE_CONFIG[activeFilter].label}</strong>
             {' '}· {filtered.length} résultat{filtered.length > 1 ? 's' : ''}
           </p>
-          <button onClick={() => setActiveFilter('all')} className="text-xs font-bold text-accent">Tout voir</button>
+          <button onClick={() => setShowAll(true)} className="text-xs font-bold text-accent">
+            {showAll ? '' : `Voir tout (${allDayGroups.length} jours)`}
+          </button>
         </div>
       )}
 
@@ -484,9 +494,8 @@ export default function HistoriqueTab() {
         </div>
       )}
 
-      {/* ── Liste groupée par jour ── */}
-       <p className="text-xs text-red-500">Filter: {activeFilter} | Filtered: {filtered.length} | All: {events.length}</p>
-      {!loading && activeFilter !== 'budget' && activeFilter !== 'projet' && dayGroups.length > 0 && (
+      {/* ── Liste groupée par jour ── */}      
+      {!loading && activeFilter !== 'all' && activeFilter !== 'budget' && activeFilter !== 'projet' && dayGroups.length > 0 && (
         <div className="space-y-2">
           {dayGroups.map(group => {
            const isOpen = true
