@@ -7,7 +7,7 @@ export type Tab = 'home' | 'money' | 'bilan' | 'projets' | 'coach' | 'historique
 const nav = [
   { id: 'home'       as Tab, label: 'Accueil',    icon: Home         },
   { id: 'money'      as Tab, label: 'Argent',     icon: Wallet       },
-  { id: 'historique' as Tab, label: 'Historique', icon: CalendarDays },
+  { id: 'historique' as Tab, label: 'Recap', icon: CalendarDays },
   { id: 'bilan'      as Tab, label: 'Bilan',      icon: BarChart3    },
   { id: 'projets'    as Tab, label: 'Projets',    icon: Rocket       },
   { id: 'coach'      as Tab, label: 'Coach',      icon: BrainCircuit },
