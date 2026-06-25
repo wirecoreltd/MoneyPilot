@@ -91,6 +91,7 @@ export default function Page() {
 
           {/* Logo gauche */}
           <div>
+            <img src="/moneypilot.png" alt="MoneyPilot" className="h-8 w-auto" />
             <span className="text-lg font-bold text-ink tracking-tight">
               Money<span className="text-accent">Pilot</span>
             </span>
