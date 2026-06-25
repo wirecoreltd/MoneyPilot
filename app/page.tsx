@@ -94,7 +94,7 @@ export default function Page() {
             <span className="text-lg font-bold text-ink tracking-tight">
               Money<span className="text-accent">Pilot</span>
             </span>
-            <p className="text-xs text-ink-soft mt-0.5">
+            <p className="text-xs text-orange-400 mt-0.5 text-center">
               Votre copilote financier au quotidien.
             </p>
           </div>
