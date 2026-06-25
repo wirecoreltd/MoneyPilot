@@ -243,8 +243,7 @@ export default function HistoriqueTab() {
   }, [filtered])
 
   function handleCardClick(f: FilterType) {
-    setActiveFilter(prev => prev === f ? 'all' : f)
-    setExpandedDays(new Set())
+    setActiveFilter(prev => prev === f ? 'all' : f)  
   }
 
   function toggleDay(date: string) {
@@ -490,7 +489,7 @@ export default function HistoriqueTab() {
       {!loading && activeFilter !== 'budget' && activeFilter !== 'projet' && dayGroups.length > 0 && (
         <div className="space-y-2">
           {dayGroups.map(group => {
-            const isOpen = expandedDays.has(group.date)
+           const isOpen = true
             const dayTotal = group.events.reduce((s, e) => e.isNegative ? s - e.amount : s + e.amount, 0)
           
             return (
