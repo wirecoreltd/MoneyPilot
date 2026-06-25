@@ -232,6 +232,7 @@ export default function HistoriqueTab() {
   }, [events, activeFilter])
 
   const dayGroups: DayGroup[] = useMemo(() => {
+    console.log('RECALC dayGroups, filtered.length=', filtered.length, 'types=', filtered.map(e => e.type))
     const map: Record<string, HistoriqueEvent[]> = {}
     for (const e of filtered) {
       if (!map[e.date]) map[e.date] = []
