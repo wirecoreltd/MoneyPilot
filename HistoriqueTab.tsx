@@ -160,22 +160,20 @@ export default function HistoriqueTab() {
       })
     }
 
-    // 5. Épargne
-    const { data: goals } = await supabase.from('savings_goals').select('id, name').eq('user_id', uid)
-    const goalMap: Record<string, string> = {}
-    ;(goals ?? []).forEach(g => { goalMap[g.id] = g.name })
-    const goalIds = Object.keys(goalMap)
-    if (goalIds.length > 0) {
-      const { data: deps } = await supabase
-        .from('savings_deposits').select('id, goal_id, amount, deposited_at, note, is_withdrawal')
-        .in('goal_id', goalIds).gte('deposited_at', dateFrom).lte('deposited_at', dateTo)
-      ;(deps ?? []).forEach(r => all.push({
-        id: r.id, date: toYMD(r.deposited_at), type: 'epargne',
-        label: goalMap[r.goal_id] ?? 'Épargne',
-        sublabel: r.note || (r.is_withdrawal ? 'Retrait' : 'Dépôt'),
-        amount: Number(r.amount), isNegative: !r.is_withdrawal,
-      }))
-    }
+    // 5. Épargne — depuis savings_goals directement
+    const { data: goals } = await supabase
+      .from('savings_goals').select('id, name, saved, created_at')
+      .eq('user_id', uid)
+    ;(goals ?? []).forEach(g => {
+      const day = toYMD(g.created_at)
+      if (day >= dateFrom && day <= dateTo && Number(g.saved) > 0) {
+        all.push({
+          id: g.id, date: day, type: 'epargne',
+          label: g.name, sublabel: 'Épargne',
+          amount: Number(g.saved), isNegative: true,
+        })
+      }
+    })
 
     // 6. Budget — on prend le mois de dateFrom pour les stats
     const ym = dateFrom.slice(0, 7)
