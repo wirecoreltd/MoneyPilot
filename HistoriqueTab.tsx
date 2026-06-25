@@ -337,7 +337,7 @@ export default function HistoriqueTab() {
     <div className="space-y-4">
 
       <div>
-        <h1 className="text-xl font-bold text-ink">Historique</h1>
+        <h1 className="text-xl font-bold text-ink">Recap</h1>
         <p className="text-sm text-ink-soft mt-0.5">Toutes tes opérations sur une période</p>
       </div>
 
