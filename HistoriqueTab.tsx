@@ -486,7 +486,7 @@ export default function HistoriqueTab() {
       )}
 
       {/* ── Liste groupée par jour ── */}
-      {!loading && activeFilter !== 'all' && activeFilter !== 'budget' && activeFilter !== 'projet' && dayGroups.length > 0 && (
+      {!loading && activeFilter !== 'budget' && activeFilter !== 'projet' && dayGroups.length > 0 && (
         <div className="space-y-2">
           {dayGroups.map(group => {
             const isOpen = expandedDays.has(group.date)
