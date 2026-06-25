@@ -486,6 +486,7 @@ export default function HistoriqueTab() {
       )}
 
       {/* ── Liste groupée par jour ── */}
+       <p className="text-xs text-red-500">Filter: {activeFilter} | Filtered: {filtered.length} | All: {events.length}</p>
       {!loading && activeFilter !== 'budget' && activeFilter !== 'projet' && dayGroups.length > 0 && (
         <div className="space-y-2">
           {dayGroups.map(group => {
