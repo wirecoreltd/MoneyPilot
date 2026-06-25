@@ -226,8 +226,8 @@ export default function HistoriqueTab() {
   const budgetSpent     = budgetStats.reduce((s, b) => s + b.spent, 0)
   const budgetLimit     = budgetStats.reduce((s, b) => s + b.limit, 0)
 
-  const filtered = useMemo(() => {
-    if (activeFilter === 'all' || activeFilter === 'budget' || activeFilter === 'projet') return events
+ const filtered = useMemo(() => {
+    if (activeFilter === 'all' || activeFilter === 'budget' || activeFilter === 'projet') return [...events]
     return events.filter(e => e.type === activeFilter)
   }, [events, activeFilter])
 
