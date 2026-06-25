@@ -498,7 +498,7 @@ export default function HistoriqueTab() {
       {!loading && activeFilter !== 'all' && activeFilter !== 'budget' && activeFilter !== 'projet' && dayGroups.length > 0 && (
         <div className="space-y-2">
           {dayGroups.map(group => {
-           const isOpen = true
+           const isOpen = expandedDays.has(group.date)
             const dayTotal = group.events.reduce((s, e) => e.isNegative ? s - e.amount : s + e.amount, 0)
           
             return (
