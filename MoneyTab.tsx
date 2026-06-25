@@ -116,7 +116,7 @@ const RECURRING_TO_BUDGET: Record<string, string> = {
 const SUBTABS = [
   {
     id: 'transactions' as SubTab,
-    emoji: '💵', label: 'Transactions',
+    emoji: '🛒', label: 'Dépense',
     shortDesc: 'Mes dépenses du mois',
     fullDesc: 'Enregistre chaque dépense ponctuelle. Les revenus se gèrent dans la carte "Revenus".',
     color: 'bg-blue-50 border-blue-200 text-blue-700',
