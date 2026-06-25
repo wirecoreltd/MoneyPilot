@@ -209,7 +209,6 @@ export default function HistoriqueTab() {
 
     all.sort((a, b) => b.date.localeCompare(a.date))
     setEvents(all)
-    setExpandedDays(new Set())
     setLoading(false)
   }
 
