@@ -490,7 +490,10 @@ export default function HistoriqueTab() {
         <div className="space-y-2">
           {dayGroups.map(group => {
             const isOpen = expandedDays.has(group.date)
-            const dayTotal = group.events.reduce((s, e) => e.isNegative ? s - e.amount : s + e.amount, 0)
+            const dayTotal = activeFilter !== 'all'
+            ? group.events.reduce((s, e) => s + e.amount, 0) * (group.events[0]?.isNegative ? -1 : 1)
+            : group.events.reduce((s, e) => e.isNegative ? s - e.amount : s + e.amount, 0)
+          
             return (
               <div key={group.date} className="rounded-2xl border border-mist-dark overflow-hidden bg-white">
                 <button
@@ -508,7 +511,7 @@ export default function HistoriqueTab() {
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
                     <span className={`font-mono text-sm font-bold ${dayTotal >= 0 ? 'text-positive' : 'text-danger'}`}>
-                      {dayTotal >= 0 ? '+' : ''}{formatAmount(dayTotal)}
+                      {dayTotal >= 0 ? '+' : ''}{formatAmount(Math.abs(dayTotal))}
                     </span>
                     {isOpen ? <ChevronUp size={16} className="text-ink-soft"/> : <ChevronDown size={16} className="text-ink-soft"/>}
                   </div>
