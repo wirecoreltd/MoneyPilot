@@ -2,18 +2,19 @@
 import { useState, useEffect, useRef } from 'react'
 import { Plus, Trash2, X, Info, Pencil, History, ChevronDown, Check, ChevronUp, ChevronRight, Minus, ChevronUp as ChevronUpIcon } from 'lucide-react'
 import {
-  Transaction, BudgetCategory, SavingsGoal, Debt, RecurringPayment,
+  Transaction, BudgetCategory, SavingsGoal, Debt,
   EXPENSE_CATEGORIES, INCOME_CATEGORIES,
   addTransaction, deleteTransaction,
   getBudgets, addBudget, deleteBudget,
   getSavings, addSavingsGoal, updateSavingsGoal, deleteSavingsGoal,
   getDebts, addDebt, updateDebt, deleteDebt,
-  getRecurringPayments, getPaymentForMonth,
   formatAmount, currentYearMonth,
 } from '@/lib/storage'
 import CoachTip from './CoachTip'
 import { supabase } from '@/lib/supabase'
 import { MoneySubTab } from '@/app/page'
+import { useMonthSummary } from '@/lib/useMonthSummary'
+import type { BudgetStatus } from '@/lib/finance'
 
 type SubTab = MoneySubTab
 
@@ -106,11 +107,6 @@ function loadSubTab(): SubTab {
   const v = localStorage.getItem(SUBTAB_KEY)
   if (v === 'transactions' || v === 'budget' || v === 'dettes' || v === 'epargne' || v === 'factures' || v === 'revenus') return v
   return 'transactions'
-}
-
-const RECURRING_TO_BUDGET: Record<string, string> = {
-  logement: 'Logement', transport: 'Transport', alimentation: 'Alimentation',
-  factures: 'Factures', assurance: 'Factures', école: 'Éducation', autre: 'Autre', dette: '',
 }
 
 const SUBTABS = [
@@ -1323,101 +1319,27 @@ function FactureCard({
 
 // ─── Budget ───────────────────────────────────────────────────────────────────
 async function updateBudget(id: string, fields: { name?: string; limit?: number; color?: string }): Promise<void> {
-  await supabase.from('budget_categories').update(fields).eq('id', id)
+  const { error } = await supabase.from('budget_categories').update(fields).eq('id', id)
+  if (error) throw error
 }
 
 function BudgetSection({ transactions }: { transactions: Transaction[] }) {
-  const [budgets, setBudgets] = useState<BudgetCategory[]>([])
-  const [recurringPayments, setRecurringPayments] = useState<RecurringPayment[]>([])
-  const [debtPayments, setDebtPayments] = useState<{ category: string; amount: number }[]>([])
-  // ← Nouveau : paiements de factures ce mois, agrégés par catégorie
-  const [facturePayments, setFacturePayments] = useState<{ category: string; amount: number }[]>([])
-  const [showForm, setShowForm] = useState(false)
-  const [editingBudget, setEditingBudget] = useState<BudgetCategory | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [customCategories, setCustomCategories] = useState<string[]>(loadCustomCategories)
-  const [form, setForm] = useState({ name: '', limit: '', color: COLORS[0] })
   const ym = currentYearMonth()
 
-  useEffect(() => {
-    async function load() {
-      const [b, r] = await Promise.all([getBudgets(), getRecurringPayments()])
-      setBudgets(b); setRecurringPayments(r)
+  // Source unique des chiffres : les dépenses par catégorie (transactions, factures payées,
+  // remboursements de dettes) sont calculées par finance.ts, pas ici.
+  const { summary, error, reload } = useMonthSummary(ym, transactions)
 
-      const { data: { user } } = await supabase.auth.getUser()
+  const [showForm, setShowForm] = useState(false)
+  const [editingBudget, setEditingBudget] = useState<BudgetStatus | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [formError, setFormError] = useState<string | null>(null)
+  const [customCategories, setCustomCategories] = useState<string[]>(loadCustomCategories)
+  const [form, setForm] = useState({ name: '', limit: '', color: COLORS[0] })
 
-      // ── Dettes ────────────────────────────────────────────────────────────
-      const { data: userDebts } = await supabase.from('debts').select('id').eq('user_id', user!.id)
-      const debtIds = (userDebts ?? []).map(d => d.id)
-      const [year, month] = ym.split('-').map(Number)
-      const lastDay = new Date(year, month, 0).getDate()
-      const lastDate = `${ym}-${String(lastDay).padStart(2, '0')}`
-      const { data: dh } = await supabase.from('debt_payment_history').select('amount, category, debt_id, paid_at, note')
-        .in('debt_id', debtIds.length > 0 ? debtIds : ['00000000-0000-0000-0000-000000000000'])
-        .gte('paid_at', `${ym}-01`).lte('paid_at', lastDate)
-      setDebtPayments((dh ?? []).map(r => ({ category: r.category ?? 'Autre', amount: Number(r.amount) })))
+  const budgets = summary?.budgets ?? []
+  const overBudget = budgets.filter(b => b.status === 'over')
 
-      // ── Factures : agréger les paiements du mois par catégorie ────────────
-      // 1. On récupère les factures du mois en cours avec leur catégorie
-      const { data: facturesData } = await supabase
-        .from('factures')
-        .select('id, category')
-        .eq('user_id', user!.id)
-        .eq('month', ym)
-
-      const factureIds = (facturesData ?? []).map(f => f.id)
-
-      if (factureIds.length > 0) {
-        // 2. On récupère les paiements de ces factures sur ce mois
-        const { data: fph } = await supabase
-          .from('facture_payment_history')
-          .select('facture_id, amount, paid_at')
-          .in('facture_id', factureIds)
-          .gte('paid_at', `${ym}-01`)
-          .lte('paid_at', lastDate)
-
-        // 3. On mappe facture_id → category
-        const factureCatMap: Record<string, string> = {}
-        ;(facturesData ?? []).forEach(f => { factureCatMap[f.id] = f.category ?? 'Autre' })
-
-        // 4. On agrège par catégorie
-        const aggr: Record<string, number> = {}
-        ;(fph ?? []).forEach(p => {
-          const cat = factureCatMap[p.facture_id] ?? 'Autre'
-          aggr[cat] = (aggr[cat] || 0) + Number(p.amount)
-        })
-        setFacturePayments(Object.entries(aggr).map(([category, amount]) => ({ category, amount })))
-      } else {
-        setFacturePayments([])
-      }
-    }
-    load().finally(() => setLoading(false))
-  }, [ym])
-
-  // ── Calcul spending : transactions + récurrents + dettes + factures ────────
-  const spending: Record<string, number> = {}
-
-  transactions.filter(t => t.type === 'expense' && t.date.startsWith(ym)).forEach(t => {
-    spending[t.category] = (spending[t.category] || 0) + t.amount
-  })
-  recurringPayments.forEach(r => {
-    const pay = getPaymentForMonth(r, ym)
-    if (!pay.paid) return
-    const cat = RECURRING_TO_BUDGET[r.category]
-    if (!cat) return
-    spending[cat] = (spending[cat] || 0) + pay.amount
-  })
-  debtPayments.forEach(dp => {
-    if (!dp.category) return
-    spending[dp.category] = (spending[dp.category] || 0) + dp.amount
-  })
-  // ← Ajout des paiements de factures dans le spending
-  facturePayments.forEach(fp => {
-    if (!fp.category) return
-    spending[fp.category] = (spending[fp.category] || 0) + fp.amount
-  })
-
-  const overBudget = budgets.filter(b => (spending[b.name] || 0) > b.limit)
   const tip = overBudget.length > 0
     ? `⚠️ Tu dépasses le plafond en : ${overBudget.map(b => b.name).join(', ')}. Réduis ces dépenses !`
     : budgets.length > 0 ? `✅ Tous tes budgets sont respectés ce mois-ci. Continue !`
@@ -1427,27 +1349,64 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
     const updated = [...customCategories, cat]
     setCustomCategories(updated); saveCustomCategories(updated)
   }
-  function openAdd() { setEditingBudget(null); setForm({ name: '', limit: '', color: COLORS[0] }); setShowForm(true) }
-  function openEdit(b: BudgetCategory) { setEditingBudget(b); setForm({ name: b.name, limit: String(b.limit), color: b.color }); setShowForm(true) }
-
-  async function handleSave() {
-    if (!form.name || !form.limit) return
-    const isDuplicate = budgets.some(b => b.name === form.name && (!editingBudget || b.id !== editingBudget.id))
-    if (isDuplicate) return
-    if (editingBudget) {
-      await updateBudget(editingBudget.id, { name: form.name, limit: Number(form.limit), color: form.color })
-      setBudgets(prev => prev.map(b => b.id === editingBudget.id ? { ...b, name: form.name, limit: Number(form.limit), color: form.color } : b))
-    } else {
-      const newBudget = await addBudget({ name: form.name, limit: Number(form.limit), color: form.color })
-      setBudgets(prev => [...prev, newBudget])
-    }
-    setForm({ name: '', limit: '', color: COLORS[0] }); setShowForm(false); setEditingBudget(null)
+  function openAdd() {
+    setEditingBudget(null); setFormError(null)
+    setForm({ name: '', limit: '', color: COLORS[0] }); setShowForm(true)
+  }
+  function openEdit(b: BudgetStatus) {
+    setEditingBudget(b); setFormError(null)
+    setForm({ name: b.name, limit: String(b.limit), color: b.color }); setShowForm(true)
+  }
+  function closeForm() {
+    setShowForm(false); setEditingBudget(null); setFormError(null)
   }
 
-  if (loading) return <div className="card text-center py-8 text-ink-soft">Chargement...</div>
+  async function handleSave() {
+    if (saving || !form.name || !form.limit || Number(form.limit) <= 0) return
+    const isDuplicate = budgets.some(b => b.name === form.name && (!editingBudget || b.id !== editingBudget.id))
+    if (isDuplicate) { setFormError('Un plafond existe déjà pour cette catégorie.'); return }
+
+    setSaving(true); setFormError(null)
+    try {
+      if (editingBudget) {
+        await updateBudget(editingBudget.id, { name: form.name, limit: Number(form.limit), color: form.color })
+      } else {
+        await addBudget({ name: form.name, limit: Number(form.limit), color: form.color })
+      }
+      await reload() // les plafonds ET les dépenses reviennent du même calcul
+      setForm({ name: '', limit: '', color: COLORS[0] })
+      closeForm()
+    } catch {
+      setFormError("Impossible d'enregistrer le plafond. Réessaie.")
+    }
+    setSaving(false)
+  }
+
+  async function handleDelete(id: string) {
+    try { await deleteBudget(id) } finally { await reload() }
+  }
+
+  // Premier chargement (ou échec sans données) : rien à afficher encore
+  if (!summary) {
+    if (error) {
+      return (
+        <div className="card text-center py-8 space-y-3">
+          <p className="text-sm text-danger">Impossible de charger ton budget : {error}</p>
+          <button className="btn-ghost" onClick={reload}>Réessayer</button>
+        </div>
+      )
+    }
+    return <div className="card text-center py-8 text-ink-soft">Chargement...</div>
+  }
 
   return (
     <div className="space-y-3">
+      {error && (
+        <div className="card bg-red-50 border border-red-100 flex items-center justify-between gap-3">
+          <p className="text-xs text-red-700">Impossible d'actualiser tes chiffres : {error}</p>
+          <button onClick={reload} className="text-xs font-semibold text-red-700 underline flex-shrink-0">Réessayer</button>
+        </div>
+      )}
       <CoachTip message={tip} />
       <div className="flex items-start gap-3 p-3 bg-orange-50 border border-orange-200 rounded-2xl">
         <span className="text-lg">💡</span>
@@ -1460,10 +1419,9 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
       {budgets.length === 0 ? (
         <div className="card text-center py-10"><p className="text-3xl mb-2">🎯</p><p className="font-semibold text-ink">Aucun budget défini</p></div>
       ) : budgets.map(b => {
-        const spent = spending[b.name] || 0
-        const pct   = Math.min(100, (spent / b.limit) * 100)
-        const over  = spent > b.limit
-        const near  = pct >= 80 && !over
+        const pct  = Math.min(100, b.pct)
+        const over = b.status === 'over'
+        const near = b.status === 'near'
 
         return (
           <div key={b.id} className="card space-y-3">
@@ -1476,14 +1434,14 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
               </div>
               <div className="flex gap-1">
                 <button className="w-8 h-8 rounded-xl bg-mist hover:bg-accent-light text-ink-soft hover:text-accent flex items-center justify-center" onClick={() => openEdit(b)}><Pencil size={14}/></button>
-                <button className="w-8 h-8 rounded-xl bg-mist hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center" onClick={() => { deleteBudget(b.id); setBudgets(prev => prev.filter(x => x.id !== b.id)) }}><Trash2 size={14}/></button>
+                <button className="w-8 h-8 rounded-xl bg-mist hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center" onClick={() => handleDelete(b.id)}><Trash2 size={14}/></button>
               </div>
             </div>
             <div className="w-full h-2.5 bg-mist-dark rounded-full overflow-hidden">
               <div className="h-full rounded-full transition-all duration-500" style={{ width: `${pct}%`, backgroundColor: over ? '#DC2626' : near ? '#D97706' : b.color }}/>
             </div>
             <div className="flex justify-between text-xs">
-              <span className={`font-mono font-bold ${over ? 'text-danger' : 'text-ink'}`}>{formatAmount(spent)} dépensés</span>
+              <span className={`font-mono font-bold ${over ? 'text-danger' : 'text-ink'}`}>{formatAmount(b.spent)} dépensés</span>
               <span className="font-mono text-ink-soft">plafond : {formatAmount(b.limit)}</span>
             </div>
           </div>
@@ -1495,8 +1453,9 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
           <div className="bottom-sheet-content">
             <div className="flex items-center justify-between mb-2">
               <h2 className="text-lg font-bold text-ink">{editingBudget ? 'Modifier le plafond' : 'Nouveau plafond'}</h2>
-              <button className="btn-icon bg-mist" onClick={() => { setShowForm(false); setEditingBudget(null) }}><X size={20}/></button>
+              <button className="btn-icon bg-mist" onClick={closeForm}><X size={20}/></button>
             </div>
+            {formError && <p className="text-xs text-danger bg-danger-light rounded-xl px-3 py-2">{formError}</p>}
             <div>
               <label className="label">Catégorie de dépense</label>
               <CategoryManager value={form.name} onChange={v => setForm(f => ({...f, name: v}))} customCategories={customCategories} onAddCustom={handleAddCustom} context="budget"/>
@@ -1508,8 +1467,8 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
                 {COLORS.map(c => <button key={c} style={{ backgroundColor: c }} className={`w-10 h-10 rounded-2xl border-2 transition-transform ${form.color === c ? 'border-ink scale-110' : 'border-transparent'}`} onClick={() => setForm(f => ({...f, color: c}))}/>)}
               </div>
             </div>
-            <button className="btn-primary w-full py-4" onClick={handleSave} style={{ backgroundColor: '#F97316' }}>
-              {editingBudget ? 'Enregistrer les modifications' : 'Créer le plafond'}
+            <button className="btn-primary w-full py-4" onClick={handleSave} disabled={saving} style={{ backgroundColor: '#F97316' }}>
+              {saving ? 'Enregistrement...' : editingBudget ? 'Enregistrer les modifications' : 'Créer le plafond'}
             </button>
           </div>
         </div>
