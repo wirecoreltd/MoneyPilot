@@ -1,20 +1,9 @@
 'use client'
 import { useEffect, useState, useRef } from 'react'
-import type { UserProfile, MonthlyIncome } from '@/lib/storage'
+import type { UserProfile } from '@/lib/storage'
+import { getUserProfile, formatAmount } from '@/lib/storage'
 import { RefreshCw, ChevronRight, AlertTriangle, TrendingUp, Shield, Zap } from 'lucide-react'
-import {
-  getUserProfile,
-  getDebts,
-  getSavings,
-  getTransactions,
-  getRecurringPayments,
-  getMonthlyIncomes,
-  getProjects,
-  computeCoachPlan,
-  currentYearMonth,
-  formatAmount,
-  formatDebtEndDate,
-} from '@/lib/storage'
+import { authedPost } from '@/lib/apiClient'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -243,190 +232,20 @@ export default function CoachPage() {
     init()
   }, [])
 
+  // Le serveur reconstruit tout lui-même depuis la base (profil, dettes, épargne,
+  // transactions, factures, historique...). On n'envoie plus rien : juste un
+  // POST authentifié. Voir app/api/coach-analysis/route.ts.
   async function fetchAnalysis(p: UserProfile) {
     setLoading(true)
-
     try {
-      const month = currentYearMonth()
-
-      // 1. Charger toutes les données réelles
-      const [debts, savings, transactions, recurring, incomes, projects] = await Promise.all([
-        getDebts(),
-        getSavings(),
-        getTransactions(),
-        getRecurringPayments(),
-        getMonthlyIncomes(month),
-        getProjects(),
-      ])
-
-      // 2. Plan pré-calculé
-      const effectiveIncomes: MonthlyIncome[] =
-        incomes.length > 0
-          ? incomes
-          : [{ id: 'profile', label: 'Revenu déclaré', amount: p.monthlyIncome, isFixed: true, month }]
-
-      const plan = computeCoachPlan(debts, recurring, effectiveIncomes, month)
-
-      // 3. Dépenses des 30 derniers jours par catégorie
-      const thirtyDaysAgo = new Date()
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
-      const recentExpenses = transactions.filter(
-        t => t.type === 'expense' && new Date(t.date) >= thirtyDaysAgo
-      )
-      const expensesByCategory: Record<string, number> = {}
-      for (const t of recentExpenses) {
-        expensesByCategory[t.category] = (expensesByCategory[t.category] || 0) + t.amount
-      }
-      const totalRecentExpenses = recentExpenses.reduce((s, t) => s + t.amount, 0)
-
-      // 4. Historique des 3 derniers mois (par mois calendaire)
-      const last3MonthsAnalysis = Array.from({ length: 3 }, (_, i) => {
-        const d = new Date()
-        d.setDate(1)
-        d.setMonth(d.getMonth() - i - 1)
-        const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
-        const label = d.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })
-        const txs = transactions.filter(t => t.date.startsWith(ym))
-        const inc = txs.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0)
-        const exp = txs.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0)
-        const bycat: Record<string, number> = {}
-        txs.filter(t => t.type === 'expense').forEach(t => {
-          bycat[t.category] = (bycat[t.category] || 0) + t.amount
-        })
-        const catLines = Object.entries(bycat)
-          .sort((a, b) => b[1] - a[1])
-          .map(([cat, amt]) => `    • ${cat}: ${formatAmount(amt, p.currency)}`)
-          .join('\n')
-        return [
-          `${label}:`,
-          `  Revenus: ${formatAmount(inc, p.currency)} | Dépenses: ${formatAmount(exp, p.currency)} | Solde: ${formatAmount(inc - exp, p.currency)}`,
-          catLines ? `  Détail dépenses:\n${catLines}` : '  Aucune dépense enregistrée',
-        ].join('\n')
-      })
-      const historyBlock = last3MonthsAnalysis.join('\n\n')
-
-      // 5. Bloc dettes — axé sur la MENSUALITÉ, pas le capital total
-      const owedDebts = debts.filter(d => d.type === 'owe')
-      const debtsBlock = owedDebts.length === 0
-        ? "Aucune dette en cours."
-        : owedDebts.map(d => {
-            const monthsLeft = d.minimumPayment > 0 ? Math.ceil(d.remaining / d.minimumPayment) : null
-            const endLabel = formatDebtEndDate(d)
-            const debtRatioOfIncome = plan.totalIncome > 0
-              ? Math.round((d.minimumPayment / plan.totalIncome) * 100)
-              : 0
-            return [
-              `- "${d.person}" (catégorie: ${d.category})`,
-              `  ⚠️ MENSUALITÉ = ce qui sort chaque mois: ${formatAmount(d.minimumPayment, p.currency)} (${debtRatioOfIncome}% du revenu mensuel)`,
-              `  Capital restant à rembourser: ${formatAmount(d.remaining, p.currency)} — info contextuelle uniquement, NE PAS comparer au revenu`,
-              `  Capital initial: ${formatAmount(d.amount, p.currency)} — info contextuelle uniquement`,
-              d.interestRate ? `  Taux d'intérêt: ${d.interestRate}%` : null,
-              monthsLeft !== null
-                ? `  Durée restante au rythme actuel: ${monthsLeft} mois${endLabel ? ` (${endLabel})` : ''}`
-                : null,
-              d.dueDate ? `  Échéance: ${d.dueDate}` : null,
-              d.recurring ? `  Type: récurrente (se renouvelle chaque mois)` : null,
-            ].filter(Boolean).join('\n')
-          }).join('\n\n')
-
-      // 6. Bloc épargnes
-      const savingsBlock = savings.length === 0
-        ? "Aucune épargne en cours."
-        : savings.map(s => {
-            const pct = s.target > 0 ? Math.round((s.saved / s.target) * 100) : 0
-            return `- "${s.name}" (${s.category}): ${formatAmount(s.saved, p.currency)} / ${formatAmount(s.target, p.currency)} (${pct}%)`
-          }).join('\n')
-
-      // 7. Bloc charges récurrentes
-      const recurringBlock = recurring.length === 0
-        ? "Aucune charge récurrente enregistrée."
-        : recurring.map(r =>
-            `- ${r.name} (${r.category}): ${formatAmount(r.defaultAmount, p.currency)}/${r.frequency === 'monthly' ? 'mois' : 'an'}`
-          ).join('\n')
-
-      // 8. Bloc projets
-      const projectsBlock = projects.length === 0
-        ? "Aucun projet en cours."
-        : projects.map(pr =>
-            `- ${pr.emoji} "${pr.name}" (${pr.type}): ${formatAmount(pr.savedAmount, p.currency)} / ${formatAmount(pr.targetAmount, p.currency)}, contribution mensuelle: ${formatAmount(pr.monthlyContribution, p.currency)}`
-          ).join('\n')
-
-      // 9. Bloc dépenses récentes
-      const expensesBlock = Object.keys(expensesByCategory).length === 0
-        ? "Pas de dépenses enregistrées sur les 30 derniers jours."
-        : Object.entries(expensesByCategory)
-            .sort((a, b) => b[1] - a[1])
-            .map(([cat, amt]) => `- ${cat}: ${formatAmount(amt, p.currency)}`)
-            .join('\n')
-
-      // 10. Bloc plan pré-calculé
-      const planBlock = [
-        `Revenu mensuel total: ${formatAmount(plan.totalIncome, p.currency)}`,
-        `Charges fixes (loyer, factures, etc.): ${formatAmount(plan.fixedCharges, p.currency)}`,
-        `Total mensualités dettes (somme des MENSUALITÉS, pas des capitaux): ${formatAmount(plan.debtMinimums, p.currency)}`,
-        `Estimation dépenses variables: ${formatAmount(plan.variableEstimate, p.currency)}`,
-        `💰 Argent libre disponible/mois (après tout): ${formatAmount(plan.freeMoney, p.currency)}`,
-        plan.snowballTarget
-          ? `Cible snowball recommandée: "${plan.snowballTarget.person}" (capital restant ${formatAmount(plan.snowballTarget.remaining, p.currency)}, mensualité actuelle ${formatAmount(plan.snowballTarget.minimumPayment, p.currency)}) — suggestion d'y ajouter ${formatAmount(plan.snowballSuggestion, p.currency)}/mois`
-          : `Aucune cible snowball identifiée.`,
-        `Suggestion épargne/mois: ${formatAmount(plan.savingsSuggestion, p.currency)}`,
-        `Suggestion loisirs/mois: ${formatAmount(plan.leisureSuggestion, p.currency)}`,
-        plan.alerts.length > 0
-          ? `Alertes système:\n${plan.alerts.map(a => `  ${a}`).join('\n')}`
-          : null,
-      ].filter(Boolean).join('\n')
-
-      // 11. Contexte complet pour le LLM
-      const context = `
-PROFIL UTILISATEUR :
-Prénom : ${p.firstName}
-Revenu mensuel déclaré dans le profil : ${formatAmount(p.monthlyIncome, p.currency)}
-Situation familiale : ${p.situation}${p.children > 0 ? ` avec ${p.children} enfant(s)` : ''}
-Type de revenu : ${p.incomeType}
-Objectif principal : ${p.mainGoal}
-Devise : ${p.currency}
-
-═══ PLAN FINANCIER PRÉ-CALCULÉ (chiffres fiables — ne pas recalculer) ═══
-${planBlock}
-
-═══ DETTES DÉTAILLÉES ═══
-IMPORTANT : Analyse uniquement les MENSUALITÉS pour évaluer la charge. Le capital total n'est pas une charge mensuelle.
-${debtsBlock}
-
-═══ ÉPARGNES EN COURS ═══
-${savingsBlock}
-
-═══ CHARGES FIXES RÉCURRENTES ═══
-${recurringBlock}
-
-═══ PROJETS ═══
-${projectsBlock}
-
-═══ HISTORIQUE 3 DERNIERS MOIS (analyse les tendances ici) ═══
-${historyBlock}
-
-═══ DÉPENSES DES 30 DERNIERS JOURS PAR CATÉGORIE (total: ${formatAmount(totalRecentExpenses, p.currency)}) ═══
-${expensesBlock}
-`.trim()
-
-      const res = await fetch('/api/coach-analysis', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ context }),
-      })
-
-      if (!res.ok) throw new Error(`API error: ${res.status}`)
-
-      const parsed: CoachAnalysis = await res.json()
-      if ((parsed as any).error) throw new Error((parsed as any).error)
-
+      const parsed = await authedPost<CoachAnalysis>('/api/coach-analysis')
       setAnalysis(parsed)
       setLastUpdated(new Date())
     } catch (err) {
       console.error('Coach analysis failed:', err)
       setAnalysis({
         greeting: `${p.firstName}, voici ton analyse.`,
-        situation: "Impossible de charger l'analyse complète. Vérifie ta connexion et réessaie.",
+        situation: err instanceof Error ? err.message : "Impossible de charger l'analyse complète. Vérifie ta connexion et réessaie.",
         urgency: 'medium',
         score: 50,
         scoreEvolution: 0,
@@ -443,7 +262,6 @@ ${expensesBlock}
       })
       setLastUpdated(new Date())
     }
-
     setLoading(false)
   }
 
