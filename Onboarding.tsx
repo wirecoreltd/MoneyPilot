@@ -1,6 +1,8 @@
 'use client'
 import { useState } from 'react'
 import { UserProfile, saveUserProfile } from '@/lib/storage'
+import { initialScoreFromAnswers } from '@/lib/finance'
+import { authedPost } from '@/lib/apiClient'
 
 interface Props { onComplete: (profile: UserProfile) => void }
 
@@ -15,6 +17,14 @@ type Step =
   | 'goal'
   | 'stress'
   | 'analysis'
+
+interface PlanStep { priority: number; timeframe: string; action: string }
+interface OnboardingAnalysis {
+  diagnostic: string
+  problems: string[]
+  plan: PlanStep[]
+  motivation: string
+}
 
 // ─── Data ─────────────────────────────────────────────────────────────────────
 const SITUATIONS = [
@@ -66,6 +76,20 @@ const STRESS_LEVELS = [
   { id: 'medium', emoji: '😟', label: 'Modéré',            desc: 'L\'argent m\'occupe l\'esprit régulièrement' },
   { id: 'high',   emoji: '😰', label: 'Très stressant',    desc: 'Les finances impactent mon quotidien' },
 ]
+
+// Plan de secours si l'analyse IA est indisponible (le score, lui, est toujours réel).
+function fallbackAnalysis(firstName: string): OnboardingAnalysis {
+  return {
+    diagnostic: 'Prêt à démarrer',
+    problems: ['Lance-toi en enregistrant tes premières transactions'],
+    plan: [
+      { priority: 1, timeframe: "Aujourd'hui", action: 'Ajoute tes revenus du mois en cours' },
+      { priority: 2, timeframe: 'Cette semaine', action: 'Note toutes tes dépenses fixes' },
+      { priority: 3, timeframe: 'Ce mois-ci', action: 'Identifie où tu peux économiser 10%' },
+    ],
+    motivation: `${firstName}, la meilleure décision financière que tu puisses prendre, c'est de commencer maintenant.`,
+  }
+}
 
 // ─── Progress bar ─────────────────────────────────────────────────────────────
 const STEPS_ORDER: Step[] = ['welcome', 'situation', 'income', 'expenses', 'debts', 'savings', 'goal', 'stress', 'analysis']
@@ -145,8 +169,10 @@ function CoachBubble({ message }: { message: string }) {
 export default function Onboarding({ onComplete }: Props) {
   const [step, setStep] = useState<Step>('welcome')
   const [aiLoading, setAiLoading] = useState(false)
-  const [aiPlan, setAiPlan] = useState('')
-  const [aiScore, setAiScore] = useState<number | null>(null)
+  const [analysis, setAnalysis] = useState<OnboardingAnalysis | null>(null)
+  const [initialScore, setInitialScore] = useState(0)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
 
   const [data, setData] = useState({
     firstName: '',
@@ -191,95 +217,49 @@ export default function Onboarding({ onComplete }: Props) {
     }
   }
 
-  // ── Generate AI analysis ──────────────────────────────────────────────────────
+  // ── Analyse : score par règles (finance.ts) + texte par l'IA (route serveur) ───
   async function generateAnalysis() {
+    // Le score ne dépend jamais du modèle : il est calculé ici, à partir des réponses.
+    setInitialScore(initialScoreFromAnswers({
+      incomeType: data.incomeType,
+      expenseLevel: data.expenseLevel,
+      debtType: data.debtType,
+      savingsLevel: data.savingsLevel,
+      stressLevel: data.stressLevel,
+    }))
     setStep('analysis')
     setAiLoading(true)
 
-    const profileSummary = `
-Prénom : ${data.firstName}
-Situation familiale : ${data.situation}${data.children > 0 ? ` (${data.children} enfant(s))` : ''}
-Revenu mensuel net : ${data.monthlyIncome} Rs${data.secondIncome ? ` + ${data.secondIncome} Rs (2ème revenu)` : ''}
-Type de revenu : ${data.incomeType}
-Niveau de dépenses : ${data.expenseLevel}
-Situation dettes : ${data.debtType}${data.debtAmount ? ` — montant estimé : ${data.debtAmount} Rs` : ''}
-Niveau d'épargne actuel : ${data.savingsLevel}
-Objectif principal : ${data.mainGoal}
-Niveau de stress financier : ${data.stressLevel}
-    `.trim()
-
     try {
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-6',
-          max_tokens: 1000,
-          system: `Tu es un coach financier expert et bienveillant. Tu parles en français.
-Tu reçois le profil complet d'un utilisateur et tu dois :
-1. Donner un score de santé financière initial de 0 à 100
-2. Identifier les 2-3 problèmes les plus urgents
-3. Donner un plan d'action concret en 3 étapes prioritaires (court terme, moyen terme, long terme)
-4. Terminer par une phrase de motivation personnalisée
-
-Réponds UNIQUEMENT en JSON avec ce format exact :
-{
-  "score": 65,
-  "diagnostic": "Phrase courte résumant la situation en 10 mots max",
-  "problems": ["problème 1", "problème 2", "problème 3"],
-  "plan": [
-    {"priority": 1, "timeframe": "Ce mois-ci", "action": "action concrète et chiffrée"},
-    {"priority": 2, "timeframe": "Dans 3 mois", "action": "action concrète et chiffrée"},
-    {"priority": 3, "timeframe": "Dans 6 mois", "action": "action concrète et chiffrée"}
-  ],
-  "motivation": "Message personnalisé de 1-2 phrases"
-}`,
-          messages: [{
-            role: 'user',
-            content: `Analyse ce profil financier et génère le plan d'action :\n\n${profileSummary}`
-          }]
-        })
+      const { analysis: result } = await authedPost<{ analysis: OnboardingAnalysis }>('/api/onboarding-analysis', {
+        answers: {
+          firstName: data.firstName,
+          situation: data.situation,
+          children: data.children,
+          monthlyIncome: Number(data.monthlyIncome) || 0,
+          secondIncome: Number(data.secondIncome) || 0,
+          incomeType: data.incomeType,
+          expenseLevel: data.expenseLevel,
+          debtType: data.debtType,
+          debtAmount: Number(data.debtAmount) || 0,
+          savingsLevel: data.savingsLevel,
+          mainGoal: data.mainGoal,
+          stressLevel: data.stressLevel,
+        },
       })
-      const result = await response.json()
-      const text = result.content?.[0]?.text || ''
-      try {
-        const clean = text.replace(/```json|```/g, '').trim()
-        const parsed = JSON.parse(clean)
-        setAiScore(parsed.score)
-        setAiPlan(JSON.stringify(parsed))
-      } catch {
-        setAiPlan(JSON.stringify({
-          score: 50,
-          diagnostic: "Profil en cours d'analyse",
-          problems: ["Données insuffisantes pour une analyse complète"],
-          plan: [
-            { priority: 1, timeframe: "Ce mois-ci", action: "Enregistre tes revenus et dépenses dans l'app" },
-            { priority: 2, timeframe: "Dans 3 mois", action: "Crée un fonds d'urgence de 3 mois de dépenses" },
-            { priority: 3, timeframe: "Dans 6 mois", action: "Définis un objectif d'épargne concret" }
-          ],
-          motivation: `Bienvenue ${data.firstName} ! Chaque voyage commence par un premier pas. Commençons ensemble.`
-        }))
-        setAiScore(50)
-      }
+      setAnalysis(result)
     } catch {
-      setAiPlan(JSON.stringify({
-        score: 50,
-        diagnostic: "Prêt à démarrer",
-        problems: ["Lance-toi en enregistrant tes premières transactions"],
-        plan: [
-          { priority: 1, timeframe: "Aujourd'hui", action: "Ajoute tes revenus du mois en cours" },
-          { priority: 2, timeframe: "Cette semaine", action: "Note toutes tes dépenses fixes" },
-          { priority: 3, timeframe: "Ce mois-ci", action: "Identifie où tu peux économiser 10%" }
-        ],
-        motivation: `${data.firstName}, la meilleure décision financière que tu puisses prendre, c'est de commencer maintenant.`
-      }))
-      setAiScore(50)
+      setAnalysis(fallbackAnalysis(data.firstName))
     }
     setAiLoading(false)
   }
 
   // ── Finish onboarding ─────────────────────────────────────────────────────────
-  function finish() {
+  async function finish() {
+    if (saving) return
+    setSaving(true)
+    setSaveError(null)
+
     const profile: UserProfile = {
       completed: true,
       firstName: data.firstName || 'Ami',
@@ -292,22 +272,34 @@ Réponds UNIQUEMENT en JSON avec ce format exact :
       currency: 'MUR',
       language: 'fr',
       createdAt: new Date().toISOString(),
-      // Extra fields saved for the coach
-      coachPlan: aiPlan,
-      initialScore: aiScore ?? 50,
-      expenseLevel: data.expenseLevel,
-      debtType: data.debtType,
-      savingsLevel: data.savingsLevel,
-      stressLevel: data.stressLevel,
+      // Champs supplémentaires (nécessitent les colonnes correspondantes dans `profiles`).
+      // Si l'utilisateur passe l'introduction, on n'invente ni score ni plan.
+      secondIncome: Number(data.secondIncome) || 0,
+      debtAmount: Number(data.debtAmount) || 0,
+      expenseLevel: data.expenseLevel || undefined,
+      debtType: data.debtType || undefined,
+      savingsLevel: data.savingsLevel || undefined,
+      stressLevel: data.stressLevel || undefined,
+      coachPlan: analysis ? JSON.stringify(analysis) : undefined,
+      initialScore: analysis ? initialScore : undefined,
     } as any
-    saveUserProfile(profile)
-    onComplete(profile)
+
+    try {
+      await saveUserProfile(profile)
+      onComplete(profile)
+    } catch {
+      setSaveError("Impossible d'enregistrer ton profil pour le moment. Vérifie ta connexion et réessaie.")
+      setSaving(false)
+    }
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
   // RENDER
   // ─────────────────────────────────────────────────────────────────────────────
   const coachMsg = getCoachMessage()
+
+  const scoreColor = initialScore >= 70 ? '#16A34A' : initialScore >= 40 ? '#D97706' : '#DC2626'
+  const scoreLabel = initialScore >= 70 ? 'Bonne situation' : initialScore >= 40 ? 'À améliorer' : 'Situation urgente'
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#1E40AF] via-[#2563EB] to-[#0EA5E9] flex items-center justify-center p-4">
@@ -660,86 +652,78 @@ Réponds UNIQUEMENT en JSON avec ce format exact :
                   ))}
                 </div>
               </div>
-            ) : (() => {
-              let parsed: any = null
-              try { parsed = JSON.parse(aiPlan) } catch {}
-              if (!parsed) return null
-
-              const scoreColor = parsed.score >= 70 ? '#16A34A' : parsed.score >= 40 ? '#D97706' : '#DC2626'
-              const scoreLabel = parsed.score >= 70 ? 'Bonne situation' : parsed.score >= 40 ? 'À améliorer' : 'Situation urgente'
-
-              return (
-                <div className="space-y-4">
-                  {/* Score card */}
-                  <div className="bg-white rounded-3xl p-6 shadow-2xl">
-                    <div className="text-center mb-4">
-                      <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">Ton score financier initial</p>
-                      <div className="relative w-32 h-32 mx-auto">
-                        <svg viewBox="0 0 120 120" className="w-full h-full -rotate-90">
-                          <circle cx="60" cy="60" r="50" fill="none" stroke="#F1F5F9" strokeWidth="10"/>
-                          <circle
-                            cx="60" cy="60" r="50" fill="none"
-                            stroke={scoreColor} strokeWidth="10"
-                            strokeDasharray={`${2 * Math.PI * 50}`}
-                            strokeDashoffset={`${2 * Math.PI * 50 * (1 - parsed.score / 100)}`}
-                            strokeLinecap="round"
-                            style={{ transition: 'stroke-dashoffset 1s ease' }}
-                          />
-                        </svg>
-                        <div className="absolute inset-0 flex flex-col items-center justify-center">
-                          <p className="text-3xl font-black" style={{ color: scoreColor }}>{parsed.score}</p>
-                          <p className="text-xs text-gray-400">/100</p>
-                        </div>
+            ) : analysis ? (
+              <div className="space-y-4">
+                {/* Score card */}
+                <div className="bg-white rounded-3xl p-6 shadow-2xl">
+                  <div className="text-center mb-4">
+                    <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">Ton score financier initial</p>
+                    <div className="relative w-32 h-32 mx-auto">
+                      <svg viewBox="0 0 120 120" className="w-full h-full -rotate-90">
+                        <circle cx="60" cy="60" r="50" fill="none" stroke="#F1F5F9" strokeWidth="10"/>
+                        <circle
+                          cx="60" cy="60" r="50" fill="none"
+                          stroke={scoreColor} strokeWidth="10"
+                          strokeDasharray={`${2 * Math.PI * 50}`}
+                          strokeDashoffset={`${2 * Math.PI * 50 * (1 - initialScore / 100)}`}
+                          strokeLinecap="round"
+                          style={{ transition: 'stroke-dashoffset 1s ease' }}
+                        />
+                      </svg>
+                      <div className="absolute inset-0 flex flex-col items-center justify-center">
+                        <p className="text-3xl font-black" style={{ color: scoreColor }}>{initialScore}</p>
+                        <p className="text-xs text-gray-400">/100</p>
                       </div>
-                      <p className="font-bold text-base mt-2" style={{ color: scoreColor }}>{scoreLabel}</p>
-                      <p className="text-sm text-gray-500 mt-1">{parsed.diagnostic}</p>
                     </div>
+                    <p className="font-bold text-base mt-2" style={{ color: scoreColor }}>{scoreLabel}</p>
+                    <p className="text-sm text-gray-500 mt-1">{analysis.diagnostic}</p>
                   </div>
+                </div>
 
-                  {/* Problems */}
-                  {parsed.problems?.length > 0 && (
-                    <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-4 space-y-2">
-                      <p className="text-white font-bold text-sm uppercase tracking-wide mb-3">🔍 Points à traiter</p>
-                      {parsed.problems.map((p: string, i: number) => (
-                        <div key={i} className="flex items-start gap-2">
-                          <span className="text-orange-300 text-sm flex-shrink-0 mt-0.5">▸</span>
-                          <p className="text-white/80 text-sm">{p}</p>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Plan */}
-                  <div className="bg-white rounded-3xl p-5 shadow-xl space-y-3">
-                    <p className="font-black text-gray-800 text-base">🗺️ Ton plan d'action</p>
-                    {parsed.plan?.map((step: any, i: number) => (
-                      <div key={i} className="flex items-start gap-3 p-3 rounded-2xl bg-gray-50">
-                        <div className="w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 font-black text-white text-sm"
-                          style={{ backgroundColor: i === 0 ? '#DC2626' : i === 1 ? '#D97706' : '#16A34A' }}>
-                          {step.priority}
-                        </div>
-                        <div>
-                          <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">{step.timeframe}</p>
-                          <p className="text-sm font-semibold text-gray-700 mt-0.5">{step.action}</p>
-                        </div>
+                {/* Problems */}
+                {analysis.problems.length > 0 && (
+                  <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-4 space-y-2">
+                    <p className="text-white font-bold text-sm uppercase tracking-wide mb-3">🔍 Points à traiter</p>
+                    {analysis.problems.map((p, i) => (
+                      <div key={i} className="flex items-start gap-2">
+                        <span className="text-orange-300 text-sm flex-shrink-0 mt-0.5">▸</span>
+                        <p className="text-white/80 text-sm">{p}</p>
                       </div>
                     ))}
                   </div>
+                )}
 
-                  {/* Motivation */}
-                  <div className="bg-white/10 rounded-2xl p-4">
-                    <p className="text-white text-sm leading-relaxed text-center italic">"{parsed.motivation}"</p>
-                  </div>
-
-                  <button
-                    onClick={finish}
-                    className="w-full py-4 bg-white text-blue-600 font-black text-base rounded-2xl active:scale-[0.98] transition-all shadow-2xl"
-                  >
-                    Démarrer MoneyPilot 🚀
-                  </button>
+                {/* Plan */}
+                <div className="bg-white rounded-3xl p-5 shadow-xl space-y-3">
+                  <p className="font-black text-gray-800 text-base">🗺️ Ton plan d'action</p>
+                  {analysis.plan.map((p, i) => (
+                    <div key={i} className="flex items-start gap-3 p-3 rounded-2xl bg-gray-50">
+                      <div className="w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 font-black text-white text-sm"
+                        style={{ backgroundColor: i === 0 ? '#DC2626' : i === 1 ? '#D97706' : '#16A34A' }}>
+                        {p.priority}
+                      </div>
+                      <div>
+                        <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">{p.timeframe}</p>
+                        <p className="text-sm font-semibold text-gray-700 mt-0.5">{p.action}</p>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              )
-            })()}
+
+                {/* Motivation */}
+                <div className="bg-white/10 rounded-2xl p-4">
+                  <p className="text-white text-sm leading-relaxed text-center italic">"{analysis.motivation}"</p>
+                </div>
+
+                <button
+                  onClick={finish}
+                  disabled={saving}
+                  className="w-full py-4 bg-white text-blue-600 font-black text-base rounded-2xl active:scale-[0.98] transition-all shadow-2xl disabled:opacity-60"
+                >
+                  {saving ? 'Enregistrement...' : 'Démarrer MoneyPilot 🚀'}
+                </button>
+              </div>
+            ) : null}
           </div>
         )}
 
@@ -747,10 +731,16 @@ Réponds UNIQUEMENT en JSON avec ce format exact :
         {step === 'welcome' && (
           <button
             onClick={finish}
-            className="w-full mt-4 text-white/40 text-xs py-2 hover:text-white/60 transition-colors"
+            disabled={saving}
+            className="w-full mt-4 text-white/40 text-xs py-2 hover:text-white/60 transition-colors disabled:opacity-40"
           >
             Passer l'introduction
           </button>
+        )}
+
+        {/* Erreur de sauvegarde du profil */}
+        {saveError && (
+          <p className="mt-4 text-center text-sm text-white bg-red-500/30 rounded-2xl p-3">{saveError}</p>
         )}
       </div>
     </div>
