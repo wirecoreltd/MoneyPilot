@@ -1,14 +1,14 @@
 'use client'
 import { useState, useRef, useEffect } from 'react'
-import { Plus, X, MessageCircle, Send, Wallet, ChevronRight } from 'lucide-react'
+import { Plus, X, MessageCircle, Send, ChevronRight } from 'lucide-react'
 import {
   Transaction, TransactionType, EXPENSE_CATEGORIES, INCOME_CATEGORIES,
-  addTransaction, formatAmount, computeCoachPlan, computeHealthScore,
-  currentYearMonth, UserProfile, getSavings, getDebts, getProjects,
-  Project, Debt, SavingsGoal,
+  addTransaction, formatAmount, UserProfile,
 } from '@/lib/storage'
+import { currentYearMonth } from '@/lib/finance'
+import { useMonthSummary } from '@/lib/useMonthSummary'
+import { authedPost } from '@/lib/apiClient'
 import CoachTip from './CoachTip'
-import { supabase } from '@/lib/supabase'
 
 export type MoneySubTab = 'transactions' | 'revenus' | 'factures' | 'dettes' | 'epargne' | 'budget'
 
@@ -113,6 +113,9 @@ function HealthArc({ score, color }: { score: number; color: string }) {
   )
 }
 
+// Montant tant que les chiffres ne sont pas chargés -> « — »
+const amt = (v: number | undefined) => (v === undefined ? '—' : formatAmount(v))
+
 export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, onGoToProjects }: Props) {
   const [showForm, setShowForm] = useState(false)
   const [showChat, setShowChat] = useState(false)
@@ -120,96 +123,56 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
   const [chatInput, setChatInput] = useState('')
   const [chatLoading, setChatLoading] = useState(false)
   const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [totalSavings, setTotalSavings] = useState(0)
-  const [totalDebt, setTotalDebt] = useState(0)
-  const [totalFactures, setTotalFactures] = useState(0)
-  const [debts, setDebts] = useState<Debt[]>([])
-  const [projects, setProjects] = useState<Project[]>([])
-  const [paidTotal, setPaidTotal] = useState(0)
-  const [totalDue, setTotalDue] = useState(0)
-  const [monthlyIncome, setMonthlyIncome] = useState(0)
   const chatEndRef = useRef<HTMLDivElement>(null)
 
   const ym = currentYearMonth()
-  const monthTxs = transactions.filter(t => t.date.startsWith(ym))
-  const income = monthTxs.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0)
-  const expenses = monthTxs.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0)
-  const totalTransactions = expenses
-  const balance = monthlyIncome - expenses
+
+  // ── Source unique des chiffres : summary (mois), health (score), plan (Coach) ──
+  const { snapshot, summary, health, plan, error, reload } = useMonthSummary(ym, transactions)
+
+  const projects = snapshot?.projects ?? []
   const recent = transactions.slice(0, 5)
-  const health = computeHealthScore(transactions, [], [], [])
-  const plan = computeCoachPlan([], [], [], ym)
   const categories = form.type === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES
   const dailyThought = getDailyThought()
 
-  const healthColor = health.score >= 80 ? '#16A34A' : health.score >= 60 ? '#2563EB' : health.score >= 40 ? '#D97706' : '#DC2626'
-  const healthLabel = health.score >= 80 ? 'Excellent' : health.score >= 60 ? 'Bien' : health.score >= 40 ? 'À améliorer' : 'Fragile'
+  const healthScore = health?.score ?? 0
+  const healthColor = health?.color ?? '#8896B0'
+  const healthLabel = health?.label ?? 'Chargement…'
 
-  const tip = plan.alerts[0] ??
-    (balance > 0
-      ? `${profile.firstName}, tu as ${formatAmount(balance)} de solde ce mois. ${plan.freeMoney > 0 ? `Mets ${formatAmount(plan.savingsSuggestion)} de côté dès maintenant !` : ''}`
-      : `Ajoute tes revenus du mois pour que le Coach t'aide.`)
+  // ── Ratios (tous dérivés de summary, jamais recalculés à la main) ──
+  const hasIncome = !!summary && summary.income > 0
+  // Taux d'épargne = épargne nette du mois (dépôts − retraits) / revenus du mois
+  const savingsRate = hasIncome ? `${Math.round((summary!.savedNet / summary!.income) * 100)}%` : '—'
+  // Endettement = mensualités dues / revenus du mois (jamais le capital restant)
+  const debtRate = hasIncome ? `${Math.round((summary!.debtDue / summary!.income) * 100)}%` : '—'
+  // Mois de sécurité = épargne totale / coût mensuel engagé
+  const safety = summary?.safetyMonths != null ? `${summary.safetyMonths.toFixed(1)}m` : '—'
 
-  useEffect(() => {
-    getSavings().then(gs => setTotalSavings(gs.reduce((s, g) => s + g.saved, 0)))
-
-    getDebts().then(async ds => {
-      setDebts(ds)
-      setTotalDebt(ds.filter(d => d.type === 'owe').reduce((s, d) => s + d.remaining, 0))
-
-      const owedDebts = ds.filter(d => d.type === 'owe' && d.minimumPayment > 0)
-      const due = owedDebts.reduce((s, d) => s + d.minimumPayment, 0)
-      setTotalDue(due)
-
-      if (owedDebts.length > 0) {
-        const [year, month] = ym.split('-').map(Number)
-        const lastDay = new Date(year, month, 0).getDate()
-        const { data } = await supabase
-          .from('debt_payment_history')
-          .select('amount')
-          .in('debt_id', owedDebts.map(d => d.id))
-          .gte('paid_at', `${ym}-01`)
-          .lte('paid_at', `${ym}-${String(lastDay).padStart(2, '0')}`)
-        const paid = (data ?? []).reduce((s, c) => s + Number(c.amount), 0)
-        setPaidTotal(paid)
-      }
-    })
-
-    getProjects().then(setProjects)
-
-    async function loadMonthlyIncome() {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
-      const { data } = await supabase
-        .from('monthly_incomes')
-        .select('amount')
-        .eq('user_id', user.id)
-        .eq('month', ym)
-      const total = (data ?? []).reduce((sum, row) => sum + Number(row.amount), 0)
-      setMonthlyIncome(total)
+  // ── Conseil du Coach ──
+  function buildTip(): string {
+    if (!summary || !plan) return 'Je prépare ton point du mois…'
+    if (plan.alerts.length > 0) return plan.alerts[0]
+    if (summary.income <= 0) return "Ajoute tes revenus du mois pour que le Coach t'aide."
+    if (summary.remainingToLive <= 0) {
+      return `${profile.firstName}, tes dépenses et charges du mois dépassent tes revenus. Jette un œil à ton budget pour voir où ajuster.`
     }
-
-    async function loadFactures() {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
-      const { data } = await supabase.from('factures').select('amount').eq('user_id', user.id).eq('month', ym)
-      setTotalFactures((data ?? []).reduce((s, f) => s + Number(f.amount), 0))
-    }
-
-    loadFactures()
-    loadMonthlyIncome()
-  }, [ym])
+    // On ne suggère jamais de mettre de côté plus que ce qu'il reste à vivre.
+    const save = Math.min(plan.savingsSuggestion, Math.floor(summary.remainingToLive))
+    return `${profile.firstName}, il te reste ${formatAmount(summary.remainingToLive)} à vivre ce mois.${save > 0 ? ` Mets ${formatAmount(save)} de côté dès maintenant !` : ''}`
+  }
+  const tip = buildTip()
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  function handleSubmit() {
+  async function handleSubmit() {
     if (!form.amount || Number(form.amount) <= 0) return
-    addTransaction({ ...form, amount: Number(form.amount) })
+    await addTransaction({ ...form, amount: Number(form.amount) })
     setForm(empty)
     setShowForm(false)
     onUpdate()
+    reload() // rafraîchit tout de suite les KPIs, le score et le conseil
   }
 
   async function sendChat() {
@@ -220,62 +183,71 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
     setMessages(newMessages)
     setChatLoading(true)
     try {
-      const context = `Profil : ${profile.firstName}, ${profile.situation}, ${profile.children} enfants, Revenu mensuel : ${profile.monthlyIncome} Rs (${profile.incomeType}), Objectif : ${profile.mainGoal}, Dettes : ${profile.hasDebts ? 'oui' : 'non'}. Ce mois : Revenus ${formatAmount(income)}, Dépenses ${formatAmount(expenses)}, Solde ${formatAmount(balance)}. Score santé : ${health.score}/100 (${health.label}). Argent libre estimé : ${formatAmount(plan.freeMoney)}`
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-6',
-          max_tokens: 1000,
-          system: `Tu es un coach financier expert, bienveillant et direct. Tu parles en français. Tu as accès aux données financières réelles de l'utilisateur. Réponds de façon concise (3-4 phrases max), pratique et personnalisée. Pas de jargon inutile. Contexte utilisateur : ${context}`,
-          messages: newMessages.map(m => ({ role: m.role, content: m.content }))
-        })
-      })
-      const result = await response.json()
-      const reply = result.content?.[0]?.text || "Je suis là pour t'aider. Pose-moi une question sur tes finances."
+      // Le contexte financier est construit côté serveur : on n'envoie que la conversation.
+      const { reply } = await authedPost<{ reply: string }>('/api/coach-chat', { messages: newMessages })
       setMessages(prev => [...prev, { role: 'assistant', content: reply }])
-    } catch {
-      setMessages(prev => [...prev, { role: 'assistant', content: 'Désolé, je rencontre un problème. Réessaie dans un moment.' }])
+    } catch (e) {
+      const msg = e instanceof Error && e.message ? e.message : 'Désolé, je rencontre un problème. Réessaie dans un moment.'
+      setMessages(prev => [...prev, { role: 'assistant', content: msg }])
     }
     setChatLoading(false)
   }
 
+  // « Argent libre » = reste à vivre réel : cash en poche − factures et mensualités encore à payer
+  const freeMoney = summary?.remainingToLive
+  const freeIsNegative = freeMoney !== undefined && freeMoney < 0
+
   const kpis = [
     {
-      label: 'Revenus', value: formatAmount(monthlyIncome),
+      label: 'Revenus', value: amt(summary?.income),
       icon: '💰', bg: 'bg-green-50', color: 'text-green-700', border: 'border-green-100',
       action: () => onGoToMoney('revenus'),
     },
     {
-      label: 'Total transactions', value: formatAmount(totalTransactions),
+      label: 'Total transactions', value: amt(summary?.expenses),
       icon: '💸', bg: 'bg-orange-50', color: 'text-orange-700', border: 'border-orange-100',
       action: () => onGoToMoney('transactions'),
     },
     {
-      label: 'Total factures', value: formatAmount(totalFactures),
+      label: 'Total factures', value: amt(summary?.billsPlanned),
       icon: '🧾', bg: 'bg-yellow-50', color: 'text-yellow-700', border: 'border-yellow-100',
       action: () => onGoToMoney('factures'),
     },
     {
       label: 'Dettes du mois',
-      value: totalDue > 0 ? `${formatAmount(paidTotal)} / ${formatAmount(totalDue)}` : formatAmount(totalDebt),
+      value: !summary ? '—'
+        : summary.debtDue > 0 ? `${formatAmount(summary.debtPaid)} / ${formatAmount(summary.debtDue)}`
+        : formatAmount(summary.totalDebtOwed),
       icon: '💳', bg: 'bg-red-50', color: 'text-red-700', border: 'border-red-100',
       action: () => onGoToMoney('dettes'),
     },
     {
-      label: 'Épargne totale', value: formatAmount(totalSavings),
+      label: 'Épargne totale', value: amt(summary?.totalSavings),
       icon: '🪙', bg: 'bg-green-50', color: 'text-green-700', border: 'border-green-100',
       action: () => onGoToMoney('epargne'),
     },
     {
-      label: 'Argent libre', value: formatAmount(plan.freeMoney > 0 ? plan.freeMoney : balance),
-      icon: '📈', bg: 'bg-blue-50', color: 'text-blue-700', border: 'border-blue-100',
+      label: 'Argent libre', value: amt(freeMoney),
+      icon: '📈',
+      bg: freeIsNegative ? 'bg-red-50' : 'bg-blue-50',
+      color: freeIsNegative ? 'text-red-700' : 'text-blue-700',
+      border: freeIsNegative ? 'border-red-100' : 'border-blue-100',
       action: () => onGoToMoney('budget'),
     },
   ]
 
   return (
     <div className="space-y-4">
+
+      {/* ── Erreur de chargement ── */}
+      {error && (
+        <div className="card bg-red-50 border border-red-100 flex items-center justify-between gap-3">
+          <p className="text-xs text-red-700">Impossible de charger tes chiffres : {error}</p>
+          <button onClick={reload} className="text-xs font-semibold text-red-700 underline flex-shrink-0">
+            Réessayer
+          </button>
+        </div>
+      )}
 
       {/* ── Pensée du jour ── */}
       <div className="card bg-purple-50 border border-purple-100">
@@ -320,8 +292,8 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
           </div>
           <div className="space-y-2">
             {projects.slice(0, 3).map(p => {
-              const pct = Math.min(100, (p.savedAmount / p.targetAmount) * 100)
-              const done = p.savedAmount >= p.targetAmount
+              const pct = p.targetAmount > 0 ? Math.min(100, (p.savedAmount / p.targetAmount) * 100) : 0
+              const done = p.targetAmount > 0 && p.savedAmount >= p.targetAmount
               return (
                 <div key={p.id} className="flex items-center gap-2">
                   <span className="text-sm w-5">{p.emoji}</span>
@@ -357,18 +329,18 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
           </button>
         </div>
         <div className="flex items-center gap-4">
-          <HealthArc score={health.score} color={healthColor} />
+          <HealthArc score={healthScore} color={healthColor} />
           <div className="flex-1 space-y-2">
-            {health.details.slice(0, 3).map((d, i) => (
+            {(health?.details ?? []).slice(0, 3).map((d, i) => (
               <p key={i} className="text-xs text-ink-soft leading-snug">{d}</p>
             ))}
           </div>
         </div>
         <div className="grid grid-cols-3 gap-2 mt-4 pt-4 border-t border-mist">
           {[
-            { label: 'Taux épargne', value: income > 0 ? `${Math.round((totalSavings / (income || 1)) * 10)}%` : '—' },
-            { label: 'Endettement', value: income > 0 ? `${Math.round((totalDebt / (profile.monthlyIncome || 1)) * 100)}%` : '—' },
-            { label: 'Mois sécurité', value: expenses > 0 ? `${Math.round(totalSavings / (expenses || 1))}m` : '—' },
+            { label: 'Taux épargne', value: savingsRate },
+            { label: 'Endettement', value: debtRate },
+            { label: 'Mois sécurité', value: safety },
           ].map((m) => (
             <div key={m.label} className="text-center">
               <p className="text-sm font-bold font-mono text-ink">{m.value}</p>
