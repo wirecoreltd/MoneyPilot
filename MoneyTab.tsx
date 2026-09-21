@@ -114,7 +114,7 @@ const SUBTABS = [
     id: 'transactions' as SubTab,
     emoji: '🛒', label: 'Dépense',
     shortDesc: 'Mes dépenses du mois',
-    fullDesc: "Un achat décidé sur le moment : courses, restaurant, carburant. Chaque achat est noté une seule fois.",
+    fullDesc: 'Enregistre chaque dépense ponctuelle. Les revenus se gèrent dans la carte "Revenus".',
     color: 'bg-blue-50 border-blue-200 text-blue-700',
     activeColor: 'bg-accent text-white'
   },
@@ -130,7 +130,7 @@ const SUBTABS = [
     id: 'factures' as SubTab,
     emoji: '🧾', label: 'Factures',
     shortDesc: 'Factures à payer ce mois',
-    fullDesc: "Une note reçue pour un service déjà utilisé : électricité, eau, internet. Elle se paie en une fois, souvent chaque mois.",
+    fullDesc: 'Suis tes factures récurrentes (eau, élec, internet) et ponctuelles reçues.',
     color: 'bg-yellow-50 border-yellow-200 text-yellow-700',
     activeColor: 'bg-yellow-500 text-white'
   },
@@ -146,7 +146,7 @@ const SUBTABS = [
     id: 'dettes' as SubTab,
     emoji: '💳', label: 'Dettes',
     shortDesc: 'Ce que je dois / on me doit',
-    fullDesc: "Un argent emprunté, rendu en plusieurs fois : crédit voiture, téléphone à crédit, prêt. « On me doit » désigne un argent prêté à quelqu'un.",
+    fullDesc: 'Suis tes crédits et prêts. Différent d\'une facture : une dette se rembourse progressivement sur plusieurs mois/années.',
     color: 'bg-red-50 border-red-200 text-red-700',
     activeColor: 'bg-danger text-white'
   },
