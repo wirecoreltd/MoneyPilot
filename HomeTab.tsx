@@ -6,7 +6,7 @@ import {
   addTransaction, formatAmount, UserProfile,
 } from '@/lib/storage'
 import { currentYearMonth } from '@/lib/finance'
-import { Usemonthsummary } from '@/lib/Usemonthsummary'
+import { useMonthSummary } from '@/lib/useMonthSummary'
 import { authedPost } from '@/lib/apiClient'
 import CoachTip from './CoachTip'
 
