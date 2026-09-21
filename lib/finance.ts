@@ -188,7 +188,7 @@ export function computeMonthSummary(s: MonthSnapshot): MonthSummary {
   const totalOwedToMe = sum(s.debts.filter(d => d.type === 'owed').map(d => d.remaining))
 
   // Legacy : paiements récurrents cochés
-  const recurringPaid = sum(s.recurring.filter(r => r.paid).map(r => r.paidAmount))
+  const recurringPaid = 0
 
   // Dépenses par catégorie (même logique pour Budget, Home, Coach)
   const spendingByCategory: Record<string, number> = {}
@@ -206,7 +206,6 @@ export function computeMonthSummary(s: MonthSnapshot): MonthSummary {
     if (d?.type === 'owed') return
     add(p.category || d?.category || 'Autre', p.amount)
   })
-  s.recurring.filter(r => r.paid).forEach(r => add(RECURRING_TO_BUDGET[r.category] ?? '', r.paidAmount))
 
   // Totaux
   const totalOut = expenses + billsPaid + debtPaid + recurringPaid
@@ -348,9 +347,7 @@ export interface CoachPlan {
 export function buildCoachPlan(s: MonthSnapshot, m: MonthSummary, today: Date = new Date()): CoachPlan {
   const owe = s.debts.filter(d => d.type === 'owe' && d.remaining > 0)
 
-  const recurringMonthly = sum(s.recurring.map(r => (r.frequency === 'yearly' ? r.defaultAmount / 12 : r.defaultAmount)))
-  // Attention : si une charge existe à la fois en "facture" et en "paiement récurrent", elle est comptée deux fois.
-  const fixedCharges = m.billsPlanned + recurringMonthly
+  const fixedCharges = m.billsPlanned
   const debtMinimums = m.debtDue
 
   const avg = averagePreviousExpenses(s)
