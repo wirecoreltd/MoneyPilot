@@ -20,7 +20,6 @@ import {
   currentCycle, sumByCategory, sumCategory, durationLabel, BUDGET_DURATIONS,
   computeBudgetStatuses, earliestCycleStart,
 } from '@/lib/budgetPeriods'
-import { currentCycle, sumByCategory, sumCategory, durationLabel, BUDGET_DURATIONS } from '@/lib/budgetPeriods'
 
 type SubTab = MoneySubTab
 
