@@ -976,9 +976,17 @@ function RevenusSection() {
   }
 
   async function handleDelete(id: string) {
-    await supabase.from('monthly_incomes').delete().eq('id', id)
-    setRevenus(prev => prev.filter(r => r.id !== id))
+  const r = revenus.find(x => x.id === id)
+  if (r?.type === 'fixed') {
+    if (!window.confirm(`« ${r.label} » est un revenu fixe.\nLe supprimer l'arrête : il ne sera plus recréé chaque mois (l'historique passe en « Variable »).`)) return
+    const { data: { user } } = await supabase.auth.getUser()
+    await supabase.from('monthly_incomes').update({ is_fixed: false })
+      .eq('user_id', user!.id).eq('label', r.label).eq('is_fixed', true)
+    setRevenus(prev => prev.map(x => x.label === r.label ? { ...x, type: 'variable' } : x))
   }
+  await supabase.from('monthly_incomes').delete().eq('id', id)
+  setRevenus(prev => prev.filter(x => x.id !== id))
+}
 
   async function handleDeleteSource(id: string) {
     await supabase.from('income_sources').delete().eq('id', id)
@@ -1286,12 +1294,11 @@ function FacturesSection() {
     const { data: { user } } = await supabase.auth.getUser()
     const dueDate = form.isRecurring ? computeDueDate(form.dueDayOfMonth, ym) : (form.dueDate || null)
 
-    if (editingFacture) {
-      await supabase.from('factures').update({
-        name: form.name.trim(), amount: Number(form.amount), category: form.category,
-        due_date: dueDate, is_recurring: form.isRecurring, note: form.note || null,
-      }).eq('id', editingFacture.id)
-      setFactures(prev => prev.map(f => f.id !== editingFacture.id ? f : {
+    if (editingFacture.isRecurring && editingFacture.name !== form.name.trim()) {
+  await supabase.from('factures').update({ name: form.name.trim() })
+    .eq('user_id', user!.id).eq('name', editingFacture.name).eq('is_recurring', true)
+  setFactures(prev => prev.map(x => x.isRecurring && x.name === editingFacture.name ? { ...x, name: form.name.trim() } : x))
+}
         ...f, name: form.name.trim(), amount: Number(form.amount), category: form.category,
         dueDate: dueDate ?? undefined, isRecurring: form.isRecurring, note: form.note || undefined,
       }))
@@ -1314,9 +1321,17 @@ function FacturesSection() {
   }
 
   async function handleDelete(id: string) {
-    await supabase.from('factures').delete().eq('id', id)
-    setFactures(prev => prev.filter(f => f.id !== id))
+  const f = factures.find(x => x.id === id)
+  if (f?.isRecurring) {
+    if (!window.confirm(`« ${f.name} » est récurrente.\nLa supprimer l'arrête : elle ne sera plus recréée chaque mois.`)) return
+    const { data: { user } } = await supabase.auth.getUser()
+    await supabase.from('factures').update({ is_recurring: false })
+      .eq('user_id', user!.id).eq('name', f.name).eq('is_recurring', true)
+    setFactures(prev => prev.map(x => x.name === f.name ? { ...x, isRecurring: false } : x))
   }
+  await supabase.from('factures').delete().eq('id', id)
+  setFactures(prev => prev.filter(x => x.id !== id))
+}
 
   async function toggleHistory(factureId: string) {
     if (openHistoryId === factureId) { setOpenHistoryId(null); return }
@@ -2185,6 +2200,15 @@ function DettesSection() {
       const newAmount    = Number(form.amount) || existing.amount
       const paidSoFar    = existing.amount - existing.remaining
       const newRemaining = Math.max(0, newAmount - paidSoFar)
+      const old = revenus.find(r => r.id === editingId)
+if (old && old.type === 'fixed' && old.label !== form.label.trim()) {
+  const { data: { user } } = await supabase.auth.getUser()
+  await supabase.from('monthly_incomes').update({ label: form.label.trim() })
+    .eq('user_id', user!.id).eq('label', old.label).eq('is_fixed', true)
+  setRevenus(prev => prev.map(r => r.type === 'fixed' && r.label === old.label ? { ...r, label: form.label.trim() } : r))
+}
+
+      
       await updateDebt(editingId, { ...debtData, remaining: newRemaining })
       setDebts(prev => prev.map(d => d.id !== editingId ? d : { ...d, ...debtData, amount: newAmount, remaining: newRemaining }))
     } else {
