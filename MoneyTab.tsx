@@ -95,10 +95,83 @@ function saveCustomCategories(cats: string[]) {
 }
 
 // "Autre" always stays last
+// "transport   SCOLAIRE" -> "Transport scolaire"
+function toProper(s: string): string {
+  const t = s.trim().replace(/\s+/g, ' ').toLowerCase()
+  return t.charAt(0).toUpperCase() + t.slice(1)
+}
+
+// A→Z (accents gérés), "Autre" toujours en dernier
 function getAllCategories(custom: string[]): string[] {
-  const base = DEFAULT_CATEGORIES.filter(c => c !== 'Autre')
-  const customFiltered = custom.filter(c => c !== 'Autre')
-  return [...base, ...customFiltered, 'Autre']
+  const merged = [
+    ...DEFAULT_CATEGORIES.filter(c => c !== 'Autre'),
+    ...custom.filter(c => c !== 'Autre' && !DEFAULT_CATEGORIES.includes(c)),
+  ]
+  const sorted = Array.from(new Set(merged)).sort((a, b) =>
+    a.localeCompare(b, 'fr', { sensitivity: 'base' })
+  )
+  return [...sorted, 'Autre']
+}
+
+// Déplace tout ce qui utilise une catégorie supprimée vers "Autre"
+async function reassignCategoryToAutre(cat: string): Promise<void> {
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) throw new Error('Non authentifié')
+  const uid = user.id
+
+  // historique de remboursements : pas de user_id, on passe par les dettes concernées
+  const { data: affectedDebts } = await supabase
+    .from('debts').select('id').eq('user_id', uid).eq('category', cat)
+  const debtIds = (affectedDebts ?? []).map(d => d.id)
+
+  const results = await Promise.all([
+    supabase.from('transactions').update({ category: 'Autre' }).eq('user_id', uid).eq('category', cat),
+    supabase.from('factures').update({ category: 'Autre' }).eq('user_id', uid).eq('category', cat),
+    supabase.from('debts').update({ category: 'Autre' }).eq('user_id', uid).eq('category', cat),
+    debtIds.length > 0
+      ? supabase.from('debt_payment_history').update({ category: 'Autre' }).in('debt_id', debtIds)
+      : Promise.resolve({ error: null }),
+  ])
+  const failed = results.find(r => r.error)
+  if (failed?.error) throw failed.error
+
+  // Plafond du budget : fusionné dans "Autre" s'il existe déjà, sinon renommé
+  const { data: bud } = await supabase
+    .from('budget_categories').select('id, name').eq('user_id', uid).in('name', [cat, 'Autre'])
+  const old = (bud ?? []).find(b => b.name === cat)
+  const hasAutre = (bud ?? []).some(b => b.name === 'Autre')
+  if (old) {
+    if (hasAutre) await supabase.from('budget_categories').delete().eq('id', old.id)
+    else await supabase.from('budget_categories').update({ name: 'Autre' }).eq('id', old.id)
+  }
+}
+
+// Hook partagé par Transactions, Budget, Dettes et Factures
+function useCustomCategories(onChanged?: () => void) {
+  const [customCategories, setCustomCategories] = useState<string[]>(loadCustomCategories)
+
+  function addCustom(cat: string) {
+    const proper = toProper(cat)
+    if (!proper) return
+    setCustomCategories(prev => {
+      if (prev.some(c => c.toLowerCase() === proper.toLowerCase())) return prev
+      const next = [...prev, proper]
+      saveCustomCategories(next)
+      return next
+    })
+  }
+
+  async function removeCustom(cat: string) {
+    await reassignCategoryToAutre(cat) // si ça échoue, la catégorie n'est PAS supprimée
+    setCustomCategories(prev => {
+      const next = prev.filter(c => c !== cat)
+      saveCustomCategories(next)
+      return next
+    })
+    onChanged?.()
+  }
+
+  return { customCategories, addCustom, removeCustom }
 }
 
 const SUBTAB_KEY = 'moneyapp_subtab'
@@ -253,23 +326,50 @@ export default function MoneyTab({ transactions, onUpdate, initialSubTab, onSubT
 type CategoryContext = 'transactions' | 'budget' | 'dettes' | 'epargne' | 'factures' | 'revenus'
 
 function CategoryManager({
-  value, onChange, customCategories, onAddCustom, context = 'transactions'
+  value, onChange, customCategories, onAddCustom, onRemoveCustom, context = 'transactions'
 }: {
   value: string
   onChange: (v: string) => void
   customCategories: string[]
   onAddCustom: (cat: string) => void
+  onRemoveCustom: (cat: string) => Promise<void>
   context?: CategoryContext
 }) {
   const [newCat, setNewCat] = useState('')
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
   const allCats = getAllCategories(customCategories)
 
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [])
+
   function handleAdd() {
-    const trimmed = newCat.trim()
-    if (!trimmed || allCats.includes(trimmed)) return
-    onAddCustom(trimmed)
-    onChange(trimmed)
+    const proper = toProper(newCat)
+    if (!proper) return
+    const existing = allCats.find(c => c.toLowerCase() === proper.toLowerCase())
+    if (existing) onChange(existing)
+    else { onAddCustom(proper); onChange(proper) }
     setNewCat('')
+  }
+
+  async function handleRemove(cat: string, e: React.MouseEvent) {
+    e.stopPropagation()
+    if (busy) return
+    if (!window.confirm(`Supprimer « ${cat} » ?\nLes montants de cette catégorie seront déplacés vers « Autre ».`)) return
+    setBusy(true)
+    try {
+      await onRemoveCustom(cat)
+      if (value === cat) onChange('Autre')
+    } catch {
+      window.alert('Impossible de supprimer la catégorie. Réessaie.')
+    }
+    setBusy(false)
   }
 
   const contextMsg: Record<CategoryContext, string> = {
@@ -282,23 +382,49 @@ function CategoryManager({
   }
 
   return (
-    <div className="space-y-2">
-      <select className="input" value={value} onChange={e => onChange(e.target.value)}>
-        {allCats.map(c => <option key={c}>{c}</option>)}
-      </select>
+    <div ref={ref} className="space-y-2">
+      <div className="relative">
+        <button type="button" onClick={() => setOpen(o => !o)}
+          className="input flex items-center justify-between text-left w-full">
+          <span className={value ? 'text-ink' : 'text-gray-400'}>{value || 'Choisir...'}</span>
+          <ChevronDown size={16} className={`text-ink-soft transition-transform flex-shrink-0 ${open ? 'rotate-180' : ''}`}/>
+        </button>
+        {open && (
+          <div className="absolute z-50 top-full mt-1 left-0 right-0 bg-white border border-mist-dark rounded-2xl shadow-xl overflow-hidden">
+            <div className="max-h-56 overflow-y-auto">
+              {allCats.map(c => {
+                const removable = customCategories.includes(c)
+                return (
+                  <div key={c} onClick={() => { onChange(c); setOpen(false) }}
+                    className={`flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-mist transition-colors ${value === c ? 'bg-accent-light' : ''}`}>
+                    <div className="flex items-center gap-2">
+                      {value === c && <Check size={14} className="text-accent"/>}
+                      <span className="text-sm text-ink">{c}</span>
+                    </div>
+                    {removable && (
+                      <button type="button" disabled={busy} onClick={e => handleRemove(c, e)}
+                        className="w-6 h-6 rounded-lg hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center disabled:opacity-40">
+                        <X size={12}/>
+                      </button>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+
       <div className="flex gap-2">
-        <input
-          className="input flex-1 py-2 text-sm"
-          placeholder="Nouvelle catégorie..."
-          value={newCat}
-          onChange={e => setNewCat(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && handleAdd()}
-        />
+        <input className="input flex-1 py-2 text-sm" placeholder="Nouvelle catégorie..."
+          value={newCat} onChange={e => setNewCat(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && handleAdd()}/>
         <button onClick={handleAdd} disabled={!newCat.trim()}
           className="w-10 h-10 rounded-xl bg-accent text-white flex items-center justify-center disabled:opacity-40 flex-shrink-0">
           <Plus size={16}/>
         </button>
       </div>
+
       {customCategories.length > 0 && (
         <p className="text-xs text-blue-600 bg-blue-50 border border-blue-100 rounded-xl px-3 py-2"
           dangerouslySetInnerHTML={{ __html: contextMsg[context] }}/>
@@ -310,13 +436,38 @@ function CategoryManager({
 // ─── Transactions ─────────────────────────────────────────────────────────────
 const SHOW_MORE_LIMIT = 3
 
+type Period = '1j' | '5j' | '1m' | '3m' | 'custom'
+const PERIODS: { id: Period; label: string }[] = [
+  { id: '1j', label: '1J' }, { id: '5j', label: '5J' },
+  { id: '1m', label: '1 mois' }, { id: '3m', label: '3 mois' },
+  { id: 'custom', label: 'Perso' },
+]
+const PERIOD_LABEL: Record<Period, string> = {
+  '1j': "aujourd'hui", '5j': 'les 5 derniers jours',
+  '1m': 'le dernier mois', '3m': 'les 3 derniers mois', custom: 'la période choisie',
+}
+
+function toYMD(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+function getPeriodRange(p: Period, customFrom: string, customTo: string) {
+  if (p === 'custom') return { from: customFrom || '0000-01-01', to: customTo || '9999-12-31' }
+  const today = new Date(); today.setHours(0, 0, 0, 0)
+  const from = new Date(today)
+  if (p === '5j') from.setDate(from.getDate() - 4)
+  if (p === '1m') { from.setMonth(from.getMonth() - 1); from.setDate(from.getDate() + 1) }
+  if (p === '3m') { from.setMonth(from.getMonth() - 3); from.setDate(from.getDate() + 1) }
+  return { from: toYMD(from), to: toYMD(today) }
+}
+
 function TransactionsSection({ transactions, onUpdate }: { transactions: Transaction[]; onUpdate: () => void }) {
   const [showForm, setShowForm] = useState(false)
   const [loading, setLoading] = useState(false)
   const [search, setSearch] = useState('')
-  const [selectedMonth, setSelectedMonth] = useState(currentYearMonth())
+  const [period, setPeriod] = useState<Period>('1m')
+  const [customFrom, setCustomFrom] = useState(toYMD(new Date()))
+  const [customTo, setCustomTo] = useState(toYMD(new Date()))
   const [editingTx, setEditingTx] = useState<Transaction | null>(null)
-  const [customCategories, setCustomCategories] = useState<string[]>(loadCustomCategories)
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set())
   const [showMoreCategories, setShowMoreCategories] = useState<Set<string>>(new Set())
   const [budgets, setBudgets] = useState<BudgetCategory[]>([])
@@ -325,27 +476,28 @@ function TransactionsSection({ transactions, onUpdate }: { transactions: Transac
     date: new Date().toISOString().slice(0, 10),
   })
 
-  useEffect(() => { getBudgets().then(setBudgets) }, [])
-
-  const monthOptions = Array.from({ length: 12 }, (_, i) => {
-    const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - i)
-    const ymOpt = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
-    const label = d.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })
-    return { ym: ymOpt, label }
+  const { customCategories, addCustom, removeCustom } = useCustomCategories(() => {
+    onUpdate()
+    getBudgets().then(setBudgets)
   })
 
-  const allFiltered = transactions
-    .filter(t => t.type === 'expense')
-    .filter(t => t.date.startsWith(selectedMonth))
-    .filter(t => {
-      if (!search.trim()) return true
-      const q = search.toLowerCase()
-      return t.note?.toLowerCase().includes(q) || t.category.toLowerCase().includes(q)
-    })
+  useEffect(() => { getBudgets().then(setBudgets) }, [])
 
-  const monthExpenses = transactions
-    .filter(t => t.type === 'expense' && t.date.startsWith(selectedMonth))
-    .reduce((s, t) => s + t.amount, 0)
+  const range = getPeriodRange(period, customFrom, customTo)
+
+  const periodTxs = transactions.filter(t => {
+    if (t.type !== 'expense') return false
+    const d = t.date.slice(0, 10)
+    return d >= range.from && d <= range.to
+  })
+
+  const allFiltered = periodTxs.filter(t => {
+    if (!search.trim()) return true
+    const q = search.toLowerCase()
+    return t.note?.toLowerCase().includes(q) || t.category.toLowerCase().includes(q)
+  })
+
+  const periodExpenses = periodTxs.reduce((s, t) => s + t.amount, 0)
 
   const grouped: Record<string, Transaction[]> = {}
   for (const tx of allFiltered) {
@@ -353,8 +505,11 @@ function TransactionsSection({ transactions, onUpdate }: { transactions: Transac
     grouped[tx.category].push(tx)
   }
 
+  // Les plafonds sont mensuels : on les compare toujours au mois en cours,
+  // quelle que soit la période affichée.
+  const thisMonth = currentYearMonth()
   const spentPerCat: Record<string, number> = {}
-  transactions.filter(t => t.type === 'expense' && t.date.startsWith(selectedMonth)).forEach(t => {
+  transactions.filter(t => t.type === 'expense' && t.date.startsWith(thisMonth)).forEach(t => {
     spentPerCat[t.category] = (spentPerCat[t.category] || 0) + t.amount
   })
 
@@ -377,11 +532,7 @@ function TransactionsSection({ transactions, onUpdate }: { transactions: Transac
       const next = new Set(prev); next.has(cat) ? next.delete(cat) : next.add(cat); return next
     })
   }
-
-  function handleAddCustom(cat: string) {
-    const updated = [...customCategories, cat]
-    setCustomCategories(updated); saveCustomCategories(updated)
-  }
+  
   function openAdd() {
     setEditingTx(null)
     setForm({ amount: '', category: EXPENSE_CATEGORIES[0] as any, note: '', date: new Date().toISOString().slice(0, 10) })
@@ -413,20 +564,46 @@ function TransactionsSection({ transactions, onUpdate }: { transactions: Transac
 
   return (
     <div className="space-y-3">
-      <div className="flex items-start gap-3 p-3 bg-blue-50 border border-blue-100 rounded-2xl">
-        <span className="text-base">💡</span>
-        <p className="text-xs text-blue-700 leading-relaxed">
-          <strong>Dépenses ponctuelles uniquement.</strong> Revenus → <strong>Revenus</strong>. Factures → <strong>Factures</strong>. Crédits → <strong>Dettes</strong>.
+            <div className="p-3 bg-blue-50 border border-blue-100 rounded-2xl space-y-2">
+        <div className="flex items-start gap-3">
+          <span className="text-base">💡</span>
+          <p className="text-xs text-blue-700 leading-relaxed">
+            <strong>Dépenses ponctuelles seulement.</strong> Pour le reste, va dans l'onglet <strong>Revenus</strong>, <strong>Factures</strong> ou <strong>Dettes</strong>.
+          </p>
+        </div>
+        <p className="text-[11px] text-blue-600 italic leading-snug pl-8">
+          💡 Dépense ponctuelle = un achat du moment, pas prévu chaque mois (courses, essence, resto, vêtements).
         </p>
       </div>
 
-      <select className="input" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)}>
-        {monthOptions.map(m => <option key={m.ym} value={m.ym}>{m.label}</option>)}
-      </select>
+      <div className="flex gap-1.5 overflow-x-auto">
+        {PERIODS.map(p => (
+          <button key={p.id} onClick={() => setPeriod(p.id)}
+            className={`flex-1 whitespace-nowrap px-3 py-2 rounded-xl text-xs font-bold border-2 transition-colors ${
+              period === p.id ? 'bg-accent text-white border-transparent' : 'bg-white text-ink-soft border-mist-dark'}`}>
+            {p.label}
+          </button>
+        ))}
+      </div>
+
+      {period === 'custom' && (
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="label">Du</label>
+            <input className="input" type="date" value={customFrom} max={customTo || undefined}
+              onChange={e => setCustomFrom(e.target.value)}/>
+          </div>
+          <div>
+            <label className="label">Au</label>
+            <input className="input" type="date" value={customTo} min={customFrom || undefined}
+              onChange={e => setCustomTo(e.target.value)}/>
+          </div>
+        </div>
+      )}
 
       <div className="card bg-danger-light">
-        <p className="text-xs font-bold text-danger uppercase tracking-wide">Total dépenses ce mois</p>
-        <p className="text-2xl font-bold font-mono text-danger mt-1">{formatAmount(monthExpenses)}</p>
+        <p className="text-xs font-bold text-danger uppercase tracking-wide">Total dépenses · {PERIOD_LABEL[period]}</p>
+        <p className="text-2xl font-bold font-mono text-danger mt-1">{formatAmount(periodExpenses)}</p>
       </div>
 
       <div className="relative">
@@ -440,7 +617,7 @@ function TransactionsSection({ transactions, onUpdate }: { transactions: Transac
       {allFiltered.length === 0 ? (
         <div className="card text-center py-10">
           <p className="text-3xl mb-2">💸</p>
-          <p className="font-semibold text-ink">{search ? 'Aucun résultat' : 'Aucune dépense ce mois'}</p>
+          <p className="font-semibold text-ink">{search ? 'Aucun résultat' : 'Aucune dépense sur cette période'}</p>
           <p className="text-sm text-ink-soft mt-1">{search ? `Rien pour "${search}"` : 'Appuie sur "Ajouter" pour commencer'}</p>
         </div>
       ) : (
@@ -449,6 +626,7 @@ function TransactionsSection({ transactions, onUpdate }: { transactions: Transac
             const catTotal = txs.reduce((s, t) => s + t.amount, 0)
             const status = getBudgetStatus(cat)
             const budget = budgets.find(b => b.name === cat)
+            const monthSpent = spentPerCat[cat] || 0
             const isExpanded = expandedCategories.has(cat)
             const showAll = showMoreCategories.has(cat)
             const visibleTxs = showAll ? txs : txs.slice(0, SHOW_MORE_LIMIT)
@@ -480,7 +658,7 @@ function TransactionsSection({ transactions, onUpdate }: { transactions: Transac
                     <span className="text-xs text-ink-soft">{txs.length} dépense{txs.length > 1 ? 's' : ''}</span>
                     {budget && (
                       <span className={`text-[10px] font-mono ${status === 'over' ? 'text-danger' : status === 'near' ? 'text-orange-600' : 'text-ink-soft'}`}>
-                        {formatAmount(catTotal)} / {formatAmount(budget.limit)}
+                        {formatAmount(monthSpent)} / {formatAmount(budget.limit)} (mois)
                       </span>
                     )}
                   </div>
@@ -495,7 +673,7 @@ function TransactionsSection({ transactions, onUpdate }: { transactions: Transac
                     <div className="w-full h-1.5 bg-white/60 rounded-full overflow-hidden">
                       <div className="h-full rounded-full transition-all duration-500"
                         style={{
-                          width: `${Math.min(100, (catTotal / budget.limit) * 100)}%`,
+                          width: `${Math.min(100, (monthSpent / budget.limit) * 100)}%`,
                           backgroundColor: status === 'over' ? '#DC2626' : status === 'near' ? '#D97706' : '#16A34A',
                         }}
                       />
@@ -553,7 +731,8 @@ function TransactionsSection({ transactions, onUpdate }: { transactions: Transac
             <div><label className="label">Montant (Rs)</label><input className="input text-xl font-bold" type="number" placeholder="0" value={form.amount} onChange={e => setForm(f => ({...f, amount: e.target.value}))}/></div>
             <div>
               <label className="label">Catégorie</label>
-              <CategoryManager value={form.category} onChange={v => setForm(f => ({...f, category: v as any}))} customCategories={customCategories} onAddCustom={handleAddCustom} context="transactions"/>
+             <CategoryManager value={form.category} onChange={v => setForm(f => ({...f, category: v as any}))}
+              customCategories={customCategories} onAddCustom={addCustom} onRemoveCustom={removeCustom} context="transactions"/>
             </div>
             <div><label className="label">Note (optionnel)</label><input className="input" placeholder="Ex: Courses Jumbo..." value={form.note} onChange={e => setForm(f => ({...f, note: e.target.value}))}/></div>
             <div><label className="label">Date</label><input className="input" type="date" value={form.date} onChange={e => setForm(f => ({...f, date: e.target.value}))}/></div>
@@ -864,7 +1043,7 @@ function FacturesSection() {
   const [editPayNote, setEditPayNote] = useState('')
 
   // ← Catégories partagées (même clé localStorage que transactions/budget/dettes)
-  const [customCategories, setCustomCategories] = useState<string[]>(loadCustomCategories)
+  const { customCategories, addCustom, removeCustom } = useCustomCategories(() => { loadFactures() })
 
   const [form, setForm] = useState({
     name: '', amount: '', category: DEFAULT_CATEGORIES[0], // ← DEFAULT_CATEGORIES au lieu de FACTURE_CATEGORIES
@@ -872,13 +1051,7 @@ function FacturesSection() {
   })
   const ym = currentYearMonth()
 
-  useEffect(() => { loadFactures() }, [])
-
-  function handleAddCustom(cat: string) {
-    const updated = [...customCategories, cat]
-    setCustomCategories(updated)
-    saveCustomCategories(updated)
-  }
+  useEffect(() => { loadFactures() }, [])  
 
   async function loadFactures() {
     setLoading(true)
@@ -1162,7 +1335,8 @@ function FacturesSection() {
                 value={form.category}
                 onChange={v => setForm(f => ({ ...f, category: v }))}
                 customCategories={customCategories}
-                onAddCustom={handleAddCustom}
+                onAddCustom={addCustom}
+                onRemoveCustom={removeCustom}
                 context="factures"
               />
             </div>
@@ -1334,7 +1508,7 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
   const [editingBudget, setEditingBudget] = useState<BudgetStatus | null>(null)
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
-  const [customCategories, setCustomCategories] = useState<string[]>(loadCustomCategories)
+  const { customCategories, addCustom, removeCustom } = useCustomCategories(() => { reload() })
   const [form, setForm] = useState({ name: '', limit: '', color: COLORS[0] })
 
   const budgets = summary?.budgets ?? []
@@ -1344,11 +1518,7 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
     ? `⚠️ Tu dépasses le plafond en : ${overBudget.map(b => b.name).join(', ')}. Réduis ces dépenses !`
     : budgets.length > 0 ? `✅ Tous tes budgets sont respectés ce mois-ci. Continue !`
     : `Crée un plafond par catégorie pour mieux contrôler où va ton argent.`
-
-  function handleAddCustom(cat: string) {
-    const updated = [...customCategories, cat]
-    setCustomCategories(updated); saveCustomCategories(updated)
-  }
+  
   function openAdd() {
     setEditingBudget(null); setFormError(null)
     setForm({ name: '', limit: '', color: COLORS[0] }); setShowForm(true)
@@ -1458,7 +1628,7 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
             {formError && <p className="text-xs text-danger bg-danger-light rounded-xl px-3 py-2">{formError}</p>}
             <div>
               <label className="label">Catégorie de dépense</label>
-              <CategoryManager value={form.name} onChange={v => setForm(f => ({...f, name: v}))} customCategories={customCategories} onAddCustom={handleAddCustom} context="budget"/>
+              <CategoryManager value={form.name} onChange={v => setForm(f => ({...f, name: v}))} customCategories={customCategories} onAddCustom={addCustom} onRemoveCustom={removeCustom} context="budget"/>
             </div>
             <div><label className="label">Plafond mensuel (Rs)</label><input className="input" type="number" placeholder="Ex: 15000" value={form.limit} onChange={e => setForm(f => ({...f, limit: e.target.value}))}/></div>
             <div>
@@ -1608,7 +1778,7 @@ function DettesSection() {
   const [editPayAmount, setEditPayAmount] = useState('')
   const [editPayDate, setEditPayDate] = useState('')
   const [editPayNote, setEditPayNote] = useState('')
-  const [customCategories, setCustomCategories] = useState<string[]>(loadCustomCategories)
+  const { customCategories, addCustom, removeCustom } = useCustomCategories(() => { getDebts().then(setDebts) })
   const [expandedCreditors, setExpandedCreditors] = useState<Set<string>>(new Set())
   const [monthlyPaid, setMonthlyPaid] = useState<Record<string, number>>({})
   const ym = currentYearMonth()
@@ -1637,12 +1807,7 @@ function DettesSection() {
       }
     }
     load().finally(() => setLoading(false))
-  }, [ym])
-
-  function handleAddCustom(cat: string) {
-    const updated = [...customCategories, cat]
-    setCustomCategories(updated); saveCustomCategories(updated)
-  }
+  }, [ym]) 
 
   const totalOwe  = debts.filter(d => d.type === 'owe').reduce((s, d) => s + d.remaining, 0)
   const totalOwed = debts.filter(d => d.type === 'owed').reduce((s, d) => s + d.remaining, 0)
@@ -2036,7 +2201,7 @@ function DettesSection() {
             </div>
             <div>
               <label className="label">Catégorie</label>
-              <CategoryManager value={form.category} onChange={v => setForm(f => ({...f, category: v}))} customCategories={customCategories} onAddCustom={handleAddCustom} context="dettes"/>
+              <CategoryManager value={form.category} onChange={v => setForm(f => ({...f, category: v}))} customCategories={customCategories} onAddCustom={addCustom} onRemoveCustom={removeCustom} context="dettes"/>
             </div>
             <div><label className="label">Montant total (Rs)</label><input className="input" type="number" placeholder="Ex: 150000" value={form.amount} onChange={e => setForm(f => ({...f, amount: e.target.value}))}/></div>
             <div><label className="label">Remboursement minimum / mois (Rs)</label><input className="input" type="number" placeholder="Ex: 3000" value={form.minimumPayment} onChange={e => setForm(f => ({...f, minimumPayment: e.target.value}))}/></div>
