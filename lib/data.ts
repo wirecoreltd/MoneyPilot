@@ -5,7 +5,7 @@
 // Toute erreur Supabase est LEVÉE (plus de "data ?? []" qui masque les pannes).
 
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { shiftMonth } from './finance'
+import { shiftMonth, isoDate } from './finance'
 import type { MonthSnapshot } from './finance'
 
 function must(res: { data: any; error: { message: string } | null }, what: string): any[] {
@@ -108,6 +108,88 @@ export async function loadMonthSnapshot(
       savedAmount: num(r.saved_amount), targetDate: r.target_date, monthlyContribution: num(r.monthly_contribution),
     })),
   }
+}
+
+// ─── Dépenses par ligne sur une plage de dates (écran Budget) ─────────────────
+// Un MonthSnapshot ne couvre que le mois + 3 mois précédents ; les plafonds de
+// 6 mois à 3 ans et le filtre de période ont besoin d'un historique plus long.
+
+export interface SpendingLine { date: string; category: string; amount: number }
+
+function nextDay(ymd: string): string {
+  const [y, m, d] = ymd.split('-').map(Number)
+  return isoDate(new Date(y, m - 1, d + 1))
+}
+
+function chunk<T>(xs: T[], n = 100): T[][] {
+  const out: T[][] = []
+  for (let i = 0; i < xs.length; i += n) out.push(xs.slice(i, i + n))
+  return out
+}
+
+// Supabase plafonne à 1000 lignes par requête : on pagine jusqu'à épuisement.
+async function fetchAll(
+  build: (from: number, to: number) => PromiseLike<{ data: any; error: { message: string } | null }>,
+  what: string,
+): Promise<any[]> {
+  const rows: any[] = []
+  for (let i = 0; ; i += 1000) {
+    const page = must(await build(i, i + 999), what)
+    rows.push(...page)
+    if (page.length < 1000) break
+  }
+  return rows
+}
+
+/**
+ * Toutes les dépenses entre `from` et `to` (inclus) :
+ * transactions "dépense" + paiements de factures + remboursements de dettes "je dois".
+ * Les prêts "on me doit" sont exclus (argent reçu, pas dépensé), comme dans finance.ts.
+ */
+export async function loadSpendingLines(
+  client: SupabaseClient,
+  userId: string,
+  from: string,
+  to: string,
+): Promise<SpendingLine[]> {
+  const end = nextDay(to)
+
+  const [txRows, facRows, debtRows] = await Promise.all([
+    fetchAll((a, b) => client.from('transactions').select('id,date,category,amount')
+      .eq('user_id', userId).eq('type', 'expense').gte('date', from).lt('date', end)
+      .order('id').range(a, b), 'transactions'),
+    fetchAll((a, b) => client.from('factures').select('id,category')
+      .eq('user_id', userId).order('id').range(a, b), 'factures'),
+    fetchAll((a, b) => client.from('debts').select('id,category')
+      .eq('user_id', userId).eq('type', 'owe').order('id').range(a, b), 'debts'),
+  ])
+
+  const factureCat = new Map<string, string>(facRows.map(f => [f.id, f.category ?? 'Autre']))
+  const debtCat = new Map<string, string>(debtRows.map(d => [d.id, d.category ?? 'Autre']))
+
+  // Les tables d'historique n'ont pas de user_id : on les charge via l'id parent (par paquets de 100)
+  const [fpRows, dpRows] = await Promise.all([
+    Promise.all(chunk([...factureCat.keys()]).map(ids =>
+      fetchAll((a, b) => client.from('facture_payment_history').select('id,facture_id,amount,paid_at')
+        .in('facture_id', ids).gte('paid_at', from).lt('paid_at', end)
+        .order('id').range(a, b), 'facture_payment_history'))),
+    Promise.all(chunk([...debtCat.keys()]).map(ids =>
+      fetchAll((a, b) => client.from('debt_payment_history').select('id,debt_id,amount,paid_at,category')
+        .in('debt_id', ids).gte('paid_at', from).lt('paid_at', end)
+        .order('id').range(a, b), 'debt_payment_history'))),
+  ])
+
+  return [
+    ...txRows.map(r => ({
+      date: String(r.date).slice(0, 10), category: r.category ?? 'Autre', amount: num(r.amount),
+    })),
+    ...fpRows.flat().map(r => ({
+      date: String(r.paid_at).slice(0, 10), category: factureCat.get(r.facture_id) ?? 'Autre', amount: num(r.amount),
+    })),
+    ...dpRows.flat().map(r => ({
+      date: String(r.paid_at).slice(0, 10), category: r.category || debtCat.get(r.debt_id) || 'Autre', amount: num(r.amount),
+    })),
+  ]
 }
 
 export interface ProfileLite {
