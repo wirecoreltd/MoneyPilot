@@ -60,26 +60,45 @@ const fpDated = Promise.all(chunk(allFactureIds).map(ids =>
   client.from('facture_payment_history').select('id,facture_id,amount,paid_at')
     .in('facture_id', ids).gte('paid_at', `${month}-01`).lt('paid_at', nextFirst)))
 
-const [fpOfMonthR, dpR, depR, fpDatedRs] = await Promise.all([
-  // (a) tous les paiements des factures du mois -> sert au "reste à payer"
-  factureIds.length
-    ? client.from('facture_payment_history').select('id,facture_id,amount,paid_at').in('facture_id', factureIds)
-    : empty,
-  debtIds.length
-    ? client.from('debt_payment_history').select('debt_id,amount,paid_at,category')
-        .in('debt_id', debtIds).gte('paid_at', `${month}-01`).lt('paid_at', nextFirst)
-    : empty,
-  goalIds.length
-    ? client.from('savings_deposits').select('goal_id,amount,is_withdrawal,deposited_at')
-        .in('goal_id', goalIds).gte('deposited_at', `${month}-01`).lt('deposited_at', nextFirst)
-    : empty,
-  fpDated,
-])
+  const [fpOfMonthR, dpR, depR, fpDatedRs] = await Promise.all([
+    // (a) tous les paiements des factures du mois -> sert au "reste à payer"
+    factureIds.length
+      ? client.from('facture_payment_history')
+          .select('id,facture_id,amount,paid_at')
+          .in('facture_id', factureIds)
+      : empty,
 
-// (a) ∪ (b), dédoublonnés par id
-const fpById = new Map<string, any>()
-for (const r of must(fpOfMonthR, 'facture_payment_history')) fpById.set(r.id, r)
-for (const res of fpDatedRs) for (const r of must(res, 'facture_payment_history')) fpById.set(r.id, r)
+    debtIds.length
+      ? client.from('debt_payment_history')
+          .select('debt_id,amount,paid_at,category')
+          .in('debt_id', debtIds)
+          .gte('paid_at', `${month}-01`)
+          .lt('paid_at', nextFirst)
+      : empty,
+
+    goalIds.length
+      ? client.from('savings_deposits')
+          .select('goal_id,amount,is_withdrawal,deposited_at')
+          .in('goal_id', goalIds)
+          .gte('deposited_at', `${month}-01`)
+          .lt('deposited_at', nextFirst)
+      : empty,
+
+    fpDated,
+  ])
+
+  // (a) ∪ (b), dédoublonnés par id
+  const fpById = new Map<string, any>()
+
+  for (const r of must(fpOfMonthR, 'facture_payment_history')) {
+    fpById.set(r.id, r)
+  }
+
+  for (const res of fpDatedRs) {
+    for (const r of must(res, 'facture_payment_history')) {
+      fpById.set(r.id, r)
+    }
+  }
     debtIds.length
       ? client.from('debt_payment_history').select('debt_id,amount,paid_at,category')
           .in('debt_id', debtIds).gte('paid_at', `${month}-01`).lt('paid_at', nextFirst)
