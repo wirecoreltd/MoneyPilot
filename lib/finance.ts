@@ -17,7 +17,10 @@ export interface SnapDebt {
 export interface SnapDebtPayment { debtId: string; amount: number; paidAt: string; category: string }
 export interface SnapGoal { id: string; name: string; target: number; saved: number; category: string }
 export interface SnapDeposit { goalId: string; amount: number; isWithdrawal: boolean; date: string }
-export interface SnapBudget { id: string; name: string; limit: number; color: string }
+export interface SnapBudget {
+  id: string; name: string; limit: number; color: string
+  periodMonths: number; createdAt: string
+}
 export interface SnapRecurring {
   id: string; name: string; category: string; defaultAmount: number
   frequency: 'monthly' | 'yearly'; paid: boolean; paidAmount: number
@@ -107,6 +110,13 @@ export const RECURRING_TO_BUDGET: Record<string, string> = {
 export interface BudgetStatus {
   id: string; name: string; limit: number; color: string
   spent: number; pct: number; status: 'ok' | 'near' | 'over'
+  periodMonths?: number; cycleFrom?: string; cycleTo?: string
+}
+
+// LA règle unique : "over" > 100 %, "near" à partir de 80 %
+export function budgetStatus(spent: number, limit: number): { pct: number; status: 'ok' | 'near' | 'over' } {
+  const pct = limit > 0 ? (spent / limit) * 100 : 0
+  return { pct, status: spent > limit ? 'over' : pct >= 80 ? 'near' : 'ok' }
 }
 
 export interface MonthSummary {
@@ -215,10 +225,9 @@ export function computeMonthSummary(s: MonthSnapshot): MonthSummary {
   const safetyMonths = monthlyCost > 0 ? totalSavings / monthlyCost : null
 
   const budgets: BudgetStatus[] = s.budgets.map(b => {
-    const spent = spendingByCategory[b.name] || 0
-    const pct = b.limit > 0 ? (spent / b.limit) * 100 : 0
-    return { ...b, spent, pct, status: spent > b.limit ? 'over' : pct >= 80 ? 'near' : 'ok' }
-  })
+  const spent = spendingByCategory[b.name] || 0
+  return { ...b, spent, ...budgetStatus(spent, b.limit) }
+})
 
   return {
     month: m,
