@@ -34,7 +34,7 @@ export async function loadMonthSnapshot(
     client.from('debts').select('id,type,person,amount,remaining,minimum_payment,interest_rate,due_date,recurring,category')
       .eq('user_id', userId),
     client.from('savings_goals').select('id,name,target,saved,category').eq('user_id', userId),
-    client.from('budget_categories').select('id,name,limit,color').eq('user_id', userId),
+    client.from('budget_categories').select('id,name,limit,color,period_months,created_at'),
     client.from('projects').select('id,name,emoji,type,target_amount,saved_amount,target_date,monthly_contribution')
       .eq('user_id', userId),
     client.from('recurring_payments')
@@ -95,6 +95,8 @@ export async function loadMonthSnapshot(
     })),
     budgets: must(budR, 'budget_categories').map(r => ({
       id: r.id, name: r.name, limit: num(r.limit), color: r.color,
+      periodMonths: r.period_months ?? 1,
+      createdAt: r.created_at,
     })),
     recurring: must(recR, 'recurring_payments').map(r => {
       const check = (r.recurring_payment_checks ?? []).find((c: any) => c.month === month)
