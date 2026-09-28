@@ -71,6 +71,7 @@ interface RevenuSource {
   amount: number
   type: 'fixed' | 'variable'
   month: string
+  date: string
 }
 
 const COLORS = ['#F59E0B','#3B82F6','#8B5CF6','#EF4444','#10B981','#F97316']
@@ -414,7 +415,7 @@ function CategoryManager({
     setBusy(false)
   }
 
-    async function handleRename(oldCat: string) {
+  async function handleRename(oldCat: string) {
     if (busy) return
     setBusy(true)
     try {
@@ -616,7 +617,7 @@ function TransactionsSection({ transactions, onUpdate }: { transactions: Transac
       const next = new Set(prev); next.has(cat) ? next.delete(cat) : next.add(cat); return next
     })
   }
-  
+
   function openAdd() {
     setEditingTx(null)
     setForm({ amount: '', category: EXPENSE_CATEGORIES[0] as any, note: '', date: new Date().toISOString().slice(0, 10) })
@@ -648,7 +649,7 @@ function TransactionsSection({ transactions, onUpdate }: { transactions: Transac
 
   return (
     <div className="space-y-3">
-            <div className="p-3 bg-blue-50 border border-blue-100 rounded-2xl space-y-2">
+      <div className="p-3 bg-blue-50 border border-blue-100 rounded-2xl space-y-2">
         <div className="flex items-start gap-3">
           <span className="text-base">💡</span>
           <p className="text-xs text-blue-700 leading-relaxed">
@@ -815,8 +816,8 @@ function TransactionsSection({ transactions, onUpdate }: { transactions: Transac
             <div><label className="label">Montant (Rs)</label><input className="input text-xl font-bold" type="number" placeholder="0" value={form.amount} onChange={e => setForm(f => ({...f, amount: e.target.value}))}/></div>
             <div>
               <label className="label">Catégorie</label>
-             <CategoryManager value={form.category} onChange={v => setForm(f => ({...f, category: v as any}))}
-              customCategories={customCategories} onAddCustom={addCustom} onRemoveCustom={removeCustom} onRenameCustom={renameCustom} context="transactions"/>
+              <CategoryManager value={form.category} onChange={v => setForm(f => ({...f, category: v as any}))}
+                customCategories={customCategories} onAddCustom={addCustom} onRemoveCustom={removeCustom} onRenameCustom={renameCustom} context="transactions"/>
             </div>
             <div><label className="label">Note (optionnel)</label><input className="input" placeholder="Ex: Courses Jumbo..." value={form.note} onChange={e => setForm(f => ({...f, note: e.target.value}))}/></div>
             <div><label className="label">Date</label><input className="input" type="date" value={form.date} onChange={e => setForm(f => ({...f, date: e.target.value}))}/></div>
@@ -857,12 +858,14 @@ function RevenusSection() {
   const [sourceDropdownOpen, setSourceDropdownOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
+  const [period, setPeriod] = useState<Period>('1m')
+  const [customFrom, setCustomFrom] = useState(toYMD(new Date()))
+  const [customTo, setCustomTo] = useState(toYMD(new Date()))
   const [form, setForm] = useState({
     label: '', amount: '', type: 'fixed' as 'fixed' | 'variable', saveSource: false,
+    date: new Date().toISOString().slice(0, 10),
   })
   const sourceRef = useRef<HTMLDivElement>(null)
-  const ym = currentYearMonth()
-  const monthName = new Date().toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })
 
   useEffect(() => { loadAll() }, [])
 
@@ -881,12 +884,13 @@ function RevenusSection() {
       { data: inc },
       { data: src }
     ] = await Promise.all([
-      supabase.from('monthly_incomes').select('*').eq('user_id', user!.id).eq('month', ym),
+      supabase.from('monthly_incomes').select('*').eq('user_id', user!.id),
       supabase.from('income_sources').select('*').eq('user_id', user!.id).order('name')
     ])
     const incData: RevenuSource[] = (inc ?? []).map(r => ({
       id: r.id, label: r.label, amount: Number(r.amount),
       type: r.is_fixed ? 'fixed' : 'variable', month: r.month,
+      date: r.received_at ?? `${r.month}-01`,
     }))
     setRevenus(incData)
     if (incData.length > 0) setOpen(true)
@@ -901,21 +905,21 @@ function RevenusSection() {
     setSourceDropdownOpen(false)
   }
 
-    function resetForm() {
-    setForm({ label: '', amount: '', type: 'fixed', saveSource: false })
+  function resetForm() {
+    setForm({ label: '', amount: '', type: 'fixed', saveSource: false, date: new Date().toISOString().slice(0, 10) })
     setEditingId(null)
     setShowForm(false)
   }
 
   function openEdit(r: RevenuSource) {
     setEditingId(r.id)
-    setForm({ label: r.label, amount: String(r.amount), type: r.type, saveSource: false })
+    setForm({ label: r.label, amount: String(r.amount), type: r.type, saveSource: false, date: r.date })
     setShowForm(true)
     setOpen(true)
   }
 
-    async function handleAdd() {
-    if (!form.label.trim() || !form.amount || Number(form.amount) <= 0) return
+  async function handleAdd() {
+    if (!form.label.trim() || !form.amount || Number(form.amount) <= 0 || !form.date) return
     setSaving(true)
 
     // Mode modification
@@ -924,10 +928,13 @@ function RevenusSection() {
         label: form.label.trim(),
         amount: Number(form.amount),
         is_fixed: form.type === 'fixed',
+        received_at: form.date,
+        month: form.date.slice(0, 7),
       }).eq('id', editingId)
       if (!error) {
         setRevenus(prev => prev.map(r => r.id === editingId
-          ? { ...r, label: form.label.trim(), amount: Number(form.amount), type: form.type }
+          ? { ...r, label: form.label.trim(), amount: Number(form.amount), type: form.type,
+              date: form.date, month: form.date.slice(0, 7) }
           : r))
         resetForm()
       } else {
@@ -949,16 +956,17 @@ function RevenusSection() {
     }
     const { data } = await supabase.from('monthly_incomes').insert({
       user_id: user!.id, label: form.label.trim(),
-      amount: Number(form.amount), is_fixed: form.type === 'fixed', month: ym,
+      amount: Number(form.amount), is_fixed: form.type === 'fixed',
+      month: form.date.slice(0, 7), received_at: form.date,
     }).select().single()
     if (data) {
       setRevenus(prev => [...prev, {
         id: data.id, label: data.label, amount: Number(data.amount),
         type: data.is_fixed ? 'fixed' : 'variable', month: data.month,
+        date: data.received_at ?? form.date,
       }])
     }
-    setForm({ label: '', amount: '', type: 'fixed', saveSource: false })
-    setShowForm(false)
+    resetForm()
     setOpen(true)
     setSaving(false)
   }
@@ -973,9 +981,13 @@ function RevenusSection() {
     setSavedSources(prev => prev.filter(s => s.id !== id))
   }
 
-  const total = revenus.reduce((s, r) => s + r.amount, 0)
-  const fixedTotal = revenus.filter(r => r.type === 'fixed').reduce((s, r) => s + r.amount, 0)
-  const variableTotal = revenus.filter(r => r.type === 'variable').reduce((s, r) => s + r.amount, 0)
+  const range = getPeriodRange(period, customFrom, customTo)
+  const filtered = revenus
+    .filter(r => r.date >= range.from && r.date <= range.to)
+    .sort((a, b) => b.date.localeCompare(a.date))
+  const total = filtered.reduce((s, r) => s + r.amount, 0)
+  const fixedTotal = filtered.filter(r => r.type === 'fixed').reduce((s, r) => s + r.amount, 0)
+  const variableTotal = filtered.filter(r => r.type === 'variable').reduce((s, r) => s + r.amount, 0)
 
   const customSaved = savedSources.filter(
     s => !REVENU_PRESETS.flatMap(g => g.items).includes(s.name)
@@ -988,16 +1000,41 @@ function RevenusSection() {
       <div className="flex items-start gap-3 p-3 bg-green-50 border border-green-100 rounded-2xl">
         <span className="text-base">💡</span>
         <p className="text-xs text-green-700 leading-relaxed">
-          <strong>Tes sources de revenus du mois.</strong> Salaire, freelance, loyer perçu, allocations... Ajoute chaque source séparément pour une vision claire.
+          <strong>Tes sources de revenus.</strong> Salaire, freelance, loyer perçu, allocations... Ajoute chaque source séparément pour une vision claire.
         </p>
       </div>
+
+      <div className="flex gap-1.5 overflow-x-auto">
+        {PERIODS.map(p => (
+          <button key={p.id} onClick={() => setPeriod(p.id)}
+            className={`flex-1 whitespace-nowrap px-3 py-2 rounded-xl text-xs font-bold border-2 transition-colors ${
+              period === p.id ? 'bg-positive text-white border-transparent' : 'bg-white text-ink-soft border-mist-dark'}`}>
+            {p.label}
+          </button>
+        ))}
+      </div>
+
+      {period === 'custom' && (
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="label">Du</label>
+            <input className="input" type="date" value={customFrom} max={customTo || undefined}
+              onChange={e => setCustomFrom(e.target.value)}/>
+          </div>
+          <div>
+            <label className="label">Au</label>
+            <input className="input" type="date" value={customTo} min={customFrom || undefined}
+              onChange={e => setCustomTo(e.target.value)}/>
+          </div>
+        </div>
+      )}
 
       <button onClick={() => setOpen(o => !o)} className="w-full card bg-positive-light border border-positive/20 text-left">
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-xs font-bold text-positive uppercase tracking-wide capitalize">{monthName}</p>
+            <p className="text-xs font-bold text-positive uppercase tracking-wide">Total revenus · {PERIOD_LABEL[period]}</p>
             <p className="text-3xl font-bold font-mono text-positive mt-1">{formatAmount(total)}</p>
-            <p className="text-xs text-positive/70 mt-1">{revenus.length} source{revenus.length > 1 ? 's' : ''} de revenus</p>
+            <p className="text-xs text-positive/70 mt-1">{filtered.length} source{filtered.length > 1 ? 's' : ''} de revenus</p>
           </div>
           <div className={`w-10 h-10 rounded-2xl bg-positive/10 flex items-center justify-center transition-transform ${open ? 'rotate-180' : ''}`}>
             <ChevronDown size={20} className="text-positive"/>
@@ -1013,9 +1050,9 @@ function RevenusSection() {
 
       {open && (
         <div className="card space-y-2 border-2 border-positive/20">
-          {revenus.length === 0 ? (
-            <p className="text-sm text-ink-soft text-center py-4">Aucun revenu saisi ce mois</p>
-          ) : revenus.map(r => (
+          {filtered.length === 0 ? (
+            <p className="text-sm text-ink-soft text-center py-4">Aucun revenu sur cette période</p>
+          ) : filtered.map(r => (
             <div key={r.id} className="flex items-center justify-between py-2.5 border-b border-mist last:border-0">
               <div className="flex items-center gap-3">
                 <div className="w-8 h-8 rounded-xl bg-positive-light flex items-center justify-center flex-shrink-0">
@@ -1023,15 +1060,17 @@ function RevenusSection() {
                 </div>
                 <div>
                   <p className="text-sm font-semibold text-ink">{r.label}</p>
+                  <p className="text-xs text-ink-soft">{new Date(r.date).toLocaleDateString('fr-FR')}</p>
                   <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${r.type === 'fixed' ? 'bg-blue-50 text-blue-600' : 'bg-orange-50 text-orange-600'}`}>
                     {r.type === 'fixed' ? 'Fixe' : 'Variable'}
                   </span>
                 </div>
               </div>
               <div className="flex items-center gap-2">
-               <span className="font-mono text-sm font-bold text-positive">+{formatAmount(r.amount)}</span>
+                <span className="font-mono text-sm font-bold text-positive">+{formatAmount(r.amount)}</span>
                 <button onClick={() => openEdit(r)} className="w-7 h-7 rounded-lg bg-mist hover:bg-accent-light text-ink-soft hover:text-accent flex items-center justify-center"><Pencil size={12}/></button>
-                <button onClick={() => handleDelete(r.id)} className="w-7 h-7 rounded-lg bg-mist hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center"><Trash2 size={12}/></button> </div>
+                <button onClick={() => handleDelete(r.id)} className="w-7 h-7 rounded-lg bg-mist hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center"><Trash2 size={12}/></button>
+              </div>
             </div>
           ))}
 
@@ -1091,6 +1130,10 @@ function RevenusSection() {
                 <label className="label">Montant (Rs)</label>
                 <input className="input" type="number" placeholder="0" value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))}/>
               </div>
+              <div>
+                <label className="label">Date de réception</label>
+                <input className="input" type="date" value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))}/>
+              </div>
               <div className="flex rounded-xl overflow-hidden border-2 border-mist-dark">
                 <button className={`flex-1 py-2 text-xs font-bold ${form.type === 'fixed' ? 'bg-accent text-white' : 'bg-white text-ink-soft'}`} onClick={() => setForm(f => ({ ...f, type: 'fixed' }))}>📅 Fixe</button>
                 <button className={`flex-1 py-2 text-xs font-bold ${form.type === 'variable' ? 'bg-accent text-white' : 'bg-white text-ink-soft'}`} onClick={() => setForm(f => ({ ...f, type: 'variable' }))}>📈 Variable</button>
@@ -1105,10 +1148,11 @@ function RevenusSection() {
                 </div>
               </div>
               <div className="flex gap-2">
-                 <button className="btn-ghost flex-1" onClick={resetForm}>Annuler</button>
+                <button className="btn-ghost flex-1" onClick={resetForm}>Annuler</button>
                 <button className="btn-primary flex-1" style={{ backgroundColor: '#16A34A' }} onClick={handleAdd} disabled={saving}>
                   {saving ? 'Enregistrement...' : editingId ? 'Enregistrer' : 'Ajouter'}
-                </button></div>
+                </button>
+              </div>
             </div>
           ) : (
             <button onClick={() => setShowForm(true)} className="w-full py-3 text-sm font-bold text-positive bg-positive-light hover:bg-green-100 rounded-2xl transition-colors flex items-center justify-center gap-2">
@@ -1165,12 +1209,12 @@ function FacturesSection() {
   const { customCategories, addCustom, removeCustom, renameCustom } = useCustomCategories(() => { loadFactures() })
 
   const [form, setForm] = useState({
-    name: '', amount: '', category: DEFAULT_CATEGORIES[0], // ← DEFAULT_CATEGORIES au lieu de FACTURE_CATEGORIES
+    name: '', amount: '', category: DEFAULT_CATEGORIES[0],
     dueDate: '', dueDayOfMonth: '', isRecurring: false, note: '',
   })
   const ym = currentYearMonth()
 
-  useEffect(() => { loadFactures() }, [])  
+  useEffect(() => { loadFactures() }, [])
 
   async function loadFactures() {
     setLoading(true)
@@ -1447,7 +1491,6 @@ function FacturesSection() {
               <label className="label">Montant (Rs)</label>
               <input className="input" type="number" placeholder="0" value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))}/>
             </div>
-            {/* ← CategoryManager partagé au lieu du select FACTURE_CATEGORIES */}
             <div>
               <label className="label">Catégorie</label>
               <CategoryManager
@@ -1627,7 +1670,7 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
   const [editingBudget, setEditingBudget] = useState<BudgetStatus | null>(null)
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
- const { customCategories, addCustom, removeCustom, renameCustom } = useCustomCategories(() => { reload() })
+  const { customCategories, addCustom, removeCustom, renameCustom } = useCustomCategories(() => { reload() })
   const [form, setForm] = useState({ name: '', limit: '', color: COLORS[0] })
 
   const budgets = summary?.budgets ?? []
@@ -1637,7 +1680,7 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
     ? `⚠️ Tu dépasses le plafond en : ${overBudget.map(b => b.name).join(', ')}. Réduis ces dépenses !`
     : budgets.length > 0 ? `✅ Tous tes budgets sont respectés ce mois-ci. Continue !`
     : `Crée un plafond par catégorie pour mieux contrôler où va ton argent.`
-  
+
   function openAdd() {
     setEditingBudget(null); setFormError(null)
     setForm({ name: '', limit: '', color: COLORS[0] }); setShowForm(true)
@@ -1817,7 +1860,7 @@ function CreditorPicker({ value, onChange }: { value: string; onChange: (v: stri
     function handleClick(e: MouseEvent) { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
     document.addEventListener('mousedown', handleClick)
     return () => document.removeEventListener('mousedown', handleClick)
-  }, [])     
+  }, [])
 
   async function handleAdd() {
     if (!newName.trim()) return
@@ -1926,7 +1969,7 @@ function DettesSection() {
       }
     }
     load().finally(() => setLoading(false))
-  }, [ym]) 
+  }, [ym])
 
   const totalOwe  = debts.filter(d => d.type === 'owe').reduce((s, d) => s + d.remaining, 0)
   const totalOwed = debts.filter(d => d.type === 'owed').reduce((s, d) => s + d.remaining, 0)
@@ -1944,9 +1987,9 @@ function DettesSection() {
     if (!acc[d.person]) acc[d.person] = []
     acc[d.person].push(d)
     return acc
-  }, {} as Record<string, Debt[]>)   
+  }, {} as Record<string, Debt[]>)
 
-    function resetForm() {
+  function resetForm() {
     setForm({ type:'owe', person:'', amount:'', minimumPayment:'', interestRate:'', note:'', dueDate:'', recurring: false, category: 'Autre' })
     setEditingId(null)
   }
@@ -1961,7 +2004,7 @@ function DettesSection() {
     })
     setEditingId(d.id); setShowForm(true)
   }
-  
+
   async function toggleHistory(debtId: string) {
     if (openHistoryId === debtId) { setOpenHistoryId(null); return }
     setOpenHistoryId(debtId)
