@@ -14,6 +14,7 @@ import CoachTip from './CoachTip'
 import { supabase } from '@/lib/supabase'
 import { MoneySubTab } from '@/app/page'
 import { useMonthSummary } from '@/lib/useMonthSummary'
+import { budgetStatus } from '@/lib/finance'
 import type { BudgetStatus } from '@/lib/finance'
 import { useSpendingLines } from '@/lib/useSpendingLines'
 import {
