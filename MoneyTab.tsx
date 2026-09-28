@@ -608,7 +608,7 @@ function TransactionsSection({ transactions, onUpdate }: { transactions: Transac
   function getBudgetStatus(cat: string): 'over' | 'near' | 'ok' | 'none' {
     const budget = budgets.find(b => b.name === cat)
     if (!budget) return 'none'
-     const pct = (spentPerCat[cat] || 0) / monthlyLimit(budget)
+    const pct = (spentPerCat[cat] || 0) / monthlyLimit(budget)
     if (pct > 1) return 'over'
     if (pct >= 0.8) return 'near'
     return 'ok'
@@ -1820,7 +1820,7 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
         </div>
       )}
       <CoachTip message={tip} />
-            <div className="flex items-start gap-3 p-3 bg-orange-50 border border-orange-200 rounded-2xl">
+      <div className="flex items-start gap-3 p-3 bg-orange-50 border border-orange-200 rounded-2xl">
         <span className="text-lg">💡</span>
         <div className="text-xs text-orange-700 leading-relaxed space-y-1.5">
           <p>
@@ -1888,7 +1888,7 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
                 <button className="w-8 h-8 rounded-xl bg-mist hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center" onClick={() => handleDelete(b.id)}><Trash2 size={14}/></button>
               </div>
             </div>
-                        <p className="text-[11px] text-ink-soft">🗓️ Plafond sur {durationLabel(b.periodMonths ?? 1)} · du {fmtDay(cycle.from)} au {fmtDay(cycle.to)}</p>
+            <p className="text-[11px] text-ink-soft">🗓️ Plafond sur {durationLabel(b.periodMonths ?? 1)} · du {fmtDay(cycle.from)} au {fmtDay(cycle.to)}</p>
             <div className="w-full h-2.5 bg-mist-dark rounded-full overflow-hidden">
               <div className="h-full rounded-full transition-all duration-500" style={{ width: `${pct}%`, backgroundColor: over ? '#DC2626' : near ? '#D97706' : b.color }}/>
             </div>
@@ -1897,7 +1897,7 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
               <span className="font-mono text-ink-soft">plafond : {formatAmount(b.limit)}</span>
             </div>
             <p className="text-xs text-ink-soft">
-               Dépensé sur {PERIOD_LABEL[period]} : <span className="font-mono font-bold text-ink">{formatAmount(periodSpent)}</span>
+              Dépensé sur {PERIOD_LABEL[period]} : <span className="font-mono font-bold text-ink">{formatAmount(periodSpent)}</span>
             </p>
           </div>
         )
@@ -2090,8 +2090,8 @@ function DettesSection() {
     note: '', dueDate: '', recurring: false, category: 'Autre',
   })
 
-  useEffect(() => {
-       async function loadPayments() {    
+  async function loadPayments() {
+    const { data: { user } } = await supabase.auth.getUser()
     const { data: userDebts } = await supabase.from('debts').select('id').eq('user_id', user!.id)
     const ids = (userDebts ?? []).map(d => d.id)
     if (ids.length === 0) { setAllPayments([]); return }
@@ -2199,108 +2199,108 @@ function DettesSection() {
   }
 
   async function handlePay(id: string) {
-  const amt = Number(payAmount)
-  if (!amt || amt <= 0) return
-  const debt = debts.find(d => d.id === id)!
-  const isRecurring  = (debt as any).recurring ?? false
-  const debtCategory = (debt as any).category ?? 'Autre'
-  await logPayment(id, amt, payDate, debtCategory, payNote)
-  invalidateHistory(id)
-  await loadPayments()
-  if (debt.amount === 0) {
-    setConfirmDeleteId(id); setPayingId(null); setPayAmount(''); setPayDate(new Date().toISOString().slice(0, 10)); setPayNote(''); return
-  }
-  const newRemaining = Math.max(0, debt.remaining - amt)
-  if (newRemaining === 0) {
-    if (isRecurring) {
-      await updateDebt(id, { remaining: debt.amount })
-      setDebts(prev => prev.map(d => d.id !== id ? d : { ...d, remaining: debt.amount }))
-    } else {
-      await updateDebt(id, { remaining: 0 })
-      setDebts(prev => prev.map(d => d.id !== id ? d : { ...d, remaining: 0 }))
-      setConfirmDeleteId(id)
+    const amt = Number(payAmount)
+    if (!amt || amt <= 0) return
+    const debt = debts.find(d => d.id === id)!
+    const isRecurring  = (debt as any).recurring ?? false
+    const debtCategory = (debt as any).category ?? 'Autre'
+    await logPayment(id, amt, payDate, debtCategory, payNote)
+    invalidateHistory(id)
+    await loadPayments()
+    if (debt.amount === 0) {
+      setConfirmDeleteId(id); setPayingId(null); setPayAmount(''); setPayDate(new Date().toISOString().slice(0, 10)); setPayNote(''); return
     }
-  } else {
-    await updateDebt(id, { remaining: newRemaining })
-    setDebts(prev => prev.map(d => d.id !== id ? d : { ...d, remaining: newRemaining }))
+    const newRemaining = Math.max(0, debt.remaining - amt)
+    if (newRemaining === 0) {
+      if (isRecurring) {
+        await updateDebt(id, { remaining: debt.amount })
+        setDebts(prev => prev.map(d => d.id !== id ? d : { ...d, remaining: debt.amount }))
+      } else {
+        await updateDebt(id, { remaining: 0 })
+        setDebts(prev => prev.map(d => d.id !== id ? d : { ...d, remaining: 0 }))
+        setConfirmDeleteId(id)
+      }
+    } else {
+      await updateDebt(id, { remaining: newRemaining })
+      setDebts(prev => prev.map(d => d.id !== id ? d : { ...d, remaining: newRemaining }))
+    }
+    setPayingId(null); setPayAmount(''); setPayDate(new Date().toISOString().slice(0, 10)); setPayNote('')
   }
-  setPayingId(null); setPayAmount(''); setPayDate(new Date().toISOString().slice(0, 10)); setPayNote('')
-}
 
   async function handleEditPayment() {
-  if (!editingPayment) return
-  const newAmt = Number(editPayAmount)
-  if (!newAmt || newAmt <= 0) return
-  const oldAmt = editingPayment.amount
-  const diff = newAmt - oldAmt
-  await updatePayment(editingPayment.id, newAmt, editPayDate, editPayNote)
-  const debt = debts.find(d => d.id === editingPayment.debtId)
-  if (debt && debt.amount > 0) {
-    const newRemaining = Math.max(0, debt.remaining - diff)
-    await updateDebt(debt.id, { remaining: newRemaining })
-    setDebts(prev => prev.map(d => d.id === debt.id ? { ...d, remaining: newRemaining } : d))
+    if (!editingPayment) return
+    const newAmt = Number(editPayAmount)
+    if (!newAmt || newAmt <= 0) return
+    const oldAmt = editingPayment.amount
+    const diff = newAmt - oldAmt
+    await updatePayment(editingPayment.id, newAmt, editPayDate, editPayNote)
+    const debt = debts.find(d => d.id === editingPayment.debtId)
+    if (debt && debt.amount > 0) {
+      const newRemaining = Math.max(0, debt.remaining - diff)
+      await updateDebt(debt.id, { remaining: newRemaining })
+      setDebts(prev => prev.map(d => d.id === debt.id ? { ...d, remaining: newRemaining } : d))
+    }
+    await loadPayments()
+    await reloadHistory(editingPayment.debtId)
+    setEditingPayment(null)
   }
-  await loadPayments()
-  await reloadHistory(editingPayment.debtId)
-  setEditingPayment(null)
-}
 
   async function handleDeletePayment(h: DebtPaymentHistory) {
-  const debt = debts.find(d => d.id === h.debtId)
-  if (debt && debt.amount > 0) {
-    const newRemaining = Math.min(debt.amount, debt.remaining + h.amount)
-    await updateDebt(debt.id, { remaining: newRemaining })
-    setDebts(prev => prev.map(d => d.id === debt.id ? { ...d, remaining: newRemaining } : d))
+    const debt = debts.find(d => d.id === h.debtId)
+    if (debt && debt.amount > 0) {
+      const newRemaining = Math.min(debt.amount, debt.remaining + h.amount)
+      await updateDebt(debt.id, { remaining: newRemaining })
+      setDebts(prev => prev.map(d => d.id === debt.id ? { ...d, remaining: newRemaining } : d))
+    }
+    await deletePayment(h.id)
+    await loadPayments()
+    await reloadHistory(h.debtId)
   }
-  await deletePayment(h.id)
-  await loadPayments()
-  await reloadHistory(h.debtId)
-}
 
   if (loading) return <div className="card text-center py-8 text-ink-soft">Chargement...</div>
 
   return (
     <div className="space-y-3">
       <CoachTip message={tip} />
-            <div className="flex items-start gap-3 p-3 bg-red-50 border border-red-100 rounded-2xl">
+      <div className="flex items-start gap-3 p-3 bg-red-50 border border-red-100 rounded-2xl">
         <span className="text-base">💡</span>
-          <p className="text-xs text-red-700 leading-relaxed">
-            <strong>Dettes ≠ Factures.</strong> Une dette se rembourse progressivement sur plusieurs mois/années.
-          </p>
-        </div>
-  
-        <div className="flex gap-1.5 overflow-x-auto">
-          {PERIODS.map(p => (
-            <button key={p.id} onClick={() => setPeriod(p.id)}
-              className={`flex-1 whitespace-nowrap px-3 py-2 rounded-xl text-xs font-bold border-2 transition-colors ${
-                period === p.id ? 'bg-danger text-white border-transparent' : 'bg-white text-ink-soft border-mist-dark'}`}>
-              {p.label}
-            </button>
-          ))}
-        </div>
-  
-        {period === 'custom' && (
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="label">Du</label>
-              <input className="input" type="date" value={customFrom} max={customTo || undefined}
-                onChange={e => setCustomFrom(e.target.value)}/>
-            </div>
-            <div>
-              <label className="label">Au</label>
-              <input className="input" type="date" value={customTo} min={customFrom || undefined}
-                onChange={e => setCustomTo(e.target.value)}/>
-            </div>
+        <p className="text-xs text-red-700 leading-relaxed">
+          <strong>Dettes ≠ Factures.</strong> Une dette se rembourse progressivement sur plusieurs mois/années.
+        </p>
+      </div>
+
+      <div className="flex gap-1.5 overflow-x-auto">
+        {PERIODS.map(p => (
+          <button key={p.id} onClick={() => setPeriod(p.id)}
+            className={`flex-1 whitespace-nowrap px-3 py-2 rounded-xl text-xs font-bold border-2 transition-colors ${
+              period === p.id ? 'bg-danger text-white border-transparent' : 'bg-white text-ink-soft border-mist-dark'}`}>
+            {p.label}
+          </button>
+        ))}
+      </div>
+
+      {period === 'custom' && (
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="label">Du</label>
+            <input className="input" type="date" value={customFrom} max={customTo || undefined}
+              onChange={e => setCustomFrom(e.target.value)}/>
           </div>
-        )}
-  
-        <div className="card bg-danger-light">
-          <p className="text-xs font-bold text-danger uppercase tracking-wide">Remboursé · {PERIOD_LABEL[period]}</p>
-          <p className="text-2xl font-bold font-mono text-danger mt-1">{formatAmount(periodPaidTotal)}</p>
+          <div>
+            <label className="label">Au</label>
+            <input className="input" type="date" value={customTo} min={customFrom || undefined}
+              onChange={e => setCustomTo(e.target.value)}/>
+          </div>
         </div>
-  
-        <div className="grid grid-cols-2 gap-3">
-          <div className="card border border-danger/20">
+      )}
+
+      <div className="card bg-danger-light">
+        <p className="text-xs font-bold text-danger uppercase tracking-wide">Remboursé · {PERIOD_LABEL[period]}</p>
+        <p className="text-2xl font-bold font-mono text-danger mt-1">{formatAmount(periodPaidTotal)}</p>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div className="card border border-danger/20">
           <div className="flex items-center gap-2 mb-2">
             <div className="w-8 h-8 rounded-xl bg-danger-light flex items-center justify-center"><span className="text-sm">💳</span></div>
             <p className="text-xs font-bold text-danger uppercase tracking-wide">Je dois</p>
