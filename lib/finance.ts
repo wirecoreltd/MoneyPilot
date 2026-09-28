@@ -8,7 +8,7 @@
 export interface SnapTransaction { id: string; type: 'income' | 'expense'; amount: number; category: string; note: string; date: string }
 export interface SnapIncome { id: string; label: string; amount: number; isFixed: boolean; month: string }
 export interface SnapFacture { id: string; name: string; amount: number; category: string; dueDate?: string; isRecurring: boolean }
-export interface SnapFacturePayment { factureId: string; amount: number; paidAt: string }
+export interface SnapFacturePayment { id: string; factureId: string; amount: number; paidAt: string; category: string }
 export interface SnapDebt {
   id: string; type: 'owe' | 'owed'; person: string
   amount: number; remaining: number; minimumPayment: number
@@ -170,9 +170,10 @@ export function computeMonthSummary(s: MonthSnapshot): MonthSummary {
       paidByFacture[p.factureId] = (paidByFacture[p.factureId] || 0) + p.amount
     }
   }
-  const billsPlanned = sum(s.factures.map(f => f.amount))
-  const billsPaid = sum(Object.values(paidByFacture))
-  const billsRemaining = sum(s.factures.map(f => Math.max(0, f.amount - (paidByFacture[f.id] || 0))))
+  const monthFacturePayments = s.facturePayments.filter(p => inMonth(p.paidAt, m))
+const billsPlanned = sum(s.factures.map(f => f.amount))
+const billsPaid = sum(monthFacturePayments.map(p => p.amount))          // ← par date de paiement
+const billsRemaining = sum(s.factures.map(f => Math.max(0, f.amount - (paidByFacture[f.id] || 0))))
 
   // Dettes : les paiements sont datés ; "on me doit" = argent reçu, pas dépensé
   const debtById = new Map(s.debts.map(d => [d.id, d]))
@@ -207,10 +208,7 @@ export function computeMonthSummary(s: MonthSnapshot): MonthSummary {
     spendingByCategory[cat] = (spendingByCategory[cat] || 0) + amt
   }
   expenseTx.forEach(t => add(t.category, t.amount))
-  s.facturePayments.forEach(p => {
-    const f = factureById.get(p.factureId)
-    if (f) add(f.category || 'Autre', p.amount)
-  })
+  monthFacturePayments.forEach(p => add(p.category || 'Autre', p.amount))
   monthDebtPayments.forEach(p => {
     const d = debtById.get(p.debtId)
     if (d?.type === 'owed') return
