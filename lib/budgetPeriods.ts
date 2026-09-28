@@ -1,6 +1,7 @@
 // lib/budgetPeriods.ts
 // Durées de plafond, cycle courant, sommes par catégorie. Fonctions PURES.
-import { isoDate } from './finance'
+import { isoDate, budgetStatus } from './finance'
+import type { BudgetStatus } from './finance'
 import type { SpendingLine } from './data'
 
 export const BUDGET_DURATIONS = [
@@ -66,4 +67,35 @@ export function sumByCategory(lines: SpendingLine[], from: string, to: string): 
     if (l.date >= from && l.date <= to) out[l.category] = (out[l.category] || 0) + l.amount
   }
   return out
+}
+
+// ─── Statut des plafonds (règle unique, utilisée par Budget, Dépenses, Accueil) ───
+
+type BudgetLike = {
+  id: string; name: string; limit: number; color: string
+  periodMonths?: number; createdAt?: string
+}
+
+/** Début du plus ancien cycle : à partir de quand charger les dépenses. null = aucun plafond. */
+export function earliestCycleStart(budgets: BudgetLike[], today: Date = new Date()): string | null {
+  if (budgets.length === 0) return null
+  return budgets.reduce((min, b) => {
+    const f = currentCycle(b.createdAt, b.periodMonths ?? 1, today).from
+    return f < min ? f : min
+  }, '9999-12-31')
+}
+
+/** Statut de chaque plafond sur SON cycle courant. */
+export function computeBudgetStatuses(
+  budgets: BudgetLike[], lines: SpendingLine[], today: Date = new Date(),
+): BudgetStatus[] {
+  return budgets.map(b => {
+    const cycle = currentCycle(b.createdAt, b.periodMonths ?? 1, today)
+    const spent = sumCategory(lines, b.name, cycle.from, cycle.to)
+    return {
+      id: b.id, name: b.name, limit: b.limit, color: b.color,
+      spent, ...budgetStatus(spent, b.limit),
+      periodMonths: b.periodMonths ?? 1, cycleFrom: cycle.from, cycleTo: cycle.to,
+    }
+  })
 }
