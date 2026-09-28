@@ -24,13 +24,14 @@ export async function loadMonthSnapshot(
   const nextFirst = `${shiftMonth(month, 1)}-01`
 
   // Vague 1 : tables directement rattachées à l'utilisateur
-  const [txR, incR, facR, debtR, goalR, budR, projR, recR] = await Promise.all([
+  const [txR, incR, facR, allFacR, debtR, goalR, budR, projR, recR] = await Promise.all([
     client.from('transactions').select('id,type,amount,category,note,date')
       .eq('user_id', userId).gte('date', `${firstMonth}-01`).lt('date', nextFirst),
     client.from('monthly_incomes').select('id,label,amount,is_fixed,month')
       .eq('user_id', userId).gte('month', firstMonth).lte('month', month),
     client.from('factures').select('id,name,amount,category,due_date,is_recurring')
-      .eq('user_id', userId).eq('month', month),
+    .eq('user_id', userId).eq('month', month),
+  client.from('factures').select('id,category').eq('user_id', userId),
     client.from('debts').select('id,type,person,amount,remaining,minimum_payment,interest_rate,due_date,recurring,category')
       .eq('user_id', userId),
     client.from('savings_goals').select('id,name,target,saved,category').eq('user_id', userId),
@@ -50,10 +51,35 @@ export async function loadMonthSnapshot(
   const goalIds = goalRows.map(g => g.id)
 
   // Vague 2 : tables d'historique (rattachées via l'id parent, pas de user_id)
-  const [fpR, dpR, depR] = await Promise.all([
-    factureIds.length
-      ? client.from('facture_payment_history').select('facture_id,amount,paid_at').in('facture_id', factureIds)
-      : empty,
+  const allFacRows = must(allFacR, 'factures (toutes)')
+const allFactureIds = allFacRows.map(f => f.id)
+const factureCat = new Map<string, string>(allFacRows.map(f => [f.id, f.category ?? 'Autre']))
+
+// (b) paiements DATÉS du mois, sur n'importe quelle facture (par paquets de 100 : limite d'URL)
+const fpDated = Promise.all(chunk(allFactureIds).map(ids =>
+  client.from('facture_payment_history').select('id,facture_id,amount,paid_at')
+    .in('facture_id', ids).gte('paid_at', `${month}-01`).lt('paid_at', nextFirst)))
+
+const [fpOfMonthR, dpR, depR, fpDatedRs] = await Promise.all([
+  // (a) tous les paiements des factures du mois -> sert au "reste à payer"
+  factureIds.length
+    ? client.from('facture_payment_history').select('id,facture_id,amount,paid_at').in('facture_id', factureIds)
+    : empty,
+  debtIds.length
+    ? client.from('debt_payment_history').select('debt_id,amount,paid_at,category')
+        .in('debt_id', debtIds).gte('paid_at', `${month}-01`).lt('paid_at', nextFirst)
+    : empty,
+  goalIds.length
+    ? client.from('savings_deposits').select('goal_id,amount,is_withdrawal,deposited_at')
+        .in('goal_id', goalIds).gte('deposited_at', `${month}-01`).lt('deposited_at', nextFirst)
+    : empty,
+  fpDated,
+])
+
+// (a) ∪ (b), dédoublonnés par id
+const fpById = new Map<string, any>()
+for (const r of must(fpOfMonthR, 'facture_payment_history')) fpById.set(r.id, r)
+for (const res of fpDatedRs) for (const r of must(res, 'facture_payment_history')) fpById.set(r.id, r)
     debtIds.length
       ? client.from('debt_payment_history').select('debt_id,amount,paid_at,category')
           .in('debt_id', debtIds).gte('paid_at', `${month}-01`).lt('paid_at', nextFirst)
@@ -76,9 +102,11 @@ export async function loadMonthSnapshot(
       id: r.id, name: r.name, amount: num(r.amount), category: r.category ?? 'Autre',
       dueDate: r.due_date ?? undefined, isRecurring: !!r.is_recurring,
     })),
-    facturePayments: must(fpR, 'facture_payment_history').map(r => ({
-      factureId: r.facture_id, amount: num(r.amount), paidAt: r.paid_at,
-    })),
+    facturePayments: [...fpById.values()].map(r => ({
+  id: r.id, factureId: r.facture_id, amount: num(r.amount),
+  paidAt: String(r.paid_at).slice(0, 10),
+  category: factureCat.get(r.facture_id) ?? 'Autre',
+})),
     debts: debtRows.map(r => ({
       id: r.id, type: r.type, person: r.person, amount: num(r.amount), remaining: num(r.remaining),
       minimumPayment: num(r.minimum_payment), interestRate: r.interest_rate ?? undefined,
