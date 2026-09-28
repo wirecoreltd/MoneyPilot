@@ -1833,6 +1833,7 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
       </div>
 
       {/* Filtre de période */}
+      <p className="text-xs font-bold text-ink-soft uppercase tracking-wider">Voir mes dépenses sur</p>
       <div className="flex gap-1.5 overflow-x-auto">
         {PERIODS.map(p => (
           <button key={p.id} onClick={() => setPeriod(p.id)}
