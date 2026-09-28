@@ -119,6 +119,29 @@ async function reassignCategoryToAutre(cat: string): Promise<void> {
   if (!user) throw new Error('Non authentifié')
   const uid = user.id
 
+  // Renomme une catégorie partout (transactions, factures, dettes, historique, budget)
+async function renameCategoryEverywhere(oldName: string, newName: string): Promise<void> {
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) throw new Error('Non authentifié')
+  const uid = user.id
+
+  const { data: affectedDebts } = await supabase
+    .from('debts').select('id').eq('user_id', uid).eq('category', oldName)
+  const debtIds = (affectedDebts ?? []).map(d => d.id)
+
+  const results = await Promise.all([
+    supabase.from('transactions').update({ category: newName }).eq('user_id', uid).eq('category', oldName),
+    supabase.from('factures').update({ category: newName }).eq('user_id', uid).eq('category', oldName),
+    supabase.from('debts').update({ category: newName }).eq('user_id', uid).eq('category', oldName),
+    debtIds.length > 0
+      ? supabase.from('debt_payment_history').update({ category: newName }).in('debt_id', debtIds)
+      : Promise.resolve({ error: null }),
+    supabase.from('budget_categories').update({ name: newName }).eq('user_id', uid).eq('name', oldName),
+  ])
+  const failed = results.find(r => r.error)
+  if (failed?.error) throw failed.error
+}
+  
   // historique de remboursements : pas de user_id, on passe par les dettes concernées
   const { data: affectedDebts } = await supabase
     .from('debts').select('id').eq('user_id', uid).eq('category', cat)
@@ -171,7 +194,23 @@ function useCustomCategories(onChanged?: () => void) {
     onChanged?.()
   }
 
-  return { customCategories, addCustom, removeCustom }
+    async function renameCustom(oldName: string, newName: string) {
+    const proper = toProper(newName)
+    if (!proper) throw new Error('Le nom ne peut pas être vide.')
+    if (proper === oldName) return
+    const exists = [...DEFAULT_CATEGORIES, ...customCategories]
+      .some(c => c !== oldName && c.toLowerCase() === proper.toLowerCase())
+    if (exists) throw new Error('Cette catégorie existe déjà.')
+    await renameCategoryEverywhere(oldName, proper) // si ça échoue, rien n'est renommé
+    setCustomCategories(prev => {
+      const next = prev.map(c => (c === oldName ? proper : c))
+      saveCustomCategories(next)
+      return next
+    })
+    onChanged?.()
+  }
+
+  return { customCategories, addCustom, removeCustom, renameCustom }
 }
 
 const SUBTAB_KEY = 'moneyapp_subtab'
@@ -326,18 +365,21 @@ export default function MoneyTab({ transactions, onUpdate, initialSubTab, onSubT
 type CategoryContext = 'transactions' | 'budget' | 'dettes' | 'epargne' | 'factures' | 'revenus'
 
 function CategoryManager({
-  value, onChange, customCategories, onAddCustom, onRemoveCustom, context = 'transactions'
+  value, onChange, customCategories, onAddCustom, onRemoveCustom, onRenameCustom, context = 'transactions'
 }: {
   value: string
   onChange: (v: string) => void
   customCategories: string[]
   onAddCustom: (cat: string) => void
   onRemoveCustom: (cat: string) => Promise<void>
+  onRenameCustom: (oldName: string, newName: string) => Promise<void>
   context?: CategoryContext
 }) {
   const [newCat, setNewCat] = useState('')
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [editingCat, setEditingCat] = useState<string | null>(null)
+  const [editValue, setEditValue] = useState('')
   const ref = useRef<HTMLDivElement>(null)
   const allCats = getAllCategories(customCategories)
 
@@ -372,6 +414,19 @@ function CategoryManager({
     setBusy(false)
   }
 
+    async function handleRename(oldCat: string) {
+    if (busy) return
+    setBusy(true)
+    try {
+      await onRenameCustom(oldCat, editValue)
+      if (value === oldCat) onChange(toProper(editValue))
+      setEditingCat(null)
+    } catch (e) {
+      window.alert(e instanceof Error && e.message ? e.message : 'Impossible de modifier la catégorie. Réessaie.')
+    }
+    setBusy(false)
+  }
+
   const contextMsg: Record<CategoryContext, string> = {
     transactions: '💡 Cette catégorie s\'affiche dans <strong>Dettes</strong>, <strong>Factures</strong> et <strong>Budget</strong>',
     budget:       '💡 Cette catégorie s\'affiche dans <strong>Dettes</strong>, <strong>Factures</strong> et <strong>Transactions</strong>',
@@ -393,7 +448,30 @@ function CategoryManager({
           <div className="absolute z-50 top-full mt-1 left-0 right-0 bg-white border border-mist-dark rounded-2xl shadow-xl overflow-hidden">
             <div className="max-h-56 overflow-y-auto">
               {allCats.map(c => {
+                              {allCats.map(c => {
                 const removable = customCategories.includes(c)
+
+                if (editingCat === c) {
+                  return (
+                    <div key={c} className="flex items-center gap-2 px-3 py-2 bg-accent-light">
+                      <input autoFocus className="input flex-1 py-1.5 text-sm" value={editValue}
+                        onChange={e => setEditValue(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') handleRename(c)
+                          if (e.key === 'Escape') setEditingCat(null)
+                        }}/>
+                      <button type="button" disabled={busy || !editValue.trim()} onClick={() => handleRename(c)}
+                        className="w-7 h-7 rounded-lg bg-accent text-white flex items-center justify-center disabled:opacity-40 flex-shrink-0">
+                        <Check size={14}/>
+                      </button>
+                      <button type="button" onClick={() => setEditingCat(null)}
+                        className="w-7 h-7 rounded-lg bg-mist text-ink-soft flex items-center justify-center flex-shrink-0">
+                        <X size={14}/>
+                      </button>
+                    </div>
+                  )
+                }
+
                 return (
                   <div key={c} onClick={() => { onChange(c); setOpen(false) }}
                     className={`flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-mist transition-colors ${value === c ? 'bg-accent-light' : ''}`}>
@@ -402,10 +480,17 @@ function CategoryManager({
                       <span className="text-sm text-ink">{c}</span>
                     </div>
                     {removable && (
-                      <button type="button" disabled={busy} onClick={e => handleRemove(c, e)}
-                        className="w-6 h-6 rounded-lg hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center disabled:opacity-40">
-                        <X size={12}/>
-                      </button>
+                      <div className="flex items-center gap-1">
+                        <button type="button" disabled={busy}
+                          onClick={e => { e.stopPropagation(); setEditingCat(c); setEditValue(c) }}
+                          className="w-6 h-6 rounded-lg hover:bg-accent-light text-ink-soft hover:text-accent flex items-center justify-center disabled:opacity-40">
+                          <Pencil size={12}/>
+                        </button>
+                        <button type="button" disabled={busy} onClick={e => handleRemove(c, e)}
+                          className="w-6 h-6 rounded-lg hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center disabled:opacity-40">
+                          <X size={12}/>
+                        </button>
+                      </div>
                     )}
                   </div>
                 )
@@ -476,7 +561,7 @@ function TransactionsSection({ transactions, onUpdate }: { transactions: Transac
     date: new Date().toISOString().slice(0, 10),
   })
 
-  const { customCategories, addCustom, removeCustom } = useCustomCategories(() => {
+  const { customCategories, addCustom, removeCustom, renameCustom } = useCustomCategories(() => {
     onUpdate()
     getBudgets().then(setBudgets)
   })
@@ -732,7 +817,7 @@ function TransactionsSection({ transactions, onUpdate }: { transactions: Transac
             <div>
               <label className="label">Catégorie</label>
              <CategoryManager value={form.category} onChange={v => setForm(f => ({...f, category: v as any}))}
-              customCategories={customCategories} onAddCustom={addCustom} onRemoveCustom={removeCustom} context="transactions"/>
+              customCategories={customCategories} onAddCustom={addCustom} onRemoveCustom={removeCustom} onRenameCustom={renameCustom} context="transactions"/>
             </div>
             <div><label className="label">Note (optionnel)</label><input className="input" placeholder="Ex: Courses Jumbo..." value={form.note} onChange={e => setForm(f => ({...f, note: e.target.value}))}/></div>
             <div><label className="label">Date</label><input className="input" type="date" value={form.date} onChange={e => setForm(f => ({...f, date: e.target.value}))}/></div>
@@ -1336,7 +1421,7 @@ function FacturesSection() {
                 onChange={v => setForm(f => ({ ...f, category: v }))}
                 customCategories={customCategories}
                 onAddCustom={addCustom}
-                onRemoveCustom={removeCustom}
+                onRemoveCustom={removeCustom} onRenameCustom={renameCustom}
                 context="factures"
               />
             </div>
@@ -1628,7 +1713,7 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
             {formError && <p className="text-xs text-danger bg-danger-light rounded-xl px-3 py-2">{formError}</p>}
             <div>
               <label className="label">Catégorie de dépense</label>
-              <CategoryManager value={form.name} onChange={v => setForm(f => ({...f, name: v}))} customCategories={customCategories} onAddCustom={addCustom} onRemoveCustom={removeCustom} context="budget"/>
+              <CategoryManager value={form.name} onChange={v => setForm(f => ({...f, name: v}))} customCategories={customCategories} onAddCustom={addCustom} onRemoveCustom={removeCustom} onRenameCustom={renameCustom} context="budget"/>
             </div>
             <div><label className="label">Plafond mensuel (Rs)</label><input className="input" type="number" placeholder="Ex: 15000" value={form.limit} onChange={e => setForm(f => ({...f, limit: e.target.value}))}/></div>
             <div>
@@ -2201,7 +2286,7 @@ function DettesSection() {
             </div>
             <div>
               <label className="label">Catégorie</label>
-              <CategoryManager value={form.category} onChange={v => setForm(f => ({...f, category: v}))} customCategories={customCategories} onAddCustom={addCustom} onRemoveCustom={removeCustom} context="dettes"/>
+              <CategoryManager value={form.category} onChange={v => setForm(f => ({...f, category: v}))} customCategories={customCategories} onAddCustom={addCustom} onRemoveCustom={removeCustom} onRenameCustom={renameCustom} context="dettes"/>
             </div>
             <div><label className="label">Montant total (Rs)</label><input className="input" type="number" placeholder="Ex: 150000" value={form.amount} onChange={e => setForm(f => ({...f, amount: e.target.value}))}/></div>
             <div><label className="label">Remboursement minimum / mois (Rs)</label><input className="input" type="number" placeholder="Ex: 3000" value={form.minimumPayment} onChange={e => setForm(f => ({...f, minimumPayment: e.target.value}))}/></div>
