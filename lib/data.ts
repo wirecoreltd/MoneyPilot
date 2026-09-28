@@ -1,4 +1,3 @@
-```ts
 // lib/data.ts
 // Couche d'accès Supabase -> MonthSnapshot. Le client est PASSÉ EN PARAMÈTRE :
 //  - navigateur : loadMonthSnapshot(supabase, user.id, month)
@@ -478,19 +477,3 @@ export async function loadProfile(
     currency: data.currency ?? 'MUR',
   }
 }
-```
-
-### Ce que j'ai corrigé
-
-La correction principale est le bloc qui apparaissait **deux fois** après le `Promise.all()`. Dans la version corrigée, il n'existe plus qu'une seule déclaration de :
-
-* `debt_payment_history`
-* `savings_deposits`
-* `fpDated`
-* `fpDatedRs`
-
-Le reste du fichier est conservé dans la même logique que ton fichier original.
-
-**Remplace entièrement** le contenu de `lib/data.ts` par celui-ci, commit sur `main`, puis laisse Vercel refaire le déploiement.
-
-Si le prochain build donne une **nouvelle erreur TypeScript** après celle-ci, envoie-moi simplement le nouveau log Vercel et on corrige la suivante sans toucher inutilement au reste de MoneyPilot.
