@@ -1804,22 +1804,7 @@ function CreditorPicker({ value, onChange }: { value: string; onChange: (v: stri
     function handleClick(e: MouseEvent) { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
     document.addEventListener('mousedown', handleClick)
     return () => document.removeEventListener('mousedown', handleClick)
-  }, [])
-
-    function resetForm() {
-    setForm({ label: '', amount: '', type: 'fixed', saveSource: false })
-    setEditingId(null)
-    setShowForm(false)
-  }
-
-  function openEdit(r: RevenuSource) {
-    setEditingId(r.id)
-    setForm({ label: r.label, amount: String(r.amount), type: r.type, saveSource: false })
-    setShowForm(true)
-    setOpen(true)
-  }
-
-  
+  }, [])     
 
   async function handleAdd() {
     if (!newName.trim()) return
@@ -1948,20 +1933,17 @@ function DettesSection() {
     return acc
   }, {} as Record<string, Debt[]>)
 
-  function resetForm() {
-    setForm({ type:'owe', person:'', amount:'', minimumPayment:'', interestRate:'', note:'', dueDate:'', recurring: false, category: 'Autre' })
+   function resetForm() {
+    setForm({ label: '', amount: '', type: 'fixed', saveSource: false })
     setEditingId(null)
+    setShowForm(false)
   }
-  function openEdit(d: Debt) {
-    setForm({
-      type: d.type, person: d.person, amount: String(d.amount),
-      minimumPayment: d.minimumPayment ? String(d.minimumPayment) : '',
-      interestRate: d.interestRate !== undefined ? String(d.interestRate) : '',
-      note: d.note || '', dueDate: d.dueDate || '',
-      recurring: (d as any).recurring ?? false,
-      category: (d as any).category ?? 'Autre',
-    })
-    setEditingId(d.id); setShowForm(true)
+
+  function openEdit(r: RevenuSource) {
+    setEditingId(r.id)
+    setForm({ label: r.label, amount: String(r.amount), type: r.type, saveSource: false })
+    setShowForm(true)
+    setOpen(true)
   }
 
   async function toggleHistory(debtId: string) {
