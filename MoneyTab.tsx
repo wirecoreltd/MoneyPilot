@@ -16,6 +16,10 @@ import { MoneySubTab } from '@/app/page'
 import { useMonthSummary } from '@/lib/useMonthSummary'
 import type { BudgetStatus } from '@/lib/finance'
 import { useSpendingLines } from '@/lib/useSpendingLines'
+import {
+  currentCycle, sumByCategory, sumCategory, durationLabel, BUDGET_DURATIONS,
+  computeBudgetStatuses, earliestCycleStart,
+} from '@/lib/budgetPeriods'
 import { currentCycle, sumByCategory, sumCategory, durationLabel, BUDGET_DURATIONS } from '@/lib/budgetPeriods'
 
 type SubTab = MoneySubTab
@@ -550,7 +554,6 @@ function getPeriodRange(p: Period, customFrom: string, customTo: string) {
 }
 
 // Plafond ramené à un montant mensuel (un plafond de 3 mois = limite / 3 par mois)
-const monthlyLimit = (b: BudgetCategory) => b.limit / (b.periodMonths ?? 1)
 
 function TransactionsSection({ transactions, onUpdate }: { transactions: Transaction[]; onUpdate: () => void }) {
   const [showForm, setShowForm] = useState(false)
@@ -575,7 +578,13 @@ function TransactionsSection({ transactions, onUpdate }: { transactions: Transac
 
   useEffect(() => { getBudgets().then(setBudgets) }, [])
 
-  const range = getPeriodRange(period, customFrom, customTo)
+// Statut de chaque plafond sur son cycle courant (même règle que Budget et Accueil)
+const { lines } = useSpendingLines(earliestCycleStart(budgets), transactions)
+const statusByCat = Object.fromEntries(
+  computeBudgetStatuses(budgets, lines).map(s => [s.name, s]),
+)
+
+const range = getPeriodRange(period, customFrom, customTo)
 
   const periodTxs = transactions.filter(t => {
     if (t.type !== 'expense') return false
@@ -599,20 +608,9 @@ function TransactionsSection({ transactions, onUpdate }: { transactions: Transac
 
   // Les plafonds sont mensuels : on les compare toujours au mois en cours,
   // quelle que soit la période affichée.
-  const thisMonth = currentYearMonth()
-  const spentPerCat: Record<string, number> = {}
-  transactions.filter(t => t.type === 'expense' && t.date.startsWith(thisMonth)).forEach(t => {
-    spentPerCat[t.category] = (spentPerCat[t.category] || 0) + t.amount
-  })
-
   function getBudgetStatus(cat: string): 'over' | 'near' | 'ok' | 'none' {
-    const budget = budgets.find(b => b.name === cat)
-    if (!budget) return 'none'
-    const pct = (spentPerCat[cat] || 0) / monthlyLimit(budget)
-    if (pct > 1) return 'over'
-    if (pct >= 0.8) return 'near'
-    return 'ok'
-  }
+  return statusByCat[cat]?.status ?? 'none'
+}
 
   function toggleCategory(cat: string) {
     setExpandedCategories(prev => {
@@ -717,9 +715,8 @@ function TransactionsSection({ transactions, onUpdate }: { transactions: Transac
           {categoryEntries.map(([cat, txs]) => {
             const catTotal = txs.reduce((s, t) => s + t.amount, 0)
             const status = getBudgetStatus(cat)
-            const budget = budgets.find(b => b.name === cat)
-            const monthSpent = spentPerCat[cat] || 0
-            const isExpanded = expandedCategories.has(cat)
+const bs = statusByCat[cat]
+const isExpanded = expandedCategories.has(cat)
             const showAll = showMoreCategories.has(cat)
             const visibleTxs = showAll ? txs : txs.slice(0, SHOW_MORE_LIMIT)
             const hasMore = txs.length > SHOW_MORE_LIMIT
@@ -748,11 +745,11 @@ function TransactionsSection({ transactions, onUpdate }: { transactions: Transac
                     <span className={`text-sm font-bold ${headerText}`}>{cat}</span>
                     {badgeEl}
                     <span className="text-xs text-ink-soft">{txs.length} dépense{txs.length > 1 ? 's' : ''}</span>
-                    {budget && (
-                      <span className={`text-[10px] font-mono ${status === 'over' ? 'text-danger' : status === 'near' ? 'text-orange-600' : 'text-ink-soft'}`}>
-                        {formatAmount(monthSpent)} / {formatAmount(monthlyLimit(budget))} (mois)
-                      </span>
-                    )}
+                    {bs && (
+  <span className={`text-[10px] font-mono ${status === 'over' ? 'text-danger' : status === 'near' ? 'text-orange-600' : 'text-ink-soft'}`}>
+    {formatAmount(bs.spent)} / {formatAmount(bs.limit)} ({durationLabel(bs.periodMonths ?? 1)})
+  </span>
+)}
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
                     <span className={`font-mono text-sm font-bold ${headerText}`}>−{formatAmount(catTotal)}</span>
@@ -760,18 +757,18 @@ function TransactionsSection({ transactions, onUpdate }: { transactions: Transac
                   </div>
                 </button>
 
-                {budget && (
-                  <div className="px-4 pb-2">
-                    <div className="w-full h-1.5 bg-white/60 rounded-full overflow-hidden">
-                      <div className="h-full rounded-full transition-all duration-500"
-                        style={{
-                          width: `${Math.min(100, (monthSpent / monthlyLimit(budget)) * 100)}%`,
-                          backgroundColor: status === 'over' ? '#DC2626' : status === 'near' ? '#D97706' : '#16A34A',
-                        }}
-                      />
-                    </div>
-                  </div>
-                )}
+                {bs && (
+  <div className="px-4 pb-2">
+    <div className="w-full h-1.5 bg-white/60 rounded-full overflow-hidden">
+      <div className="h-full rounded-full transition-all duration-500"
+        style={{
+          width: `${Math.min(100, bs.pct)}%`,
+          backgroundColor: status === 'over' ? '#DC2626' : status === 'near' ? '#D97706' : '#16A34A',
+        }}
+      />
+    </div>
+  </div>
+)}
 
                 {isExpanded && (
                   <div className="bg-white border-t border-mist-dark">
@@ -1752,11 +1749,10 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
   const periodTotal = Object.values(periodByCat).reduce((s, v) => s + v, 0)
 
   const items = rows.map(({ b, cycle }) => {
-    const spent = sumCategory(lines, b.name, cycle.from, cycle.to)
-    const pct = b.limit > 0 ? (spent / b.limit) * 100 : 0
-    const status: 'over' | 'near' | 'ok' = spent > b.limit ? 'over' : pct >= 80 ? 'near' : 'ok'
-    return { b, cycle, spent, pct, status, periodSpent: periodByCat[b.name] || 0 }
-  })
+  const spent = sumCategory(lines, b.name, cycle.from, cycle.to)
+  const { pct, status } = budgetStatus(spent, b.limit)
+  return { b, cycle, spent, pct, status, periodSpent: periodByCat[b.name] || 0 }
+})
   const overBudget = items.filter(i => i.status === 'over')
 
   const tip = overBudget.length > 0
