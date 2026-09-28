@@ -33,6 +33,8 @@ export interface BudgetCategory {
   name: string
   limit: number
   color: string
+  periodMonths?: number   // 1 | 3 | 6 | 12 | 36 (durée du plafond en mois)
+  createdAt?: string      // début du 1er cycle du plafond
 }
 
 export interface SavingsGoal {
@@ -373,6 +375,17 @@ const DEFAULT_BUDGETS: Omit<BudgetCategory, 'id'>[] = [
   { name: 'Factures',     limit: 10000, color: '#EF4444' },
 ]
 
+function mapBudget(r: any): BudgetCategory {
+  return {
+    id:           r.id,
+    name:         r.name,
+    limit:        Number(r.limit),
+    color:        r.color,
+    periodMonths: r.period_months ?? 1,
+    createdAt:    r.created_at ?? undefined,
+  }
+}
+
 export async function getBudgets(): Promise<BudgetCategory[]> {
   const userId = await getUserId()
 
@@ -387,10 +400,10 @@ export async function getBudgets(): Promise<BudgetCategory[]> {
       .from('budget_categories')
       .insert(toInsert)
       .select()
-    return (inserted ?? []).map(r => ({ id: r.id, name: r.name, limit: r.limit, color: r.color }))
+    return (inserted ?? []).map(mapBudget)
   }
 
-  return data.map(r => ({ id: r.id, name: r.name, limit: r.limit, color: r.color }))
+  return data.map(mapBudget)
 }
 
 export async function addBudget(b: Omit<BudgetCategory, 'id'>): Promise<BudgetCategory> {
@@ -398,16 +411,31 @@ export async function addBudget(b: Omit<BudgetCategory, 'id'>): Promise<BudgetCa
 
   const { data, error } = await supabase
     .from('budget_categories')
-    .insert({ user_id: userId, name: b.name, limit: b.limit, color: b.color })
+    .insert({
+      user_id:       userId,
+      name:          b.name,
+      limit:         b.limit,
+      color:         b.color,
+      period_months: b.periodMonths ?? 1,
+    })
     .select()
     .single()
 
   if (error) throw error
-  return { id: data.id, name: data.name, limit: data.limit, color: data.color }
+  return mapBudget(data)
 }
 
-export async function updateBudget(id: string, fields: { name?: string; limit?: number; color?: string }): Promise<void> {
-  await supabase.from('budget_categories').update(fields).eq('id', id)
+export async function updateBudget(
+  id: string,
+  fields: { name?: string; limit?: number; color?: string; periodMonths?: number },
+): Promise<void> {
+  const update: Record<string, unknown> = {}
+  if (fields.name         !== undefined) update.name          = fields.name
+  if (fields.limit        !== undefined) update.limit         = fields.limit
+  if (fields.color        !== undefined) update.color         = fields.color
+  if (fields.periodMonths !== undefined) update.period_months = fields.periodMonths
+  const { error } = await supabase.from('budget_categories').update(update).eq('id', id)
+  if (error) throw error
 }
 
 export async function deleteBudget(id: string): Promise<void> {
