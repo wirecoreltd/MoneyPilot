@@ -1188,6 +1188,20 @@ async function deleteFacturePayment(id: string): Promise<void> {
 }
 
 // ─── FacturesSection ──────────────────────────────────────────────────────────
+// Date de référence d'une facture pour le filtre de période :
+// date de création, sinon échéance, sinon 1er du mois de la facture.
+function factureRefDate(f: Facture): string {
+  return (f.createdAt ?? f.dueDate ?? `${f.month}-01`).slice(0, 10)
+}
+
+// Non payées en haut, puis ordre alphabétique (accents gérés)
+function sortFactures(list: Facture[]): Facture[] {
+  return [...list].sort((a, b) => {
+    if (a.paid !== b.paid) return a.paid ? 1 : -1
+    return a.name.localeCompare(b.name, 'fr', { sensitivity: 'base' })
+  })
+}
+
 function FacturesSection() {
   const [factures, setFactures] = useState<Facture[]>([])
   const [loading, setLoading] = useState(true)
@@ -1206,6 +1220,11 @@ function FacturesSection() {
   const [editPayDate, setEditPayDate] = useState('')
   const [editPayNote, setEditPayNote] = useState('')
 
+  // Filtre de période
+  const [period, setPeriod] = useState<Period>('1m')
+  const [customFrom, setCustomFrom] = useState(toYMD(new Date()))
+  const [customTo, setCustomTo] = useState(toYMD(new Date()))
+
   // ← Catégories partagées (même clé localStorage que transactions/budget/dettes)
   const { customCategories, addCustom, removeCustom, renameCustom } = useCustomCategories(() => { loadFactures() })
 
@@ -1220,12 +1239,14 @@ function FacturesSection() {
   async function loadFactures() {
     setLoading(true)
     const { data: { user } } = await supabase.auth.getUser()
-    const { data } = await supabase.from('factures').select('*').eq('user_id', user!.id).eq('month', ym).order('created_at', { ascending: true })
+    // Toutes les factures de l'utilisateur : le filtre de période se fait côté client
+    const { data } = await supabase.from('factures').select('*').eq('user_id', user!.id).order('created_at', { ascending: true })
     setFactures((data ?? []).map(r => ({
       id: r.id, name: r.name, amount: Number(r.amount),
       dueDate: r.due_date ?? undefined, isRecurring: r.is_recurring ?? false,
       category: r.category ?? DEFAULT_CATEGORIES[0], paid: r.paid ?? false,
       month: r.month, note: r.note ?? undefined,
+      createdAt: r.created_at ?? undefined,
     })))
     setLoading(false)
   }
@@ -1282,6 +1303,7 @@ function FacturesSection() {
           id: data.id, name: data.name, amount: Number(data.amount),
           dueDate: data.due_date ?? undefined, isRecurring: data.is_recurring,
           category: data.category, paid: data.paid, month: data.month, note: data.note ?? undefined,
+          createdAt: data.created_at ?? new Date().toISOString(),
         }])
       }
     }
@@ -1364,20 +1386,42 @@ function FacturesSection() {
     }
   }
 
-  const paidCount = factures.filter(f => f.paid).length
-  const totalAmount = factures.reduce((s, f) => s + f.amount, 0)
-  const paidAmount = factures.filter(f => f.paid).reduce((s, f) => s + f.amount, 0)
-  const unpaidAmount = totalAmount - paidAmount
-  const recurringFactures = factures.filter(f => f.isRecurring)
-  const ponctuellesFactures = factures.filter(f => !f.isRecurring)
+  // ── Filtre de période + tri (non payées en haut, puis A→Z) ──
+  const range = getPeriodRange(period, customFrom, customTo)
+  const visible = factures.filter(f => {
+    const d = factureRefDate(f)
+    return d >= range.from && d <= range.to
+  })
 
-  const tip = factures.length === 0
-    ? `Ajoute tes factures du mois (eau, élec, internet...) pour ne rien oublier.`
-    : paidCount === factures.length
-    ? `✅ Toutes tes factures sont payées ce mois ! Bien joué.`
-    : `⏳ ${factures.length - paidCount} facture${factures.length - paidCount > 1 ? 's' : ''} en attente · ${formatAmount(unpaidAmount)} à payer`
+  const paidCount = visible.filter(f => f.paid).length
+  const totalAmount = visible.reduce((s, f) => s + f.amount, 0)
+  const paidAmount = visible.filter(f => f.paid).reduce((s, f) => s + f.amount, 0)
+  const unpaidAmount = totalAmount - paidAmount
+  const recurringFactures = sortFactures(visible.filter(f => f.isRecurring))
+  const ponctuellesFactures = sortFactures(visible.filter(f => !f.isRecurring))
+
+  const tip = visible.length === 0
+    ? `Ajoute tes factures (eau, élec, internet...) pour ne rien oublier.`
+    : paidCount === visible.length
+    ? `✅ Toutes tes factures sont payées sur ${PERIOD_LABEL[period]} ! Bien joué.`
+    : `⏳ ${visible.length - paidCount} facture${visible.length - paidCount > 1 ? 's' : ''} en attente · ${formatAmount(unpaidAmount)} à payer`
 
   if (loading) return <div className="card text-center py-8 text-ink-soft">Chargement...</div>
+
+  function renderCard(f: Facture) {
+    return (
+      <FactureCard key={f.id} facture={f} onEdit={openEdit} onDelete={handleDelete}
+        payments={paymentsMap[f.id] ?? []} showHistory={openHistoryId === f.id}
+        historyLoading={historyLoading && openHistoryId === f.id && !paymentsMap[f.id]}
+        onToggleHistory={() => toggleHistory(f.id)} payingId={payingId}
+        payAmount={payAmount} payDate={payDate} payNote={payNote}
+        onSetPayingId={(id) => { setPayingId(id); setPayAmount(''); setPayDate(new Date().toISOString().slice(0, 10)); setPayNote('') }}
+        onPayAmountChange={setPayAmount} onPayDateChange={setPayDate} onPayNoteChange={setPayNote}
+        onPay={() => handlePay(f.id)}
+        onEditPayment={(p) => { setEditingPayment(p); setEditPayAmount(String(p.amount)); setEditPayDate(p.paidAt); setEditPayNote(p.note || '') }}
+        onDeletePayment={handleDeletePayment}/>
+    )
+  }
 
   return (
     <div className="space-y-3">
@@ -1389,7 +1433,33 @@ function FacturesSection() {
         </p>
       </div>
 
-      {factures.length > 0 && (
+      {/* Filtre de période */}
+      <div className="flex gap-1.5 overflow-x-auto">
+        {PERIODS.map(p => (
+          <button key={p.id} onClick={() => setPeriod(p.id)}
+            className={`flex-1 whitespace-nowrap px-3 py-2 rounded-xl text-xs font-bold border-2 transition-colors ${
+              period === p.id ? 'bg-yellow-500 text-white border-transparent' : 'bg-white text-ink-soft border-mist-dark'}`}>
+            {p.label}
+          </button>
+        ))}
+      </div>
+
+      {period === 'custom' && (
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="label">Du</label>
+            <input className="input" type="date" value={customFrom} max={customTo || undefined}
+              onChange={e => setCustomFrom(e.target.value)}/>
+          </div>
+          <div>
+            <label className="label">Au</label>
+            <input className="input" type="date" value={customTo} min={customFrom || undefined}
+              onChange={e => setCustomTo(e.target.value)}/>
+          </div>
+        </div>
+      )}
+
+      {visible.length > 0 && (
         <div className="grid grid-cols-3 gap-2">
           <div className="card text-center py-3">
             <p className="text-lg font-bold font-mono text-ink">{formatAmount(totalAmount)}</p>
@@ -1406,14 +1476,14 @@ function FacturesSection() {
         </div>
       )}
 
-      {factures.length > 0 && (
+      {visible.length > 0 && (
         <div className="space-y-1">
           <div className="flex justify-between text-xs text-ink-soft">
-            <span>{paidCount}/{factures.length} payées</span>
-            <span>{Math.round((paidCount / factures.length) * 100)}%</span>
+            <span>{paidCount}/{visible.length} payées</span>
+            <span>{Math.round((paidCount / visible.length) * 100)}%</span>
           </div>
           <div className="w-full h-2.5 bg-mist-dark rounded-full overflow-hidden">
-            <div className="h-full bg-positive rounded-full transition-all duration-500" style={{ width: `${(paidCount / factures.length) * 100}%` }}/>
+            <div className="h-full bg-positive rounded-full transition-all duration-500" style={{ width: `${(paidCount / visible.length) * 100}%` }}/>
           </div>
         </div>
       )}
@@ -1422,10 +1492,10 @@ function FacturesSection() {
         <Plus size={18}/> Ajouter une facture
       </button>
 
-      {factures.length === 0 ? (
+      {visible.length === 0 ? (
         <div className="card text-center py-10">
           <p className="text-3xl mb-2">🧾</p>
-          <p className="font-semibold text-ink">Aucune facture ce mois</p>
+          <p className="font-semibold text-ink">Aucune facture sur cette période</p>
           <p className="text-sm text-ink-soft mt-1">Eau, électricité, internet, loyer...</p>
         </div>
       ) : (
@@ -1433,35 +1503,13 @@ function FacturesSection() {
           {recurringFactures.length > 0 && (
             <div className="space-y-2">
               <p className="text-xs font-bold text-ink-soft uppercase tracking-wider">🔄 Récurrentes</p>
-              {recurringFactures.map(f => (
-                <FactureCard key={f.id} facture={f} onEdit={openEdit} onDelete={handleDelete}
-                  payments={paymentsMap[f.id] ?? []} showHistory={openHistoryId === f.id}
-                  historyLoading={historyLoading && openHistoryId === f.id && !paymentsMap[f.id]}
-                  onToggleHistory={() => toggleHistory(f.id)} payingId={payingId}
-                  payAmount={payAmount} payDate={payDate} payNote={payNote}
-                  onSetPayingId={(id) => { setPayingId(id); setPayAmount(''); setPayDate(new Date().toISOString().slice(0, 10)); setPayNote('') }}
-                  onPayAmountChange={setPayAmount} onPayDateChange={setPayDate} onPayNoteChange={setPayNote}
-                  onPay={() => handlePay(f.id)}
-                  onEditPayment={(p) => { setEditingPayment(p); setEditPayAmount(String(p.amount)); setEditPayDate(p.paidAt); setEditPayNote(p.note || '') }}
-                  onDeletePayment={handleDeletePayment}/>
-              ))}
+              {recurringFactures.map(renderCard)}
             </div>
           )}
           {ponctuellesFactures.length > 0 && (
             <div className="space-y-2">
               <p className="text-xs font-bold text-ink-soft uppercase tracking-wider">📄 Ponctuelles</p>
-              {ponctuellesFactures.map(f => (
-                <FactureCard key={f.id} facture={f} onEdit={openEdit} onDelete={handleDelete}
-                  payments={paymentsMap[f.id] ?? []} showHistory={openHistoryId === f.id}
-                  historyLoading={historyLoading && openHistoryId === f.id && !paymentsMap[f.id]}
-                  onToggleHistory={() => toggleHistory(f.id)} payingId={payingId}
-                  payAmount={payAmount} payDate={payDate} payNote={payNote}
-                  onSetPayingId={(id) => { setPayingId(id); setPayAmount(''); setPayDate(new Date().toISOString().slice(0, 10)); setPayNote('') }}
-                  onPayAmountChange={setPayAmount} onPayDateChange={setPayDate} onPayNoteChange={setPayNote}
-                  onPay={() => handlePay(f.id)}
-                  onEditPayment={(p) => { setEditingPayment(p); setEditPayAmount(String(p.amount)); setEditPayDate(p.paidAt); setEditPayNote(p.note || '') }}
-                  onDeletePayment={handleDeletePayment}/>
-              ))}
+              {ponctuellesFactures.map(renderCard)}
             </div>
           )}
         </>
