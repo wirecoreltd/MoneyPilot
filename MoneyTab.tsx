@@ -2224,12 +2224,8 @@ function DettesSection() {
     } as any
 
     if (editingId) {
-      const existing = debts.find(d => d.id === editingId)!
-      const newAmount    = Number(form.amount) || existing.amount
-      const paidSoFar    = existing.amount - existing.remaining
-      const newRemaining = Math.max(0, newAmount - paidSoFar)
-      await updateDebt(editingId, { ...debtData, remaining: newRemaining })
-      setDebts(prev => prev.map(d => d.id !== editingId ? d : { ...d, ...debtData, amount: newAmount, remaining: newRemaining }))
+      await updateDebt(editingId, debtData)
+setDebts(await getDebts())          // remaining recalculé par la base
     } else {
       const newDebt = await addDebt({ ...debtData, remaining: Number(form.amount) || 0 })
       setDebts(prev => [...prev, newDebt])
@@ -2244,53 +2240,31 @@ function DettesSection() {
     const isRecurring  = (debt as any).recurring ?? false
     const debtCategory = (debt as any).category ?? 'Autre'
     await logPayment(id, amt, payDate, debtCategory, payNote)
-    invalidateHistory(id)
-    await loadPayments()
-    if (debt.amount === 0) {
-      setConfirmDeleteId(id); setPayingId(null); setPayAmount(''); setPayDate(new Date().toISOString().slice(0, 10)); setPayNote(''); return
-    }
-    const newRemaining = Math.max(0, debt.remaining - amt)
-    if (newRemaining === 0) {
-      if (isRecurring) {
-        await updateDebt(id, { remaining: debt.amount })
-        setDebts(prev => prev.map(d => d.id !== id ? d : { ...d, remaining: debt.amount }))
-      } else {
-        await updateDebt(id, { remaining: 0 })
-        setDebts(prev => prev.map(d => d.id !== id ? d : { ...d, remaining: 0 }))
-        setConfirmDeleteId(id)
-      }
-    } else {
-      await updateDebt(id, { remaining: newRemaining })
-      setDebts(prev => prev.map(d => d.id !== id ? d : { ...d, remaining: newRemaining }))
-    }
-    setPayingId(null); setPayAmount(''); setPayDate(new Date().toISOString().slice(0, 10)); setPayNote('')
+    const isRecurring  = (debt as any).recurring ?? false
+const debtCategory = (debt as any).category ?? 'Autre'
+await logPayment(id, amt, payDate, debtCategory, payNote)      // 1 seule écriture
+invalidateHistory(id)
+const [fresh] = await Promise.all([getDebts(), loadPayments()])
+setDebts(fresh)
+if (debt.amount === 0 || (!isRecurring && debt.remaining - amt <= 0)) setConfirmDeleteId(id)
+setPayingId(null); setPayAmount(''); setPayDate(new Date().toISOString().slice(0, 10)); setPayNote('')
   }
 
   async function handleEditPayment() {
-    if (!editingPayment) return
-    const newAmt = Number(editPayAmount)
-    if (!newAmt || newAmt <= 0) return
-    const oldAmt = editingPayment.amount
-    const diff = newAmt - oldAmt
-    await updatePayment(editingPayment.id, newAmt, editPayDate, editPayNote)
-    const debt = debts.find(d => d.id === editingPayment.debtId)
-    if (debt && debt.amount > 0) {
-      const newRemaining = Math.max(0, debt.remaining - diff)
-      await updateDebt(debt.id, { remaining: newRemaining })
-      setDebts(prev => prev.map(d => d.id === debt.id ? { ...d, remaining: newRemaining } : d))
-    }
-    await loadPayments()
-    await reloadHistory(editingPayment.debtId)
-    setEditingPayment(null)
-  }
+  if (!editingPayment) return
+  const newAmt = Number(editPayAmount)
+  if (!newAmt || newAmt <= 0) return
+  await updatePayment(editingPayment.id, newAmt, editPayDate, editPayNote)
+  const [fresh] = await Promise.all([getDebts(), loadPayments(), reloadHistory(editingPayment.debtId)])
+  setDebts(fresh)
+  setEditingPayment(null)
+}
 
-  async function handleDeletePayment(h: DebtPaymentHistory) {
-    const debt = debts.find(d => d.id === h.debtId)
-    if (debt && debt.amount > 0) {
-      const newRemaining = Math.min(debt.amount, debt.remaining + h.amount)
-      await updateDebt(debt.id, { remaining: newRemaining })
-      setDebts(prev => prev.map(d => d.id === debt.id ? { ...d, remaining: newRemaining } : d))
-    }
+async function handleDeletePayment(h: DebtPaymentHistory) {
+  await deletePayment(h.id)
+  const [fresh] = await Promise.all([getDebts(), loadPayments(), reloadHistory(h.debtId)])
+  setDebts(fresh)
+}
     await deletePayment(h.id)
     await loadPayments()
     await reloadHistory(h.debtId)
