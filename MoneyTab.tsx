@@ -578,13 +578,13 @@ function TransactionsSection({ transactions, onUpdate }: { transactions: Transac
 
   useEffect(() => { getBudgets().then(setBudgets) }, [])
 
-// Statut de chaque plafond sur son cycle courant (même règle que Budget et Accueil)
-const { lines } = useSpendingLines(earliestCycleStart(budgets), transactions)
-const statusByCat = Object.fromEntries(
-  computeBudgetStatuses(budgets, lines).map(s => [s.name, s]),
-)
+  // Statut de chaque plafond sur son cycle courant (même règle que Budget et Accueil)
+  const { lines } = useSpendingLines(earliestCycleStart(budgets), transactions)
+  const statusByCat = Object.fromEntries(
+    computeBudgetStatuses(budgets, lines).map(s => [s.name, s]),
+  )
 
-const range = getPeriodRange(period, customFrom, customTo)
+  const range = getPeriodRange(period, customFrom, customTo)
 
   const periodTxs = transactions.filter(t => {
     if (t.type !== 'expense') return false
@@ -606,11 +606,11 @@ const range = getPeriodRange(period, customFrom, customTo)
     grouped[tx.category].push(tx)
   }
 
-  // Les plafonds sont mensuels : on les compare toujours au mois en cours,
+  // Les plafonds sont comparés à leur cycle courant,
   // quelle que soit la période affichée.
   function getBudgetStatus(cat: string): 'over' | 'near' | 'ok' | 'none' {
-  return statusByCat[cat]?.status ?? 'none'
-}
+    return statusByCat[cat]?.status ?? 'none'
+  }
 
   function toggleCategory(cat: string) {
     setExpandedCategories(prev => {
@@ -715,8 +715,8 @@ const range = getPeriodRange(period, customFrom, customTo)
           {categoryEntries.map(([cat, txs]) => {
             const catTotal = txs.reduce((s, t) => s + t.amount, 0)
             const status = getBudgetStatus(cat)
-const bs = statusByCat[cat]
-const isExpanded = expandedCategories.has(cat)
+            const bs = statusByCat[cat]
+            const isExpanded = expandedCategories.has(cat)
             const showAll = showMoreCategories.has(cat)
             const visibleTxs = showAll ? txs : txs.slice(0, SHOW_MORE_LIMIT)
             const hasMore = txs.length > SHOW_MORE_LIMIT
@@ -746,10 +746,10 @@ const isExpanded = expandedCategories.has(cat)
                     {badgeEl}
                     <span className="text-xs text-ink-soft">{txs.length} dépense{txs.length > 1 ? 's' : ''}</span>
                     {bs && (
-  <span className={`text-[10px] font-mono ${status === 'over' ? 'text-danger' : status === 'near' ? 'text-orange-600' : 'text-ink-soft'}`}>
-    {formatAmount(bs.spent)} / {formatAmount(bs.limit)} ({durationLabel(bs.periodMonths ?? 1)})
-  </span>
-)}
+                      <span className={`text-[10px] font-mono ${status === 'over' ? 'text-danger' : status === 'near' ? 'text-orange-600' : 'text-ink-soft'}`}>
+                        {formatAmount(bs.spent)} / {formatAmount(bs.limit)} ({durationLabel(bs.periodMonths ?? 1)})
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
                     <span className={`font-mono text-sm font-bold ${headerText}`}>−{formatAmount(catTotal)}</span>
@@ -758,17 +758,17 @@ const isExpanded = expandedCategories.has(cat)
                 </button>
 
                 {bs && (
-  <div className="px-4 pb-2">
-    <div className="w-full h-1.5 bg-white/60 rounded-full overflow-hidden">
-      <div className="h-full rounded-full transition-all duration-500"
-        style={{
-          width: `${Math.min(100, bs.pct)}%`,
-          backgroundColor: status === 'over' ? '#DC2626' : status === 'near' ? '#D97706' : '#16A34A',
-        }}
-      />
-    </div>
-  </div>
-)}
+                  <div className="px-4 pb-2">
+                    <div className="w-full h-1.5 bg-white/60 rounded-full overflow-hidden">
+                      <div className="h-full rounded-full transition-all duration-500"
+                        style={{
+                          width: `${Math.min(100, bs.pct)}%`,
+                          backgroundColor: status === 'over' ? '#DC2626' : status === 'near' ? '#D97706' : '#16A34A',
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
 
                 {isExpanded && (
                   <div className="bg-white border-t border-mist-dark">
@@ -936,6 +936,14 @@ function RevenusSection() {
         month: form.date.slice(0, 7),
       }).eq('id', editingId)
       if (!error) {
+        // Si c'est un revenu fixe renommé, on renomme aussi les autres occurrences fixes
+        const old = revenus.find(r => r.id === editingId)
+        if (old && old.type === 'fixed' && old.label !== form.label.trim()) {
+          const { data: { user } } = await supabase.auth.getUser()
+          await supabase.from('monthly_incomes').update({ label: form.label.trim() })
+            .eq('user_id', user!.id).eq('label', old.label).eq('is_fixed', true)
+          setRevenus(prev => prev.map(r => r.type === 'fixed' && r.label === old.label ? { ...r, label: form.label.trim() } : r))
+        }
         setRevenus(prev => prev.map(r => r.id === editingId
           ? { ...r, label: form.label.trim(), amount: Number(form.amount), type: form.type,
               date: form.date, month: form.date.slice(0, 7) }
@@ -976,17 +984,17 @@ function RevenusSection() {
   }
 
   async function handleDelete(id: string) {
-  const r = revenus.find(x => x.id === id)
-  if (r?.type === 'fixed') {
-    if (!window.confirm(`« ${r.label} » est un revenu fixe.\nLe supprimer l'arrête : il ne sera plus recréé chaque mois (l'historique passe en « Variable »).`)) return
-    const { data: { user } } = await supabase.auth.getUser()
-    await supabase.from('monthly_incomes').update({ is_fixed: false })
-      .eq('user_id', user!.id).eq('label', r.label).eq('is_fixed', true)
-    setRevenus(prev => prev.map(x => x.label === r.label ? { ...x, type: 'variable' } : x))
+    const r = revenus.find(x => x.id === id)
+    if (r?.type === 'fixed') {
+      if (!window.confirm(`« ${r.label} » est un revenu fixe.\nLe supprimer l'arrête : il ne sera plus recréé chaque mois (l'historique passe en « Variable »).`)) return
+      const { data: { user } } = await supabase.auth.getUser()
+      await supabase.from('monthly_incomes').update({ is_fixed: false })
+        .eq('user_id', user!.id).eq('label', r.label).eq('is_fixed', true)
+      setRevenus(prev => prev.map(x => x.label === r.label ? { ...x, type: 'variable' } : x))
+    }
+    await supabase.from('monthly_incomes').delete().eq('id', id)
+    setRevenus(prev => prev.filter(x => x.id !== id))
   }
-  await supabase.from('monthly_incomes').delete().eq('id', id)
-  setRevenus(prev => prev.filter(x => x.id !== id))
-}
 
   async function handleDeleteSource(id: string) {
     await supabase.from('income_sources').delete().eq('id', id)
@@ -1294,14 +1302,34 @@ function FacturesSection() {
     const { data: { user } } = await supabase.auth.getUser()
     const dueDate = form.isRecurring ? computeDueDate(form.dueDayOfMonth, ym) : (form.dueDate || null)
 
-    if (editingFacture.isRecurring && editingFacture.name !== form.name.trim()) {
-  await supabase.from('factures').update({ name: form.name.trim() })
-    .eq('user_id', user!.id).eq('name', editingFacture.name).eq('is_recurring', true)
-  setFactures(prev => prev.map(x => x.isRecurring && x.name === editingFacture.name ? { ...x, name: form.name.trim() } : x))
-}
-        ...f, name: form.name.trim(), amount: Number(form.amount), category: form.category,
+    if (editingFacture) {
+      const editing = editingFacture
+      const newName = form.name.trim()
+
+      const { error } = await supabase.from('factures').update({
+        name: newName, amount: Number(form.amount), category: form.category,
+        due_date: dueDate, is_recurring: form.isRecurring, note: form.note || null,
+      }).eq('id', editing.id)
+
+      if (error) {
+        window.alert('Impossible de modifier la facture. Réessaie.')
+        setSaving(false)
+        return
+      }
+
+      // Facture récurrente renommée : on renomme aussi les autres occurrences récurrentes
+      if (editing.isRecurring && editing.name !== newName) {
+        await supabase.from('factures').update({ name: newName })
+          .eq('user_id', user!.id).eq('name', editing.name).eq('is_recurring', true)
+        setFactures(prev => prev.map(x =>
+          x.isRecurring && x.name === editing.name ? { ...x, name: newName } : x
+        ))
+      }
+
+      setFactures(prev => prev.map(f => f.id === editing.id ? {
+        ...f, name: newName, amount: Number(form.amount), category: form.category,
         dueDate: dueDate ?? undefined, isRecurring: form.isRecurring, note: form.note || undefined,
-      }))
+      } : f))
     } else {
       const { data } = await supabase.from('factures').insert({
         user_id: user!.id, name: form.name.trim(), amount: Number(form.amount),
@@ -1321,17 +1349,17 @@ function FacturesSection() {
   }
 
   async function handleDelete(id: string) {
-  const f = factures.find(x => x.id === id)
-  if (f?.isRecurring) {
-    if (!window.confirm(`« ${f.name} » est récurrente.\nLa supprimer l'arrête : elle ne sera plus recréée chaque mois.`)) return
-    const { data: { user } } = await supabase.auth.getUser()
-    await supabase.from('factures').update({ is_recurring: false })
-      .eq('user_id', user!.id).eq('name', f.name).eq('is_recurring', true)
-    setFactures(prev => prev.map(x => x.name === f.name ? { ...x, isRecurring: false } : x))
+    const f = factures.find(x => x.id === id)
+    if (f?.isRecurring) {
+      if (!window.confirm(`« ${f.name} » est récurrente.\nLa supprimer l'arrête : elle ne sera plus recréée chaque mois.`)) return
+      const { data: { user } } = await supabase.auth.getUser()
+      await supabase.from('factures').update({ is_recurring: false })
+        .eq('user_id', user!.id).eq('name', f.name).eq('is_recurring', true)
+      setFactures(prev => prev.map(x => x.name === f.name ? { ...x, isRecurring: false } : x))
+    }
+    await supabase.from('factures').delete().eq('id', id)
+    setFactures(prev => prev.filter(x => x.id !== id))
   }
-  await supabase.from('factures').delete().eq('id', id)
-  setFactures(prev => prev.filter(x => x.id !== id))
-}
 
   async function toggleHistory(factureId: string) {
     if (openHistoryId === factureId) { setOpenHistoryId(null); return }
@@ -1764,10 +1792,10 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
   const periodTotal = Object.values(periodByCat).reduce((s, v) => s + v, 0)
 
   const items = rows.map(({ b, cycle }) => {
-  const spent = sumCategory(lines, b.name, cycle.from, cycle.to)
-  const { pct, status } = budgetStatus(spent, b.limit)
-  return { b, cycle, spent, pct, status, periodSpent: periodByCat[b.name] || 0 }
-})
+    const spent = sumCategory(lines, b.name, cycle.from, cycle.to)
+    const { pct, status } = budgetStatus(spent, b.limit)
+    return { b, cycle, spent, pct, status, periodSpent: periodByCat[b.name] || 0 }
+  })
   const overBudget = items.filter(i => i.status === 'over')
 
   const tip = overBudget.length > 0
@@ -2200,15 +2228,6 @@ function DettesSection() {
       const newAmount    = Number(form.amount) || existing.amount
       const paidSoFar    = existing.amount - existing.remaining
       const newRemaining = Math.max(0, newAmount - paidSoFar)
-      const old = revenus.find(r => r.id === editingId)
-if (old && old.type === 'fixed' && old.label !== form.label.trim()) {
-  const { data: { user } } = await supabase.auth.getUser()
-  await supabase.from('monthly_incomes').update({ label: form.label.trim() })
-    .eq('user_id', user!.id).eq('label', old.label).eq('is_fixed', true)
-  setRevenus(prev => prev.map(r => r.type === 'fixed' && r.label === old.label ? { ...r, label: form.label.trim() } : r))
-}
-
-      
       await updateDebt(editingId, { ...debtData, remaining: newRemaining })
       setDebts(prev => prev.map(d => d.id !== editingId ? d : { ...d, ...debtData, amount: newAmount, remaining: newRemaining }))
     } else {
