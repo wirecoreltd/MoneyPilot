@@ -15,6 +15,8 @@ import { supabase } from '@/lib/supabase'
 import { MoneySubTab } from '@/app/page'
 import { useMonthSummary } from '@/lib/useMonthSummary'
 import type { BudgetStatus } from '@/lib/finance'
+import { useSpendingLines } from '@/lib/useSpendingLines'
+import { currentCycle, sumByCategory, sumCategory, durationLabel, BUDGET_DURATIONS } from '@/lib/budgetPeriods'
 
 type SubTab = MoneySubTab
 
@@ -546,6 +548,9 @@ function getPeriodRange(p: Period, customFrom: string, customTo: string) {
   return { from: toYMD(from), to: toYMD(today) }
 }
 
+// Plafond ramené à un montant mensuel (un plafond de 3 mois = limite / 3 par mois)
+const monthlyLimit = (b: BudgetCategory) => b.limit / (b.periodMonths ?? 1)
+
 function TransactionsSection({ transactions, onUpdate }: { transactions: Transaction[]; onUpdate: () => void }) {
   const [showForm, setShowForm] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -602,7 +607,7 @@ function TransactionsSection({ transactions, onUpdate }: { transactions: Transac
   function getBudgetStatus(cat: string): 'over' | 'near' | 'ok' | 'none' {
     const budget = budgets.find(b => b.name === cat)
     if (!budget) return 'none'
-    const pct = (spentPerCat[cat] || 0) / budget.limit
+     const pct = (spentPerCat[cat] || 0) / monthlyLimit(budget)
     if (pct > 1) return 'over'
     if (pct >= 0.8) return 'near'
     return 'ok'
@@ -744,7 +749,7 @@ function TransactionsSection({ transactions, onUpdate }: { transactions: Transac
                     <span className="text-xs text-ink-soft">{txs.length} dépense{txs.length > 1 ? 's' : ''}</span>
                     {budget && (
                       <span className={`text-[10px] font-mono ${status === 'over' ? 'text-danger' : status === 'near' ? 'text-orange-600' : 'text-ink-soft'}`}>
-                        {formatAmount(monthSpent)} / {formatAmount(budget.limit)} (mois)
+                        {formatAmount(monthSpent)} / {formatAmount(monthlyLimit(budget))} (mois)
                       </span>
                     )}
                   </div>
@@ -759,7 +764,7 @@ function TransactionsSection({ transactions, onUpdate }: { transactions: Transac
                     <div className="w-full h-1.5 bg-white/60 rounded-full overflow-hidden">
                       <div className="h-full rounded-full transition-all duration-500"
                         style={{
-                          width: `${Math.min(100, (monthSpent / budget.limit) * 100)}%`,
+                          width: `${Math.min(100, (monthSpent / monthlyLimit(budget)) * 100)}%`,
                           backgroundColor: status === 'over' ? '#DC2626' : status === 'near' ? '#D97706' : '#16A34A',
                         }}
                       />
@@ -1703,40 +1708,68 @@ function FactureCard({
 }
 
 // ─── Budget ───────────────────────────────────────────────────────────────────
-async function updateBudget(id: string, fields: { name?: string; limit?: number; color?: string }): Promise<void> {
-  const { error } = await supabase.from('budget_categories').update(fields).eq('id', id)
+async function updateBudget(id: string, fields: { name?: string; limit?: number; color?: string; periodMonths?: number }): Promise<void> {
+  const { periodMonths, ...rest } = fields
+  const { error } = await supabase.from('budget_categories')
+    .update({ ...rest, ...(periodMonths !== undefined ? { period_months: periodMonths } : {}) })
+    .eq('id', id)
   if (error) throw error
 }
 
+const fmtDay = (ymd: string) => new Date(ymd).toLocaleDateString('fr-FR')
+
 function BudgetSection({ transactions }: { transactions: Transaction[] }) {
-  const ym = currentYearMonth()
-
-  // Source unique des chiffres : les dépenses par catégorie (transactions, factures payées,
-  // remboursements de dettes) sont calculées par finance.ts, pas ici.
-  const { summary, error, reload } = useMonthSummary(ym, transactions)
-
+  const [budgets, setBudgets] = useState<BudgetCategory[] | null>(null)
+  const [budgetError, setBudgetError] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(false)
-  const [editingBudget, setEditingBudget] = useState<BudgetStatus | null>(null)
+  const [editingBudget, setEditingBudget] = useState<BudgetCategory | null>(null)
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
-  const { customCategories, addCustom, removeCustom, renameCustom } = useCustomCategories(() => { reload() })
-  const [form, setForm] = useState({ name: '', limit: '', color: COLORS[0] })
+  const [form, setForm] = useState({ name: '', limit: '', color: COLORS[0], periodMonths: 1 })
 
-  const budgets = summary?.budgets ?? []
-  const overBudget = budgets.filter(b => b.status === 'over')
+  // Filtre de période
+  const [period, setPeriod] = useState<Period>('1m')
+  const [customFrom, setCustomFrom] = useState(toYMD(new Date()))
+  const [customTo, setCustomTo] = useState(toYMD(new Date()))
+
+  async function loadBudgets() {
+    try { setBudgets(await getBudgets()); setBudgetError(null) }
+    catch (e) { setBudgetError(e instanceof Error ? e.message : 'Erreur de chargement') }
+  }
+  useEffect(() => { loadBudgets() }, [])
+
+  // Cycle courant de chaque plafond + plage de données à charger
+  const range = getPeriodRange(period, customFrom, customTo)
+  const rows = (budgets ?? []).map(b => ({ b, cycle: currentCycle(b.createdAt, b.periodMonths ?? 1) }))
+  const minFrom = range.from < '2000-01-01' ? '2000-01-01' : range.from
+  const fetchFrom = budgets ? rows.reduce((m, r) => (r.cycle.from < m ? r.cycle.from : m), minFrom) : null
+  const { lines, loaded, error, reload } = useSpendingLines(fetchFrom, transactions)
+
+  const { customCategories, addCustom, removeCustom, renameCustom } = useCustomCategories(() => { loadBudgets(); reload() })
+
+  const periodByCat = sumByCategory(lines, range.from, range.to)
+  const periodTotal = Object.values(periodByCat).reduce((s, v) => s + v, 0)
+
+  const items = rows.map(({ b, cycle }) => {
+    const spent = sumCategory(lines, b.name, cycle.from, cycle.to)
+    const pct = b.limit > 0 ? (spent / b.limit) * 100 : 0
+    const status: 'over' | 'near' | 'ok' = spent > b.limit ? 'over' : pct >= 80 ? 'near' : 'ok'
+    return { b, cycle, spent, pct, status, periodSpent: periodByCat[b.name] || 0 }
+  })
+  const overBudget = items.filter(i => i.status === 'over')
 
   const tip = overBudget.length > 0
-    ? `⚠️ Tu dépasses le plafond en : ${overBudget.map(b => b.name).join(', ')}. Réduis ces dépenses !`
-    : budgets.length > 0 ? `✅ Tous tes budgets sont respectés ce mois-ci. Continue !`
+    ? `⚠️ Tu dépasses le plafond en : ${overBudget.map(i => i.b.name).join(', ')}. Réduis ces dépenses !`
+    : items.length > 0 ? `✅ Tous tes budgets sont respectés. Continue !`
     : `Crée un plafond par catégorie pour mieux contrôler où va ton argent.`
 
   function openAdd() {
     setEditingBudget(null); setFormError(null)
-    setForm({ name: '', limit: '', color: COLORS[0] }); setShowForm(true)
+    setForm({ name: '', limit: '', color: COLORS[0], periodMonths: 1 }); setShowForm(true)
   }
-  function openEdit(b: BudgetStatus) {
+  function openEdit(b: BudgetCategory) {
     setEditingBudget(b); setFormError(null)
-    setForm({ name: b.name, limit: String(b.limit), color: b.color }); setShowForm(true)
+    setForm({ name: b.name, limit: String(b.limit), color: b.color, periodMonths: b.periodMonths ?? 1 }); setShowForm(true)
   }
   function closeForm() {
     setShowForm(false); setEditingBudget(null); setFormError(null)
@@ -1744,18 +1777,15 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
 
   async function handleSave() {
     if (saving || !form.name || !form.limit || Number(form.limit) <= 0) return
-    const isDuplicate = budgets.some(b => b.name === form.name && (!editingBudget || b.id !== editingBudget.id))
+    const isDuplicate = (budgets ?? []).some(b => b.name === form.name && (!editingBudget || b.id !== editingBudget.id))
     if (isDuplicate) { setFormError('Un plafond existe déjà pour cette catégorie.'); return }
 
     setSaving(true); setFormError(null)
     try {
-      if (editingBudget) {
-        await updateBudget(editingBudget.id, { name: form.name, limit: Number(form.limit), color: form.color })
-      } else {
-        await addBudget({ name: form.name, limit: Number(form.limit), color: form.color })
-      }
-      await reload() // les plafonds ET les dépenses reviennent du même calcul
-      setForm({ name: '', limit: '', color: COLORS[0] })
+      const payload = { name: form.name, limit: Number(form.limit), color: form.color, periodMonths: form.periodMonths }
+      if (editingBudget) await updateBudget(editingBudget.id, payload)
+      else await addBudget(payload)
+      await loadBudgets()
       closeForm()
     } catch {
       setFormError("Impossible d'enregistrer le plafond. Réessaie.")
@@ -1764,21 +1794,21 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
   }
 
   async function handleDelete(id: string) {
-    try { await deleteBudget(id) } finally { await reload() }
+    try { await deleteBudget(id) } finally { await loadBudgets() }
   }
 
-  // Premier chargement (ou échec sans données) : rien à afficher encore
-  if (!summary) {
-    if (error) {
+  if (!budgets) {
+    if (budgetError) {
       return (
         <div className="card text-center py-8 space-y-3">
-          <p className="text-sm text-danger">Impossible de charger ton budget : {error}</p>
-          <button className="btn-ghost" onClick={reload}>Réessayer</button>
+          <p className="text-sm text-danger">Impossible de charger ton budget : {budgetError}</p>
+          <button className="btn-ghost" onClick={loadBudgets}>Réessayer</button>
         </div>
       )
     }
     return <div className="card text-center py-8 text-ink-soft">Chargement...</div>
   }
+  if (!loaded && !error) return <div className="card text-center py-8 text-ink-soft">Chargement...</div>
 
   return (
     <div className="space-y-3">
@@ -1792,17 +1822,49 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
       <div className="flex items-start gap-3 p-3 bg-orange-50 border border-orange-200 rounded-2xl">
         <span className="text-lg">💡</span>
         <p className="text-xs text-orange-700 leading-relaxed">
-          <strong>Plafonds de dépenses par catégorie.</strong> Fixe une limite mensuelle pour chaque poste. Les montants incluent transactions, factures et remboursements de dettes.
+          <strong>Plafonds de dépenses par catégorie.</strong> Choisis la durée de chaque plafond (1 mois à 3 ans) : il démarre à sa création et se renouvelle à la fin de chaque durée. Les montants incluent transactions, factures payées et remboursements de dettes.
         </p>
       </div>
+
+      {/* Filtre de période */}
+      <div className="flex gap-1.5 overflow-x-auto">
+        {PERIODS.map(p => (
+          <button key={p.id} onClick={() => setPeriod(p.id)}
+            className={`flex-1 whitespace-nowrap px-3 py-2 rounded-xl text-xs font-bold border-2 transition-colors ${
+              period === p.id ? 'bg-orange-500 text-white border-transparent' : 'bg-white text-ink-soft border-mist-dark'}`}>
+            {p.label}
+          </button>
+        ))}
+      </div>
+
+      {period === 'custom' && (
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="label">Du</label>
+            <input className="input" type="date" value={customFrom} max={customTo || undefined}
+              onChange={e => setCustomFrom(e.target.value)}/>
+          </div>
+          <div>
+            <label className="label">Au</label>
+            <input className="input" type="date" value={customTo} min={customFrom || undefined}
+              onChange={e => setCustomTo(e.target.value)}/>
+          </div>
+        </div>
+      )}
+
+      <div className="card bg-orange-50 border border-orange-200">
+        <p className="text-xs font-bold text-orange-700 uppercase tracking-wide">Total dépenses · {PERIOD_LABEL[period]}</p>
+        <p className="text-2xl font-bold font-mono text-orange-700 mt-1">{formatAmount(periodTotal)}</p>
+      </div>
+
       <button onClick={openAdd} className="btn-primary w-full gap-2" style={{ backgroundColor: '#F97316' }}><Plus size={18}/> Nouveau plafond</button>
 
-      {budgets.length === 0 ? (
+      {items.length === 0 ? (
         <div className="card text-center py-10"><p className="text-3xl mb-2">🎯</p><p className="font-semibold text-ink">Aucun budget défini</p></div>
-      ) : budgets.map(b => {
-        const pct  = Math.min(100, b.pct)
-        const over = b.status === 'over'
-        const near = b.status === 'near'
+      ) : items.map(({ b, cycle, spent, pct: rawPct, status, periodSpent }) => {
+        const pct  = Math.min(100, rawPct)
+        const over = status === 'over'
+        const near = status === 'near'
 
         return (
           <div key={b.id} className="card space-y-3">
@@ -1818,13 +1880,17 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
                 <button className="w-8 h-8 rounded-xl bg-mist hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center" onClick={() => handleDelete(b.id)}><Trash2 size={14}/></button>
               </div>
             </div>
+            <p className="text-[11px] text-ink-soft">🗓️ {durationLabel(b.periodMonths ?? 1)} · du {fmtDay(cycle.from)} au {fmtDay(cycle.to)}</p>
             <div className="w-full h-2.5 bg-mist-dark rounded-full overflow-hidden">
               <div className="h-full rounded-full transition-all duration-500" style={{ width: `${pct}%`, backgroundColor: over ? '#DC2626' : near ? '#D97706' : b.color }}/>
             </div>
             <div className="flex justify-between text-xs">
-              <span className={`font-mono font-bold ${over ? 'text-danger' : 'text-ink'}`}>{formatAmount(b.spent)} dépensés</span>
+              <span className={`font-mono font-bold ${over ? 'text-danger' : 'text-ink'}`}>{formatAmount(spent)} dépensés</span>
               <span className="font-mono text-ink-soft">plafond : {formatAmount(b.limit)}</span>
             </div>
+            <p className="text-xs text-ink-soft">
+              Période ({PERIOD_LABEL[period]}) : <span className="font-mono font-bold text-ink">{formatAmount(periodSpent)}</span>
+            </p>
           </div>
         )
       })}
@@ -1841,7 +1907,20 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
               <label className="label">Catégorie de dépense</label>
               <CategoryManager value={form.name} onChange={v => setForm(f => ({...f, name: v}))} customCategories={customCategories} onAddCustom={addCustom} onRemoveCustom={removeCustom} onRenameCustom={renameCustom} context="budget"/>
             </div>
-            <div><label className="label">Plafond mensuel (Rs)</label><input className="input" type="number" placeholder="Ex: 15000" value={form.limit} onChange={e => setForm(f => ({...f, limit: e.target.value}))}/></div>
+            <div>
+              <label className="label">Durée du plafond</label>
+              <div className="grid grid-cols-5 gap-1.5">
+                {BUDGET_DURATIONS.map(d => (
+                  <button key={d.months} type="button" onClick={() => setForm(f => ({...f, periodMonths: d.months}))}
+                    className={`py-2 rounded-xl text-[11px] font-bold border-2 transition-colors ${
+                      form.periodMonths === d.months ? 'bg-orange-500 text-white border-transparent' : 'bg-white text-ink-soft border-mist-dark'}`}>
+                    {d.label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[11px] text-ink-soft mt-1.5">Démarre à la création et se renouvelle à la fin de chaque durée.</p>
+            </div>
+            <div><label className="label">Plafond sur {durationLabel(form.periodMonths)} (Rs)</label><input className="input" type="number" placeholder="Ex: 15000" value={form.limit} onChange={e => setForm(f => ({...f, limit: e.target.value}))}/></div>
             <div>
               <label className="label">Couleur</label>
               <div className="flex gap-3 flex-wrap">
