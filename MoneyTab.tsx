@@ -119,29 +119,6 @@ async function reassignCategoryToAutre(cat: string): Promise<void> {
   if (!user) throw new Error('Non authentifié')
   const uid = user.id
 
-  // Renomme une catégorie partout (transactions, factures, dettes, historique, budget)
-async function renameCategoryEverywhere(oldName: string, newName: string): Promise<void> {
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) throw new Error('Non authentifié')
-  const uid = user.id
-
-  const { data: affectedDebts } = await supabase
-    .from('debts').select('id').eq('user_id', uid).eq('category', oldName)
-  const debtIds = (affectedDebts ?? []).map(d => d.id)
-
-  const results = await Promise.all([
-    supabase.from('transactions').update({ category: newName }).eq('user_id', uid).eq('category', oldName),
-    supabase.from('factures').update({ category: newName }).eq('user_id', uid).eq('category', oldName),
-    supabase.from('debts').update({ category: newName }).eq('user_id', uid).eq('category', oldName),
-    debtIds.length > 0
-      ? supabase.from('debt_payment_history').update({ category: newName }).in('debt_id', debtIds)
-      : Promise.resolve({ error: null }),
-    supabase.from('budget_categories').update({ name: newName }).eq('user_id', uid).eq('name', oldName),
-  ])
-  const failed = results.find(r => r.error)
-  if (failed?.error) throw failed.error
-}
-  
   // historique de remboursements : pas de user_id, on passe par les dettes concernées
   const { data: affectedDebts } = await supabase
     .from('debts').select('id').eq('user_id', uid).eq('category', cat)
@@ -169,6 +146,29 @@ async function renameCategoryEverywhere(oldName: string, newName: string): Promi
   }
 }
 
+// Renomme une catégorie partout (transactions, factures, dettes, historique, budget)
+async function renameCategoryEverywhere(oldName: string, newName: string): Promise<void> {
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) throw new Error('Non authentifié')
+  const uid = user.id
+
+  const { data: affectedDebts } = await supabase
+    .from('debts').select('id').eq('user_id', uid).eq('category', oldName)
+  const debtIds = (affectedDebts ?? []).map(d => d.id)
+
+  const results = await Promise.all([
+    supabase.from('transactions').update({ category: newName }).eq('user_id', uid).eq('category', oldName),
+    supabase.from('factures').update({ category: newName }).eq('user_id', uid).eq('category', oldName),
+    supabase.from('debts').update({ category: newName }).eq('user_id', uid).eq('category', oldName),
+    debtIds.length > 0
+      ? supabase.from('debt_payment_history').update({ category: newName }).in('debt_id', debtIds)
+      : Promise.resolve({ error: null }),
+    supabase.from('budget_categories').update({ name: newName }).eq('user_id', uid).eq('name', oldName),
+  ])
+  const failed = results.find(r => r.error)
+  if (failed?.error) throw failed.error
+}
+
 // Hook partagé par Transactions, Budget, Dettes et Factures
 function useCustomCategories(onChanged?: () => void) {
   const [customCategories, setCustomCategories] = useState<string[]>(loadCustomCategories)
@@ -194,7 +194,7 @@ function useCustomCategories(onChanged?: () => void) {
     onChanged?.()
   }
 
-    async function renameCustom(oldName: string, newName: string) {
+  async function renameCustom(oldName: string, newName: string) {
     const proper = toProper(newName)
     if (!proper) throw new Error('Le nom ne peut pas être vide.')
     if (proper === oldName) return
@@ -448,7 +448,6 @@ function CategoryManager({
           <div className="absolute z-50 top-full mt-1 left-0 right-0 bg-white border border-mist-dark rounded-2xl shadow-xl overflow-hidden">
             <div className="max-h-56 overflow-y-auto">
               {allCats.map(c => {
-                              {allCats.map(c => {
                 const removable = customCategories.includes(c)
 
                 if (editingCat === c) {
@@ -1128,7 +1127,7 @@ function FacturesSection() {
   const [editPayNote, setEditPayNote] = useState('')
 
   // ← Catégories partagées (même clé localStorage que transactions/budget/dettes)
-  const { customCategories, addCustom, removeCustom } = useCustomCategories(() => { loadFactures() })
+  const { customCategories, addCustom, removeCustom, renameCustom } = useCustomCategories(() => { loadFactures() })
 
   const [form, setForm] = useState({
     name: '', amount: '', category: DEFAULT_CATEGORIES[0], // ← DEFAULT_CATEGORIES au lieu de FACTURE_CATEGORIES
@@ -1593,7 +1592,7 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
   const [editingBudget, setEditingBudget] = useState<BudgetStatus | null>(null)
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
-  const { customCategories, addCustom, removeCustom } = useCustomCategories(() => { reload() })
+ const { customCategories, addCustom, removeCustom, renameCustom } = useCustomCategories(() => { reload() })
   const [form, setForm] = useState({ name: '', limit: '', color: COLORS[0] })
 
   const budgets = summary?.budgets ?? []
@@ -1863,7 +1862,7 @@ function DettesSection() {
   const [editPayAmount, setEditPayAmount] = useState('')
   const [editPayDate, setEditPayDate] = useState('')
   const [editPayNote, setEditPayNote] = useState('')
-  const { customCategories, addCustom, removeCustom } = useCustomCategories(() => { getDebts().then(setDebts) })
+  const { customCategories, addCustom, removeCustom, renameCustom } = useCustomCategories(() => { getDebts().then(setDebts) })
   const [expandedCreditors, setExpandedCreditors] = useState<Set<string>>(new Set())
   const [monthlyPaid, setMonthlyPaid] = useState<Record<string, number>>({})
   const ym = currentYearMonth()
