@@ -1819,11 +1819,17 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
         </div>
       )}
       <CoachTip message={tip} />
-      <div className="flex items-start gap-3 p-3 bg-orange-50 border border-orange-200 rounded-2xl">
+            <div className="flex items-start gap-3 p-3 bg-orange-50 border border-orange-200 rounded-2xl">
         <span className="text-lg">💡</span>
-        <p className="text-xs text-orange-700 leading-relaxed">
-          <strong>Plafonds de dépenses par catégorie.</strong> Choisis la durée de chaque plafond (1 mois à 3 ans) : il démarre à sa création et se renouvelle à la fin de chaque durée. Les montants incluent transactions, factures payées et remboursements de dettes.
-        </p>
+        <div className="text-xs text-orange-700 leading-relaxed space-y-1.5">
+          <p>
+            <strong>Un plafond = ta limite de dépenses pour une catégorie</strong>, sur la durée que tu choisis (1 mois à 3 ans). Il démarre le jour où tu le crées, puis repart à zéro à la fin de chaque durée.
+          </p>
+          <p>
+            <strong>Les boutons 1J, 5J, 1 mois…</strong> servent uniquement à consulter tes dépenses sur une période. Ils ne changent pas tes plafonds.
+          </p>
+          <p>Sont comptés : tes dépenses, les factures payées et les remboursements de dettes.</p>
+        </div>
       </div>
 
       {/* Filtre de période */}
@@ -1880,7 +1886,7 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
                 <button className="w-8 h-8 rounded-xl bg-mist hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center" onClick={() => handleDelete(b.id)}><Trash2 size={14}/></button>
               </div>
             </div>
-            <p className="text-[11px] text-ink-soft">🗓️ {durationLabel(b.periodMonths ?? 1)} · du {fmtDay(cycle.from)} au {fmtDay(cycle.to)}</p>
+                        <p className="text-[11px] text-ink-soft">🗓️ Plafond sur {durationLabel(b.periodMonths ?? 1)} · du {fmtDay(cycle.from)} au {fmtDay(cycle.to)}</p>
             <div className="w-full h-2.5 bg-mist-dark rounded-full overflow-hidden">
               <div className="h-full rounded-full transition-all duration-500" style={{ width: `${pct}%`, backgroundColor: over ? '#DC2626' : near ? '#D97706' : b.color }}/>
             </div>
@@ -1889,7 +1895,7 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
               <span className="font-mono text-ink-soft">plafond : {formatAmount(b.limit)}</span>
             </div>
             <p className="text-xs text-ink-soft">
-              Période ({PERIOD_LABEL[period]}) : <span className="font-mono font-bold text-ink">{formatAmount(periodSpent)}</span>
+               Dépensé sur {PERIOD_LABEL[period]} : <span className="font-mono font-bold text-ink">{formatAmount(periodSpent)}</span>
             </p>
           </div>
         )
