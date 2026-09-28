@@ -20,6 +20,7 @@ import { currentCycle, sumByCategory, sumCategory, durationLabel, BUDGET_DURATIO
 
 type SubTab = MoneySubTab
 
+
 interface Props {
   transactions: Transaction[]
   onUpdate: () => void
