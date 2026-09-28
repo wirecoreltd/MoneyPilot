@@ -2091,41 +2091,41 @@ function DettesSection() {
   })
 
   useEffect(() => {
-    async function loadPayments() {
-  const { data: { user } } = await supabase.auth.getUser()
-  const { data: userDebts } = await supabase.from('debts').select('id').eq('user_id', user!.id)
-  const ids = (userDebts ?? []).map(d => d.id)
-  if (ids.length === 0) { setAllPayments([]); return }
-  const { data } = await supabase.from('debt_payment_history')
-    .select('debt_id, amount, paid_at').in('debt_id', ids)
-  setAllPayments((data ?? []).map(r => ({
-    debtId: r.debt_id, amount: Number(r.amount), paidAt: String(r.paid_at).slice(0, 10),
-  })))
-}
-
-useEffect(() => {
-  async function load() {
-    setDebts(await getDebts())
-    await loadPayments()
+      async function loadPayments() {
+    const { data: { user } } = await supabase.auth.getUser()
+    const { data: userDebts } = await supabase.from('debts').select('id').eq('user_id', user!.id)
+    const ids = (userDebts ?? []).map(d => d.id)
+    if (ids.length === 0) { setAllPayments([]); return }
+    const { data } = await supabase.from('debt_payment_history')
+      .select('debt_id, amount, paid_at').in('debt_id', ids)
+    setAllPayments((data ?? []).map(r => ({
+      debtId: r.debt_id, amount: Number(r.amount), paidAt: String(r.paid_at).slice(0, 10),
+    })))
   }
-  load().finally(() => setLoading(false))
-}, [])
 
-const monthlyPaid: Record<string, number> = {}
-allPayments.forEach(p => {
-  if (p.paidAt >= `${ym}-01` && p.paidAt <= `${ym}-31`)
-    monthlyPaid[p.debtId] = (monthlyPaid[p.debtId] || 0) + p.amount
-})
+  useEffect(() => {
+    async function load() {
+      setDebts(await getDebts())
+      await loadPayments()
+    }
+    load().finally(() => setLoading(false))
+  }, [])
 
-const range = getPeriodRange(period, customFrom, customTo)
-const periodPaidByDebt: Record<string, number> = {}
-allPayments.forEach(p => {
-  if (p.paidAt >= range.from && p.paidAt <= range.to)
-    periodPaidByDebt[p.debtId] = (periodPaidByDebt[p.debtId] || 0) + p.amount
-})
-const periodPaidTotal = Object.values(periodPaidByDebt).reduce((s, v) => s + v, 0)
+  const monthlyPaid: Record<string, number> = {}
+  allPayments.forEach(p => {
+    if (p.paidAt >= `${ym}-01` && p.paidAt <= `${ym}-31`)
+      monthlyPaid[p.debtId] = (monthlyPaid[p.debtId] || 0) + p.amount
+  })
 
-const totalOwe  = debts.filter(d => d.type === 'owe').reduce((s, d) => s + d.remaining, 0)
+  const range = getPeriodRange(period, customFrom, customTo)
+  const periodPaidByDebt: Record<string, number> = {}
+  allPayments.forEach(p => {
+    if (p.paidAt >= range.from && p.paidAt <= range.to)
+      periodPaidByDebt[p.debtId] = (periodPaidByDebt[p.debtId] || 0) + p.amount
+  })
+  const periodPaidTotal = Object.values(periodPaidByDebt).reduce((s, v) => s + v, 0)
+
+  const totalOwe  = debts.filter(d => d.type === 'owe').reduce((s, d) => s + d.remaining, 0)
   const totalOwed = debts.filter(d => d.type === 'owed').reduce((s, d) => s + d.remaining, 0)
   const oweDebts = debts.filter(d => d.type === 'owe')
   const totalMonthlyMin = oweDebts.reduce((s, d) => s + (d.minimumPayment || 0), 0)
