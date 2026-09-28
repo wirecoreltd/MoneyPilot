@@ -856,6 +856,7 @@ function RevenusSection() {
   const [showForm, setShowForm] = useState(false)
   const [sourceDropdownOpen, setSourceDropdownOpen] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
   const [form, setForm] = useState({
     label: '', amount: '', type: 'fixed' as 'fixed' | 'variable', saveSource: false,
   })
@@ -900,9 +901,29 @@ function RevenusSection() {
     setSourceDropdownOpen(false)
   }
 
-  async function handleAdd() {
+    async function handleAdd() {
     if (!form.label.trim() || !form.amount || Number(form.amount) <= 0) return
     setSaving(true)
+
+    // Mode modification
+    if (editingId) {
+      const { error } = await supabase.from('monthly_incomes').update({
+        label: form.label.trim(),
+        amount: Number(form.amount),
+        is_fixed: form.type === 'fixed',
+      }).eq('id', editingId)
+      if (!error) {
+        setRevenus(prev => prev.map(r => r.id === editingId
+          ? { ...r, label: form.label.trim(), amount: Number(form.amount), type: form.type }
+          : r))
+        resetForm()
+      } else {
+        window.alert("Impossible de modifier le revenu. Réessaie.")
+      }
+      setSaving(false)
+      return
+    }
+
     const { data: { user } } = await supabase.auth.getUser()
     if (form.saveSource && form.label.trim()) {
       const alreadySaved = savedSources.some(s => s.name.toLowerCase() === form.label.trim().toLowerCase())
@@ -995,9 +1016,9 @@ function RevenusSection() {
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <span className="font-mono text-sm font-bold text-positive">+{formatAmount(r.amount)}</span>
-                <button onClick={() => handleDelete(r.id)} className="w-7 h-7 rounded-lg bg-mist hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center"><Trash2 size={12}/></button>
-              </div>
+               <span className="font-mono text-sm font-bold text-positive">+{formatAmount(r.amount)}</span>
+                <button onClick={() => openEdit(r)} className="w-7 h-7 rounded-lg bg-mist hover:bg-accent-light text-ink-soft hover:text-accent flex items-center justify-center"><Pencil size={12}/></button>
+                <button onClick={() => handleDelete(r.id)} className="w-7 h-7 rounded-lg bg-mist hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center"><Trash2 size={12}/></button> </div>
             </div>
           ))}
 
@@ -1071,9 +1092,10 @@ function RevenusSection() {
                 </div>
               </div>
               <div className="flex gap-2">
-                <button className="btn-ghost flex-1" onClick={() => { setShowForm(false); setForm({ label: '', amount: '', type: 'fixed', saveSource: false }) }}>Annuler</button>
-                <button className="btn-primary flex-1" style={{ backgroundColor: '#16A34A' }} onClick={handleAdd} disabled={saving}>{saving ? 'Ajout...' : 'Ajouter'}</button>
-              </div>
+                 <button className="btn-ghost flex-1" onClick={resetForm}>Annuler</button>
+                <button className="btn-primary flex-1" style={{ backgroundColor: '#16A34A' }} onClick={handleAdd} disabled={saving}>
+                  {saving ? 'Enregistrement...' : editingId ? 'Enregistrer' : 'Ajouter'}
+                </button></div>
             </div>
           ) : (
             <button onClick={() => setShowForm(true)} className="w-full py-3 text-sm font-bold text-positive bg-positive-light hover:bg-green-100 rounded-2xl transition-colors flex items-center justify-center gap-2">
@@ -1783,6 +1805,21 @@ function CreditorPicker({ value, onChange }: { value: string; onChange: (v: stri
     document.addEventListener('mousedown', handleClick)
     return () => document.removeEventListener('mousedown', handleClick)
   }, [])
+
+    function resetForm() {
+    setForm({ label: '', amount: '', type: 'fixed', saveSource: false })
+    setEditingId(null)
+    setShowForm(false)
+  }
+
+  function openEdit(r: RevenuSource) {
+    setEditingId(r.id)
+    setForm({ label: r.label, amount: String(r.amount), type: r.type, saveSource: false })
+    setShowForm(true)
+    setOpen(true)
+  }
+
+  
 
   async function handleAdd() {
     if (!newName.trim()) return
