@@ -8,6 +8,7 @@ import BilanTab from '../BilanTab'
 import CoachTab from '../coach'
 import ProjectsTab from '../ProjectsTab'
 import HistoriqueTab from '../HistoriqueTab'
+import { ensureRecurring } from '@/lib/recurring'
 import { getTransactions, Transaction, getUserProfile, UserProfile } from '@/lib/storage'
 import { supabase } from '@/lib/supabase'
 import { LogOut } from "lucide-react"
@@ -39,7 +40,9 @@ export default function Page() {
         window.location.href = '/login'
         return
       }
-      const [p, txs] = await Promise.all([getUserProfile(), getTransactions()])
+      try { await ensureRecurring(supabase, session.user.id) }
+catch (e) { console.error('Récurrents non générés :', e) } // ne bloque pas l'app
+const [p, txs] = await Promise.all([getUserProfile(), getTransactions()])
       setProfile(p)
       setTransactions(txs)
       setLoading(false)
