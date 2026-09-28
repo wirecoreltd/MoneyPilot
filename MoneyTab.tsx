@@ -2091,7 +2091,8 @@ function DettesSection() {
   })
 
   useEffect(() => {
-     async function loadPayments() {    
+       async function loadPayments() {
+    const { data: { user } } = await supabase.auth.getUser()
     const { data: userDebts } = await supabase.from('debts').select('id').eq('user_id', user!.id)
     const ids = (userDebts ?? []).map(d => d.id)
     if (ids.length === 0) { setAllPayments([]); return }
