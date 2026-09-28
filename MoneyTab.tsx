@@ -55,6 +55,7 @@ interface Facture {
   paid: boolean
   month: string
   note?: string
+  createdAt?: string
 }
 
 interface FacturePayment {
