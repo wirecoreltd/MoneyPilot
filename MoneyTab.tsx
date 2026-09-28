@@ -2077,7 +2077,10 @@ function DettesSection() {
   const [editPayNote, setEditPayNote] = useState('')
   const { customCategories, addCustom, removeCustom, renameCustom } = useCustomCategories(() => { getDebts().then(setDebts) })
   const [expandedCreditors, setExpandedCreditors] = useState<Set<string>>(new Set())
-  const [monthlyPaid, setMonthlyPaid] = useState<Record<string, number>>({})
+  const [allPayments, setAllPayments] = useState<{ debtId: string; amount: number; paidAt: string }[]>([])
+  const [period, setPeriod] = useState<Period>('1m')
+  const [customFrom, setCustomFrom] = useState(toYMD(new Date()))
+  const [customTo, setCustomTo] = useState(toYMD(new Date()))
   const ym = currentYearMonth()
 
   const [form, setForm] = useState({
@@ -2087,26 +2090,41 @@ function DettesSection() {
   })
 
   useEffect(() => {
-    async function load() {
-      const fetchedDebts = await getDebts()
-      setDebts(fetchedDebts)
+    async function loadPayments() {
       const { data: { user } } = await supabase.auth.getUser()
       const { data: userDebts } = await supabase.from('debts').select('id').eq('user_id', user!.id)
-      const debtIds = (userDebts ?? []).map(d => d.id)
-      if (debtIds.length > 0) {
-        const [year, month] = ym.split('-').map(Number)
-        const lastDay = new Date(year, month, 0).getDate()
-        const { data: dh } = await supabase.from('debt_payment_history').select('debt_id, amount')
-          .in('debt_id', debtIds).gte('paid_at', `${ym}-01`).lte('paid_at', `${ym}-${String(lastDay).padStart(2,'0')}`)
-        const paid: Record<string, number> = {}
-        ;(dh ?? []).forEach(r => { paid[r.debt_id] = (paid[r.debt_id] || 0) + Number(r.amount) })
-        setMonthlyPaid(paid)
-      }
+      const ids = (userDebts ?? []).map(d => d.id)
+      if (ids.length === 0) { setAllPayments([]); return }
+      const { data } = await supabase.from('debt_payment_history')
+        .select('debt_id, amount, paid_at').in('debt_id', ids)
+      setAllPayments((data ?? []).map(r => ({
+        debtId: r.debt_id, amount: Number(r.amount), paidAt: String(r.paid_at).slice(0, 10),
+      })))
     }
-    load().finally(() => setLoading(false))
-  }, [ym])
+    
+    useEffect(() => {
+      async function load() {
+        setDebts(await getDebts())
+        await loadPayments()
+      }
+      load().finally(() => setLoading(false))
+    }, [])
 
-  const totalOwe  = debts.filter(d => d.type === 'owe').reduce((s, d) => s + d.remaining, 0)
+  const monthlyPaid: Record<string, number> = {}
+allPayments.forEach(p => {
+  if (p.paidAt >= `${ym}-01` && p.paidAt <= `${ym}-31`)
+    monthlyPaid[p.debtId] = (monthlyPaid[p.debtId] || 0) + p.amount
+})
+
+const range = getPeriodRange(period, customFrom, customTo)
+const periodPaidByDebt: Record<string, number> = {}
+allPayments.forEach(p => {
+  if (p.paidAt >= range.from && p.paidAt <= range.to)
+    periodPaidByDebt[p.debtId] = (periodPaidByDebt[p.debtId] || 0) + p.amount
+})
+const periodPaidTotal = Object.values(periodPaidByDebt).reduce((s, v) => s + v, 0)
+
+const totalOwe  = debts.filter(d => d.type === 'owe').reduce((s, d) => s + d.remaining, 0)
   const totalOwed = debts.filter(d => d.type === 'owed').reduce((s, d) => s + d.remaining, 0)
   const oweDebts = debts.filter(d => d.type === 'owe')
   const totalMonthlyMin = oweDebts.reduce((s, d) => s + (d.minimumPayment || 0), 0)
@@ -2188,7 +2206,7 @@ function DettesSection() {
     const debtCategory = (debt as any).category ?? 'Autre'
     await logPayment(id, amt, payDate, debtCategory, payNote)
     invalidateHistory(id)
-    setMonthlyPaid(prev => ({ ...prev, [id]: (prev[id] || 0) + amt }))
+    await loadPayments()
     if (debt.amount === 0) {
       setConfirmDeleteId(id); setPayingId(null); setPayAmount(''); setPayDate(new Date().toISOString().slice(0, 10)); setPayNote(''); return
     }
@@ -2222,9 +2240,10 @@ function DettesSection() {
       await updateDebt(debt.id, { remaining: newRemaining })
       setDebts(prev => prev.map(d => d.id === debt.id ? { ...d, remaining: newRemaining } : d))
     }
-    await reloadHistory(editingPayment.debtId)
-    setEditingPayment(null)
-  }
+      await loadPayments()
+  await reloadHistory(editingPayment.debtId)
+  setEditingPayment(null)
+}
 
   async function handleDeletePayment(h: DebtPaymentHistory) {
     const debt = debts.find(d => d.id === h.debtId)
@@ -2233,8 +2252,8 @@ function DettesSection() {
       await updateDebt(debt.id, { remaining: newRemaining })
       setDebts(prev => prev.map(d => d.id === debt.id ? { ...d, remaining: newRemaining } : d))
     }
-    setMonthlyPaid(prev => ({ ...prev, [h.debtId]: Math.max(0, (prev[h.debtId] || 0) - h.amount) }))
     await deletePayment(h.id)
+    await loadPayments()
     await reloadHistory(h.debtId)
   }
 
@@ -2243,15 +2262,45 @@ function DettesSection() {
   return (
     <div className="space-y-3">
       <CoachTip message={tip} />
-      <div className="flex items-start gap-3 p-3 bg-red-50 border border-red-100 rounded-2xl">
+            <div className="flex items-start gap-3 p-3 bg-red-50 border border-red-100 rounded-2xl">
         <span className="text-base">💡</span>
-        <p className="text-xs text-red-700 leading-relaxed">
-          <strong>Dettes ≠ Factures.</strong> Une dette se rembourse progressivement sur plusieurs mois/années.
-        </p>
-      </div>
-
-      <div className="grid grid-cols-2 gap-3">
-        <div className="card border border-danger/20">
+          <p className="text-xs text-red-700 leading-relaxed">
+            <strong>Dettes ≠ Factures.</strong> Une dette se rembourse progressivement sur plusieurs mois/années.
+          </p>
+        </div>
+  
+        <div className="flex gap-1.5 overflow-x-auto">
+          {PERIODS.map(p => (
+            <button key={p.id} onClick={() => setPeriod(p.id)}
+              className={`flex-1 whitespace-nowrap px-3 py-2 rounded-xl text-xs font-bold border-2 transition-colors ${
+                period === p.id ? 'bg-danger text-white border-transparent' : 'bg-white text-ink-soft border-mist-dark'}`}>
+              {p.label}
+            </button>
+          ))}
+        </div>
+  
+        {period === 'custom' && (
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="label">Du</label>
+              <input className="input" type="date" value={customFrom} max={customTo || undefined}
+                onChange={e => setCustomFrom(e.target.value)}/>
+            </div>
+            <div>
+              <label className="label">Au</label>
+              <input className="input" type="date" value={customTo} min={customFrom || undefined}
+                onChange={e => setCustomTo(e.target.value)}/>
+            </div>
+          </div>
+        )}
+  
+        <div className="card bg-danger-light">
+          <p className="text-xs font-bold text-danger uppercase tracking-wide">Remboursé · {PERIOD_LABEL[period]}</p>
+          <p className="text-2xl font-bold font-mono text-danger mt-1">{formatAmount(periodPaidTotal)}</p>
+        </div>
+  
+        <div className="grid grid-cols-2 gap-3">
+          <div className="card border border-danger/20">
           <div className="flex items-center gap-2 mb-2">
             <div className="w-8 h-8 rounded-xl bg-danger-light flex items-center justify-center"><span className="text-sm">💳</span></div>
             <p className="text-xs font-bold text-danger uppercase tracking-wide">Je dois</p>
@@ -2377,6 +2426,9 @@ function DettesSection() {
                         </div>
                       )}
                       {dueBadge && <div className="mt-1.5">{dueBadge}</div>}
+                      <p className="text-xs text-ink-soft mt-1.5">
+                        Remboursé sur {PERIOD_LABEL[period]} : <span className="font-mono font-bold text-ink">{formatAmount(periodPaidByDebt[d.id] || 0)}</span>
+                      </p>
                     </div>
                     <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
                       <p className="font-mono font-bold text-lg text-ink">{formatAmount(d.remaining)}</p>
