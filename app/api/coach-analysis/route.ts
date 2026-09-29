@@ -42,8 +42,10 @@ export async function POST(req: NextRequest) {
       maxTokens: 2000,
     })
     return NextResponse.json(normalizeAnalysis(parseJson(text), profile.firstName, health))
-  } catch (e) {
+    } catch (e) {
     console.error('coach-analysis:', e)
-    return NextResponse.json({ error: "Analyse indisponible pour le moment." }, { status: 502 })
+    return NextResponse.json(
+      { error: 'DEBUG: ' + (e instanceof Error ? e.message : String(e)) },
+      { status: 502 }
+    )
   }
-}
