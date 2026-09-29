@@ -15,6 +15,7 @@ import { supabase } from '@/lib/supabase'
 import { MoneySubTab } from '@/app/page'
 import { useMonthSummary } from '@/lib/useMonthSummary'
 import { budgetStatus } from '@/lib/finance'
+import { debtEndLabel } from '@/lib/finance'
 import type { BudgetStatus } from '@/lib/finance'
 import { useSpendingLines } from '@/lib/useSpendingLines'
 import {
@@ -2818,8 +2819,13 @@ function EpargneSection() {
                     {done && <span className="text-xs bg-positive text-white px-2 py-0.5 rounded-full font-bold">✅ Objectif atteint !</span>}
                   </div>
                   <p className="font-bold text-ink leading-tight">{g.name}</p>
-                  {targetDate && <p className="text-xs text-ink-soft mt-0.5">🎯 {new Date(targetDate).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })}</p>}
-                  {!done && <p className="text-xs text-ink-soft">{formatAmount(g.target - g.saved)} restant</p>}
+                    {targetDate && <p className="text-xs text-ink-soft mt-0.5">🎯 {new Date(targetDate).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })}</p>}
+                    {!done && <p className="text-xs text-ink-soft">{formatAmount(g.target - g.saved)} restant</p>}
+                    {!done && targetDate && (
+                      suggested
+                        ? <p className="text-xs text-accent font-semibold mt-0.5">💡 Mets {formatAmount(suggested)}/mois pour atteindre ton objectif à temps</p>
+                        : <p className="text-xs text-danger font-semibold mt-0.5">⏰ Date cible dépassée — objectif toujours actif</p>
+                    )}
                 </div>
               </div>
               <div className="flex gap-1 flex-shrink-0 ml-2">
