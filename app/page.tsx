@@ -17,13 +17,12 @@ export type MoneySubTab = 'transactions' | 'budget' | 'dettes' | 'epargne' | 'fa
 
 export default function Page() {
   const [profile,      setProfile]      = useState<UserProfile | null>(null)
-  const [tab, setTab] = useState<Tab>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('activeTab')
-      if (saved) return saved as Tab
-    }
-    return 'home'
-  })
+  const [tab, setTab] = useState<Tab>('home') // identique côté serveur ET premier rendu client
+
+useEffect(() => {
+  const saved = localStorage.getItem('activeTab')
+  if (saved) setTab(saved as Tab)
+}, [])
   const [moneySubTab,  setMoneySubTab]  = useState<MoneySubTab>('transactions')
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [loading,      setLoading]      = useState(true)
