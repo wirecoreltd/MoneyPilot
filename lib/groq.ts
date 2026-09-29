@@ -19,7 +19,7 @@ export async function groqChat(opts: {
       signal: ctrl.signal,
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
       body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
+        model: process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
         max_tokens: opts.maxTokens ?? 1000,
         temperature: 0.4,
         ...(opts.json ? { response_format: { type: 'json_object' } } : {}),
