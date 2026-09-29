@@ -41,11 +41,12 @@ export async function POST(req: NextRequest) {
       json: true,
       maxTokens: 2000,
     })
-    return NextResponse.json(normalizeAnalysis(parseJson(text), profile.firstName, health))
-    } catch (e) {
+        return NextResponse.json(normalizeAnalysis(parseJson(text), profile.firstName, health))
+  } catch (e) {
     console.error('coach-analysis:', e)
     return NextResponse.json(
       { error: 'DEBUG: ' + (e instanceof Error ? e.message : String(e)) },
       { status: 502 }
     )
   }
+}
