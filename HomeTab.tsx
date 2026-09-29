@@ -11,6 +11,8 @@ import { useSpendingLines } from '@/lib/useSpendingLines'
 import { computeBudgetStatuses, earliestCycleStart } from '@/lib/budgetPeriods'
 import { authedPost } from '@/lib/apiClient'
 import CoachTip from './CoachTip'
+import PeriodFilter, { usePeriod, PERIOD_LABEL } from './components/money/PeriodFilter'
+import { supabase } from '@/lib/supabase'
 
 export type MoneySubTab = 'transactions' | 'revenus' | 'factures' | 'dettes' | 'epargne' | 'budget'
 
@@ -120,6 +122,82 @@ function HealthArc({ score, color }: { score: number; color: string }) {
       <text x={cx} y={cy + 20} textAnchor="middle" fontSize={10} fill="#8896B0">/100</text>
     </svg>
   )
+}
+
+// ─── Flux sur une période (revenus, factures payées, dettes remboursées) ─────
+
+function nextDay(ymd: string): string {
+  const [y, m, d] = ymd.split('-').map(Number)
+  return isoDate(new Date(y, m - 1, d + 1))
+}
+
+function chunk<T>(xs: T[], n = 100): T[][] {
+  const out: T[][] = []
+  for (let i = 0; i < xs.length; i += n) out.push(xs.slice(i, i + n))
+  return out
+}
+
+function usePeriodFlows(from: string, to: string) {
+  const [flows, setFlows] = useState<{ incomes: number; bills: number; debts: number } | null>(null)
+  const [flowsError, setFlowsError] = useState<string | null>(null)
+  const [tick, setTick] = useState(0)
+
+  useEffect(() => {
+    let cancelled = false
+    setFlows(null)
+    ;(async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser()
+        if (!user) throw new Error('Non authentifié')
+        const end = nextDay(to)
+
+        const [incR, facR, debtR] = await Promise.all([
+          supabase.from('monthly_incomes').select('amount,received_at,month').eq('user_id', user.id),
+          supabase.from('factures').select('id').eq('user_id', user.id),
+          supabase.from('debts').select('id,type').eq('user_id', user.id),
+        ])
+        if (incR.error) throw incR.error
+        if (facR.error) throw facR.error
+        if (debtR.error) throw debtR.error
+
+        // Même règle que l'onglet Revenus : date de réception, sinon 1er du mois
+        const incomes = sum((incR.data ?? [])
+          .filter(r => {
+            const d = String(r.received_at ?? `${r.month}-01`).slice(0, 10)
+            return d >= from && d <= to
+          })
+          .map(r => Number(r.amount)))
+
+        const facIds = (facR.data ?? []).map(f => f.id)
+        const oweIds = (debtR.data ?? []).filter(d => d.type === 'owe').map(d => d.id)
+
+        const [facPays, debtPays] = await Promise.all([
+          Promise.all(chunk(facIds).map(ids =>
+            supabase.from('facture_payment_history').select('amount')
+              .in('facture_id', ids).gte('paid_at', from).lt('paid_at', end))),
+          Promise.all(chunk(oweIds).map(ids =>
+            supabase.from('debt_payment_history').select('amount')
+              .in('debt_id', ids).gte('paid_at', from).lt('paid_at', end))),
+        ])
+        const total = (rs: any[]) => {
+          const bad = rs.find(r => r.error)
+          if (bad) throw bad.error
+          return sum(rs.flatMap(r => (r.data ?? []).map((x: any) => Number(x.amount))))
+        }
+
+        if (!cancelled) {
+          setFlows({ incomes, bills: total(facPays), debts: total(debtPays) })
+          setFlowsError(null)
+        }
+      } catch (e: any) {
+        console.error('Flux de la période :', e)
+        if (!cancelled) setFlowsError(e?.message || 'Erreur de chargement')
+      }
+    })()
+    return () => { cancelled = true }
+  }, [from, to, tick])
+
+  return { flows, flowsError, retryFlows: () => setTick(n => n + 1) }
 }
 
 // ─── Tuile chiffre : blanche, une info + un contexte, barre facultative ───────
@@ -242,6 +320,19 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
 
   const ym = currentYearMonth()
   const { snapshot, summary, health, plan, error, reload } = useMonthSummary(ym, transactions)
+
+  // Filtre de période (1J, 5J, 1 mois, 3 mois, Perso) : pilote les 4 tuiles de flux
+  const periodState = usePeriod()
+  const { period, range } = periodState
+  const { flows, flowsError, retryFlows } = usePeriodFlows(range.from, range.to)
+  const txInRange = transactions.filter(tx => {
+    const d = tx.date.slice(0, 10)
+    return d >= range.from && d <= range.to
+  })
+  const periodExpenses = sum(txInRange.filter(tx => tx.type === 'expense').map(tx => tx.amount))
+  const periodTxIncome = sum(txInRange.filter(tx => tx.type === 'income').map(tx => tx.amount))
+  const periodIncome = flows ? flows.incomes + periodTxIncome : undefined
+  const periodLabel = PERIOD_LABEL[period]
 
   // Plafonds : même règle que l'onglet Budget (cycle courant de chaque plafond)
   useEffect(() => { getBudgets().then(setBudgets).catch(e => console.error('Budgets:', e)) }, [])
@@ -366,10 +457,10 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
   return (
     <div className="space-y-4">
 
-      {error && (
+      {(error || flowsError) && (
         <div className="card bg-red-50 border border-red-100 flex items-center justify-between gap-3">
-          <p className="text-xs text-red-700">Impossible de charger tes chiffres : {error}</p>
-          <button onClick={reload} className="text-xs font-semibold text-red-700 underline flex-shrink-0">Réessayer</button>
+          <p className="text-xs text-red-700">Impossible de charger tes chiffres : {error || flowsError}</p>
+          <button onClick={() => { reload(); retryFlows() }} className="text-xs font-semibold text-red-700 underline flex-shrink-0">Réessayer</button>
         </div>
       )}
 
@@ -397,6 +488,20 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
         ) : null}
       </div>
 
+      {/* ── 2. Filtre de période + chiffres ── */}
+      <PeriodFilter {...periodState} activeClass="bg-accent text-white" />
+
+      <div className="grid grid-cols-2 gap-3">
+        <Tile icon="💰" label="Revenus" value={amt(periodIncome)}
+          sub={`reçus sur ${periodLabel}`} onClick={() => onGoToMoney('revenus')} />
+        <Tile icon="💸" label="Dépenses" value={amt(periodExpenses)}
+          sub={`dépensées sur ${periodLabel}`} onClick={() => onGoToMoney('transactions')} />
+        <Tile icon="🧾" label="Factures" value={amt(flows?.bills)}
+          sub={`payées sur ${periodLabel}`} onClick={() => onGoToMoney('factures')} />
+        <Tile icon="💳" label="Dettes" value={amt(flows?.debts)}
+          sub={`remboursées sur ${periodLabel}`} onClick={() => onGoToMoney('dettes')} />
+      </div>
+
       {/* ── 2. À faire : seulement s'il y a quelque chose ── */}
       {todos.length > 0 && (
         <div className="card">
@@ -421,28 +526,11 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
         </div>
       )}
 
-      {/* ── 3. Les essentiels du mois : tuiles blanches, avec contexte ── */}
-      <div className="grid grid-cols-2 gap-3">
-        <Tile icon="💰" label="Revenus" value={amt(summary?.income)}
-          onClick={() => onGoToMoney('revenus')} />
-        <Tile icon="💸" label="Dépenses" value={amt(summary?.expenses)}
-          sub="Dépenses ponctuelles" onClick={() => onGoToMoney('transactions')} />
-        <Tile icon="🧾" label="Factures"
-          value={amt(summary?.billsPaid)}
-          sub={summary ? `payées sur ${formatAmount(summary.billsPlanned)}` : undefined}
-          pct={summary && summary.billsPlanned > 0 ? (summary.billsPaid / summary.billsPlanned) * 100 : undefined}
-          onClick={() => onGoToMoney('factures')} />
-        <Tile icon="💳" label="Dettes"
-          value={!summary ? '—' : summary.debtDue > 0 ? formatAmount(summary.debtPaid) : formatAmount(summary.totalDebtOwed)}
-          sub={!summary ? undefined : summary.debtDue > 0 ? `payées sur ${formatAmount(summary.debtDue)}` : 'capital restant'}
-          pct={summary && summary.debtDue > 0 ? (summary.debtPaid / summary.debtDue) * 100 : undefined}
-          onClick={() => onGoToMoney('dettes')} />
-        <Tile wide icon="🪙" label="Épargne totale" value={amt(summary?.totalSavings)}
-          sub={summary
-            ? `${summary.savedNet >= 0 ? '+' : '−'}${formatAmount(Math.abs(summary.savedNet))} ce mois${summary.safetyMonths != null ? ` · ${summary.safetyMonths.toFixed(1)} mois de sécurité` : ''}`
-            : undefined}
-          onClick={() => onGoToMoney('epargne')} />
-      </div>
+      <Tile icon="🪙" label="Épargne totale" value={amt(summary?.totalSavings)}
+        sub={summary
+          ? `${summary.savedNet >= 0 ? '+' : '−'}${formatAmount(Math.abs(summary.savedNet))} ce mois${summary.safetyMonths != null ? ` · ${summary.safetyMonths.toFixed(1)} mois de sécurité` : ''}`
+          : undefined}
+        onClick={() => onGoToMoney('epargne')} />
 
       {/* ── 4. Situation financière ── */}
       <div className="card-lg">
