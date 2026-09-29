@@ -89,13 +89,24 @@ export function formatAmount(amount: number, currency = 'MUR'): string {
   }).format(amount)
 }
 
-export function debtEndLabel(d: Pick<SnapDebt, 'remaining' | 'minimumPayment' | 'recurring'>): string | null {
+export type DebtEndResult = { text: string; neverEnds?: boolean } | null
+
+export function debtEndLabel(
+  d: Pick<SnapDebt, 'remaining' | 'minimumPayment' | 'recurring' | 'interestRate'>,
+): DebtEndResult {
   if (d.recurring || d.minimumPayment <= 0 || d.remaining <= 0) return null
-  const months = Math.ceil(d.remaining / d.minimumPayment)
+  const r = (d.interestRate ?? 0) / 100 / 12
+  let months: number
+  if (r === 0) {
+    months = Math.ceil(d.remaining / d.minimumPayment)
+  } else {
+    if (d.minimumPayment <= d.remaining * r) return { text: '', neverEnds: true } // le minimum ne couvre même pas les intérêts
+    months = Math.ceil(-Math.log(1 - (r * d.remaining) / d.minimumPayment) / Math.log(1 + r))
+  }
   const end = new Date()
   end.setDate(1)
   end.setMonth(end.getMonth() + months)
-  return `Terminé en ${end.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })}`
+  return { text: `Terminé en ${end.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })}` }
 }
 
 // Catégorie récurrente (minuscule) -> catégorie de budget. UNE seule copie.
