@@ -16,9 +16,7 @@ import {
   toggleRecurringPayment,
   toggleDebtPayment,
   deleteRecurringPayment,
-  computeCoachPlan,
   computeYearlyProjection,
-  computeHealthScore,
   currentYearMonth,
   formatAmount,
   Debt,
@@ -27,9 +25,12 @@ import {
   Project,
   ChecklistItem,
   Transaction,
-  CoachPlan,
   MonthProjection,
 } from "@/lib/storage";
+import { supabase } from "@/lib/supabase";
+import { loadMonthSnapshot } from "@/lib/data";
+import { computeMonthSummary, computeHealthScore, buildCoachPlan } from "@/lib/finance";
+import type { CoachPlan, MonthSnapshot } from "@/lib/finance";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────────
 const fmt = (n: number): string => formatAmount(n);
@@ -52,6 +53,13 @@ function computeSixMonthHistory(transactions: Transaction[]): SixMonthPoint[] {
       Dépenses: txs.filter((t) => t.type === "expense").reduce((s, t) => s + t.amount, 0),
     };
   });
+}
+
+// Même source que l'Accueil : le snapshot Supabase -> lib/finance
+async function fetchSnapshot(month: string): Promise<MonthSnapshot> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("Non authentifié");
+  return loadMonthSnapshot(supabase, user.id, month);
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -168,7 +176,7 @@ function IncomeStatement({ plan }: { plan: CoachPlan }) {
     { label: "Revenus", amount: plan.totalIncome, sign: "+", color: "#16A34A" },
     { label: "Charges fixes", amount: plan.fixedCharges, sign: "−", color: "#DC2626" },
     { label: "Paiements de dettes", amount: plan.debtMinimums, sign: "−", color: "#DC2626" },
-    { label: "Dépenses variables", amount: plan.variableEstimate, sign: "−", color: "#D97706" },
+    { label: plan.variableIsEstimate ? "Dépenses variables (estimation)" : "Dépenses variables", amount: plan.variableEstimate, sign: "−", color: "#D97706" },
   ];
   const netPct = plan.totalIncome > 0 ? Math.round((plan.freeMoney / plan.totalIncome) * 100) : 0;
 
@@ -514,6 +522,7 @@ export default function BilanDashboard({ transactions = [] }: { transactions?: T
   const [projects, setProjects] = useState<Project[]>([]);
   const [recurring, setRecurring] = useState<Awaited<ReturnType<typeof getRecurringPayments>>>([]);
   const [checklist, setChecklist] = useState<ChecklistItem[]>([]);
+  const [snapshot, setSnapshot] = useState<MonthSnapshot | null>(null);
 
   const month = currentYearMonth();
 
@@ -521,13 +530,14 @@ export default function BilanDashboard({ transactions = [] }: { transactions?: T
     setLoading(true);
     setError(null);
     try {
-      const [d, s, i, p, r, c] = await Promise.all([
+      const [d, s, i, p, r, c, snap] = await Promise.all([
         getDebts(),
         getSavings(),
         getMonthlyIncomes(month),
         getProjects(),
         getRecurringPayments(),
         getMonthlyChecklist(month),
+        fetchSnapshot(month),
       ]);
       setDebts(d);
       setSavings(s);
@@ -535,6 +545,7 @@ export default function BilanDashboard({ transactions = [] }: { transactions?: T
       setProjects(p);
       setRecurring(r);
       setChecklist(c);
+      setSnapshot(snap);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erreur inconnue");
     } finally {
@@ -553,6 +564,15 @@ export default function BilanDashboard({ transactions = [] }: { transactions?: T
       setChecklist(await getMonthlyChecklist(month));
     } catch (e) {
       console.error("Rechargement de la checklist échoué :", e);
+    }
+  }
+
+  // Recharge le résumé du mois sans jamais lancer d'exception
+  async function refreshSnapshotSafe() {
+    try {
+      setSnapshot(await fetchSnapshot(month));
+    } catch (e) {
+      console.error("Rechargement du résumé échoué :", e);
     }
   }
 
@@ -578,9 +598,10 @@ export default function BilanDashboard({ transactions = [] }: { transactions?: T
     // Resynchronise avec la base (montants / dette soldée peuvent changer).
     // Si ça échoue, l'écriture a quand même réussi : on ne fait pas de rollback.
     try {
-      const [c, d] = await Promise.all([getMonthlyChecklist(month), getDebts()]);
+      const [c, d, snap] = await Promise.all([getMonthlyChecklist(month), getDebts(), fetchSnapshot(month)]);
       setChecklist(c);
       setDebts(d);
+      setSnapshot(snap);
     } catch (e) {
       console.error("Resynchronisation échouée :", e);
     }
@@ -594,7 +615,9 @@ export default function BilanDashboard({ transactions = [] }: { transactions?: T
       console.error("Suppression du paiement récurrent échouée :", e);
       window.alert("Impossible de supprimer ce paiement récurrent. Réessaie.");
       await reloadChecklistSafe();
+      return;
     }
+    await refreshSnapshotSafe();
   }
 
   async function handleDeleteIncome(id: string) {
@@ -609,7 +632,9 @@ export default function BilanDashboard({ transactions = [] }: { transactions?: T
       } catch (e2) {
         console.error("Rechargement des revenus échoué :", e2);
       }
+      return;
     }
+    await refreshSnapshotSafe();
   }
 
   // Lance une exception en cas d'échec : IncomeList l'attrape et affiche l'alerte
@@ -621,15 +646,20 @@ export default function BilanDashboard({ transactions = [] }: { transactions?: T
       month,
     });
     setIncomes((prev) => [...prev, created]);
+    await refreshSnapshotSafe();
   }
 
   if (loading) return <LoadingState />;
   if (error) return <ErrorState message={error} onRetry={loadAll} />;
+  if (!snapshot) return <LoadingState />;
 
-  const plan = computeCoachPlan(debts, recurring, incomes, month);
+  // ── Mêmes calculs que l'Accueil (lib/finance) ──
+  const summary = computeMonthSummary(snapshot);
+  const plan: CoachPlan = buildCoachPlan(snapshot, summary);
+  const health = computeHealthScore(summary, snapshot.debts);
+
   const projection: MonthProjection[] = computeYearlyProjection(transactions, recurring, incomes);
   const sixMonth = computeSixMonthHistory(transactions);
-  const health = computeHealthScore(transactions, debts, savings, projects);
 
   const projectsTotal = projects.reduce((s, p) => s + p.savedAmount, 0);
   const totalSavings = savings.reduce((s, g) => s + g.saved, 0);
@@ -638,10 +668,16 @@ export default function BilanDashboard({ transactions = [] }: { transactions?: T
   const cashflow = plan.freeMoney;
   const endBalance = projection[projection.length - 1]?.projectedBalance ?? 0;
 
-  const savingsRate = plan.totalIncome > 0 ? `${Math.round((totalSavings / (plan.totalIncome * 12)) * 100)}%` : "—";
-  const debtRatio = plan.totalIncome > 0 ? `${Math.round((plan.debtMinimums / plan.totalIncome) * 100)}%` : "—";
-  const monthlyExpenseEstimate = plan.fixedCharges + plan.debtMinimums + plan.variableEstimate;
-  const emergencyMonths = monthlyExpenseEstimate > 0 ? `${(totalSavings / monthlyExpenseEstimate).toFixed(1)} mois` : "—";
+  // Taux d'épargne = épargné ce mois (dépôts − retraits) / revenus du mois
+  const savingsRate = summary.income > 0
+    ? `${Math.max(0, Math.round((summary.savedNet / summary.income) * 100))}%`
+    : "—";
+  const debtRatio = summary.income > 0
+    ? `${Math.round((summary.debtDue / summary.income) * 100)}%`
+    : "—";
+  const emergencyMonths = summary.safetyMonths !== null
+    ? `${summary.safetyMonths.toFixed(1)} mois`
+    : "—";
 
   const tip = plan.alerts?.[0] ?? `💰 Tu peux épargner ${fmt(plan.savingsSuggestion)} ce mois tout en remboursant ${fmt(plan.snowballSuggestion)} de dettes.`;
 
@@ -658,7 +694,7 @@ export default function BilanDashboard({ transactions = [] }: { transactions?: T
           <KpiCard label="Situation financière net" value={fmt(netWorth)} color="#7C3AED" bg="#F5F3FF" icon="💎" />
           <KpiCard label="Dette totale" value={fmt(totalDebt)} color="#DC2626" bg="#FEF2F2" icon="💳" />
           <KpiCard label="Épargne totale" value={fmt(totalSavings)} color="#16A34A" bg="#F0FDF4" icon="🐖" />
-          <KpiCard label="Cashflow du mois" value={fmt(cashflow)} color="#2563EB" bg="#EFF6FF" icon="📈" />
+          <KpiCard label="Marge du mois" value={fmt(cashflow)} color="#2563EB" bg="#EFF6FF" icon="📈" />
         </div>
       </div>
 
@@ -731,6 +767,13 @@ export default function BilanDashboard({ transactions = [] }: { transactions?: T
           debtRatio={debtRatio}
           emergencyMonths={emergencyMonths}
         />
+        {health.details.length > 0 && (
+          <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 4 }}>
+            {health.details.map((d, i) => (
+              <p key={i} style={{ fontSize: 12, color: "#4A5568" }}>{d}</p>
+            ))}
+          </div>
+        )}
       </Card>
 
       {/* ⑧ Paiements du mois */}
