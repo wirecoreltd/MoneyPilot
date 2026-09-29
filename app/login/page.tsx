@@ -3,6 +3,15 @@
 import { useState } from 'react'
 import { supabase } from '@/lib/supabase'
 
+function translateAuthError(msg: string): string {
+  const m = msg.toLowerCase()
+  if (m.includes('invalid login credentials')) return 'Email ou mot de passe incorrect.'
+  if (m.includes('email not confirmed')) return 'Confirme ton email avant de te connecter (vérifie ta boîte mail).'
+  if (m.includes('already registered')) return 'Un compte existe déjà avec cet email.'
+  if (m.includes('rate limit')) return 'Trop de tentatives. Réessaie dans quelques minutes.'
+  return 'Une erreur est survenue. Réessaie.'
+}
+
 export default function LoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -10,9 +19,13 @@ export default function LoginPage() {
   const [mode, setMode] = useState<'login' | 'signup'>('login')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [info, setInfo] = useState<string | null>(null)
 
   async function handleSubmit() {
-    if (!email || !password) {
+    if (loading) return
+    setInfo(null)
+
+    if (!email.trim() || !password) {
       setError('Veuillez remplir tous les champs.')
       return
     }
@@ -22,7 +35,6 @@ export default function LoginPage() {
         setError('Le mot de passe doit contenir au moins 6 caractères.')
         return
       }
-
       if (password !== confirmPassword) {
         setError('Les mots de passe ne correspondent pas.')
         return
@@ -35,36 +47,30 @@ export default function LoginPage() {
     try {
       if (mode === 'login') {
         const { error } = await supabase.auth.signInWithPassword({
-          email,
+          email: email.trim(),
           password,
         })
-
         if (error) {
-          setError(error.message)
+          setError(translateAuthError(error.message))
         } else {
           window.location.href = '/'
         }
       } else {
-        const { error } = await supabase.auth.signUp({
-          email,
+        const { data, error } = await supabase.auth.signUp({
+          email: email.trim(),
           password,
+          options: { emailRedirectTo: `${window.location.origin}/` },
         })
-
         if (error) {
-          setError(error.message)
+          setError(translateAuthError(error.message))
+        } else if (data.session) {
+          // Confirmation email désactivée : l'utilisateur est déjà connecté
+          window.location.href = '/'
         } else {
-          // connexion automatique après inscription
-          const { error: loginError } =
-            await supabase.auth.signInWithPassword({
-              email,
-              password,
-            })
-
-          if (loginError) {
-            setError(loginError.message)
-          } else {
-            window.location.href = '/'
-          }
+          setInfo('Compte créé ! Clique sur le lien reçu par email, puis connecte-toi.')
+          setMode('login')
+          setPassword('')
+          setConfirmPassword('')
         }
       }
     } catch {
@@ -86,19 +92,23 @@ export default function LoginPage() {
           />
 
           <span className="text-xl font-bold">
-          Money<span className="text-accent">Pilot</span>
-        </span>
+            Money<span className="text-accent">Pilot</span>
+          </span>
 
           <p className="text-sm text-ink-soft mt-1">
-            {mode === 'login'
-              ? 'Connecte-toi à ton compte'
-              : 'Crée ton compte'}
+            {mode === 'login' ? 'Connecte-toi à ton compte' : 'Crée ton compte'}
           </p>
         </div>
 
         {error && (
           <div className="bg-danger-light text-danger text-sm p-3 rounded-2xl">
             {error}
+          </div>
+        )}
+
+        {info && (
+          <div className="bg-green-50 text-green-700 text-sm p-3 rounded-2xl">
+            {info}
           </div>
         )}
 
@@ -127,17 +137,13 @@ export default function LoginPage() {
 
         {mode === 'signup' && (
           <div>
-            <label className="label">
-              Confirmer le mot de passe
-            </label>
+            <label className="label">Confirmer le mot de passe</label>
             <input
               className="input"
               type="password"
               placeholder="••••••••"
               value={confirmPassword}
-              onChange={(e) =>
-                setConfirmPassword(e.target.value)
-              }
+              onChange={(e) => setConfirmPassword(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
             />
           </div>
@@ -160,6 +166,7 @@ export default function LoginPage() {
           onClick={() => {
             setMode(mode === 'login' ? 'signup' : 'login')
             setError(null)
+            setInfo(null)
             setPassword('')
             setConfirmPassword('')
           }}
