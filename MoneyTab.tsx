@@ -113,8 +113,9 @@ async function reassignCategoryToAutre(cat: string): Promise<void> {
   const uid = user.id
 
   // historique de remboursements : pas de user_id, on passe par les dettes concernées
-  const { data: affectedDebts } = await supabase
+  const { data: affectedDebts, error: affectedError } = await supabase
     .from('debts').select('id').eq('user_id', uid).eq('category', cat)
+  if (affectedError) throw affectedError
   const debtIds = (affectedDebts ?? []).map(d => d.id)
 
   const results = await Promise.all([
@@ -129,13 +130,16 @@ async function reassignCategoryToAutre(cat: string): Promise<void> {
   if (failed?.error) throw failed.error
 
   // Plafond du budget : fusionné dans "Autre" s'il existe déjà, sinon renommé
-  const { data: bud } = await supabase
+  const { data: bud, error: budError } = await supabase
     .from('budget_categories').select('id, name').eq('user_id', uid).in('name', [cat, 'Autre'])
+  if (budError) throw budError
   const old = (bud ?? []).find(b => b.name === cat)
   const hasAutre = (bud ?? []).some(b => b.name === 'Autre')
   if (old) {
-    if (hasAutre) await supabase.from('budget_categories').delete().eq('id', old.id)
-    else await supabase.from('budget_categories').update({ name: 'Autre' }).eq('id', old.id)
+    const { error } = hasAutre
+      ? await supabase.from('budget_categories').delete().eq('id', old.id)
+      : await supabase.from('budget_categories').update({ name: 'Autre' }).eq('id', old.id)
+    if (error) throw error
   }
 }
 
@@ -145,8 +149,9 @@ async function renameCategoryEverywhere(oldName: string, newName: string): Promi
   if (!user) throw new Error('Non authentifié')
   const uid = user.id
 
-  const { data: affectedDebts } = await supabase
+  const { data: affectedDebts, error: affectedError } = await supabase
     .from('debts').select('id').eq('user_id', uid).eq('category', oldName)
+  if (affectedError) throw affectedError
   const debtIds = (affectedDebts ?? []).map(d => d.id)
 
   const results = await Promise.all([
@@ -174,34 +179,43 @@ function useCustomCategories(onChanged?: () => void) {
 
   useEffect(() => {
     (async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
-      const { data, error } = await supabase.from('custom_categories').select('name').eq('user_id', user.id)
-      if (error) { console.error(error); return }
-      let names = (data ?? []).map(r => r.name)
+      try {
+        const { data: { user } } = await supabase.auth.getUser()
+        if (!user) return
+        const { data, error } = await supabase.from('custom_categories').select('name').eq('user_id', user.id)
+        if (error) { console.error(error); return }
+        let names = (data ?? []).map(r => r.name)
 
-      const legacy = loadLegacyCustomCategories().filter(
-        c => !names.some(n => n.toLowerCase() === c.toLowerCase())
-      )
-      if (legacy.length > 0) {
-        const { error: e2 } = await supabase.from('custom_categories')
-          .insert(legacy.map(name => ({ user_id: user.id, name })))
-        if (!e2) {
-          names = [...names, ...legacy]
-          localStorage.removeItem('moneyapp_custom_categories')
+        const legacy = loadLegacyCustomCategories().filter(
+          c => !names.some(n => n.toLowerCase() === c.toLowerCase())
+        )
+        if (legacy.length > 0) {
+          const { error: e2 } = await supabase.from('custom_categories')
+            .insert(legacy.map(name => ({ user_id: user.id, name })))
+          if (!e2) {
+            names = [...names, ...legacy]
+            localStorage.removeItem('moneyapp_custom_categories')
+          }
         }
+        setCustomCategories(names)
+      } catch (e) {
+        console.error('Chargement des catégories échoué :', e)
       }
-      setCustomCategories(names)
     })()
   }, [])
 
   async function addCustom(cat: string) {
     const proper = toProper(cat)
     if (!proper || customCategories.some(c => c.toLowerCase() === proper.toLowerCase())) return
-    const { data: { user } } = await supabase.auth.getUser()
-    const { error } = await supabase.from('custom_categories').insert({ user_id: user!.id, name: proper })
-    if (error) { window.alert("Impossible d'ajouter la catégorie. Réessaie."); return }
-    setCustomCategories(prev => [...prev, proper])
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) throw new Error('Non authentifié')
+      const { error } = await supabase.from('custom_categories').insert({ user_id: user.id, name: proper })
+      if (error) throw error
+      setCustomCategories(prev => [...prev, proper])
+    } catch {
+      window.alert("Impossible d'ajouter la catégorie. Réessaie.")
+    }
   }
 
   async function removeCustom(cat: string) {
@@ -553,12 +567,17 @@ function TransactionsSection({ transactions, onUpdate }: { transactions: Transac
     date: new Date().toISOString().slice(0, 10),
   })
 
+  // Si les budgets ne chargent pas, on perd seulement les badges « Proche / Dépassé »
+  function refreshBudgets() {
+    getBudgets().then(setBudgets).catch(e => console.error('Budgets:', e))
+  }
+
   const { customCategories, addCustom, removeCustom, renameCustom } = useCustomCategories(() => {
     onUpdate()
-    getBudgets().then(setBudgets)
+    refreshBudgets()
   })
 
-  useEffect(() => { getBudgets().then(setBudgets) }, [])
+  useEffect(() => { refreshBudgets() }, [])
 
   // Statut de chaque plafond sur son cycle courant (même règle que Budget et Accueil)
   const { lines } = useSpendingLines(earliestCycleStart(budgets), transactions)
@@ -1929,6 +1948,8 @@ function daysUntil(dateStr: string): number {
   return Math.round((target.getTime() - now.getTime()) / 86400000)
 }
 
+type PaymentRow = { debtId: string; amount: number; paidAt: string }
+
 async function fetchHistory(debtId: string): Promise<DebtPaymentHistory[]> {
   const { data, error } = await supabase.from('debt_payment_history').select('*').eq('debt_id', debtId).order('paid_at', { ascending: false })
   if (error) throw error
@@ -1947,7 +1968,8 @@ async function deletePayment(id: string): Promise<void> {
   if (error) throw error
 }
 async function fetchCreditors(): Promise<{ id: string; name: string }[]> {
-  const { data } = await supabase.from('debt_creditors').select('*').order('name')
+  const { data, error } = await supabase.from('debt_creditors').select('*').order('name')
+  if (error) throw error
   return (data ?? []).map(r => ({ id: r.id, name: r.name }))
 }
 async function saveCreditor(name: string): Promise<{ id: string; name: string }> {
@@ -1968,7 +1990,7 @@ function CreditorPicker({ value, onChange }: { value: string; onChange: (v: stri
   const [adding, setAdding] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
-  useEffect(() => { fetchCreditors().then(setCreditors) }, [])
+  useEffect(() => { fetchCreditors().then(setCreditors).catch(e => console.error('Créanciers:', e)) }, [])
   useEffect(() => {
     function handleClick(e: MouseEvent) { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
     document.addEventListener('mousedown', handleClick)
@@ -2045,9 +2067,12 @@ function CreditorPicker({ value, onChange }: { value: string; onChange: (v: stri
   )
 }
 
+const REFRESH_FAILED = "Enregistré, mais l'affichage n'a pas pu être actualisé. Recharge la page."
+
 function DettesSection() {
   const [debts, setDebts] = useState<Debt[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [payingId, setPayingId] = useState<string | null>(null)
@@ -2062,9 +2087,11 @@ function DettesSection() {
   const [editPayAmount, setEditPayAmount] = useState('')
   const [editPayDate, setEditPayDate] = useState('')
   const [editPayNote, setEditPayNote] = useState('')
-  const { customCategories, addCustom, removeCustom, renameCustom } = useCustomCategories(() => { getDebts().then(setDebts) })
+  const { customCategories, addCustom, removeCustom, renameCustom } = useCustomCategories(() => {
+    getDebts().then(setDebts).catch(() => window.alert("Impossible d'actualiser tes dettes. Réessaie."))
+  })
   const [expandedCreditors, setExpandedCreditors] = useState<Set<string>>(new Set())
-  const [allPayments, setAllPayments] = useState<{ debtId: string; amount: number; paidAt: string }[]>([])
+  const [allPayments, setAllPayments] = useState<PaymentRow[]>([])
   const periodState = usePeriod()
   const { period, range } = periodState
   const ym = currentYearMonth()
@@ -2075,25 +2102,36 @@ function DettesSection() {
     note: '', dueDate: '', recurring: false, category: 'Autre',
   })
 
-  async function loadPayments() {
+  // Charge tous les remboursements ; RENVOIE la liste fraîche (l'état React n'est pas encore à jour au retour)
+  async function loadPayments(): Promise<PaymentRow[]> {
     const { data: { user } } = await supabase.auth.getUser()
-    const { data: userDebts } = await supabase.from('debts').select('id').eq('user_id', user!.id)
+    if (!user) throw new Error('Non authentifié')
+    const { data: userDebts, error: debtsError } = await supabase.from('debts').select('id').eq('user_id', user.id)
+    if (debtsError) throw debtsError
     const ids = (userDebts ?? []).map(d => d.id)
-    if (ids.length === 0) { setAllPayments([]); return }
-    const { data } = await supabase.from('debt_payment_history')
+    if (ids.length === 0) { setAllPayments([]); return [] }
+    const { data, error } = await supabase.from('debt_payment_history')
       .select('debt_id, amount, paid_at').in('debt_id', ids)
-    setAllPayments((data ?? []).map(r => ({
+    if (error) throw error
+    const list: PaymentRow[] = (data ?? []).map(r => ({
       debtId: r.debt_id, amount: Number(r.amount), paidAt: String(r.paid_at).slice(0, 10),
-    })))
+    }))
+    setAllPayments(list)
+    return list
   }
 
-  useEffect(() => {
-    async function load() {
-      setDebts(await getDebts())
-      await loadPayments()
+  async function loadAll() {
+    setLoading(true); setLoadError(null)
+    try {
+      const [d] = await Promise.all([getDebts(), loadPayments()])
+      setDebts(d)
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : 'Erreur de chargement')
     }
-    load().finally(() => setLoading(false))
-  }, [])
+    setLoading(false)
+  }
+
+  useEffect(() => { loadAll() }, [])
 
   const monthlyPaid: Record<string, number> = {}
   allPayments.forEach(p => {
@@ -2170,7 +2208,7 @@ function DettesSection() {
   // Source de vérité : amount - somme des paiements. Pour une dette récurrente,
   // on ne compte que les paiements DEPUIS le dernier "reset" (remise à zéro),
   // repéré en rejouant l'historique.
-  function computeRemaining(debt: Debt, payments: { debtId: string; amount: number; paidAt: string }[]): number {
+  function computeRemaining(debt: Debt, payments: PaymentRow[]): number {
     if (debt.amount <= 0) return 0
     const mine = payments.filter(p => p.debtId === debt.id).sort((a, b) => a.paidAt.localeCompare(b.paidAt))
     const isRecurring = (debt as any).recurring ?? false
@@ -2188,7 +2226,7 @@ function DettesSection() {
     return Math.max(0, debt.amount - running)
   }
 
-  async function syncRemaining(debt: Debt, payments = allPayments) {
+  async function syncRemaining(debt: Debt, payments: PaymentRow[] = allPayments) {
     const remaining = computeRemaining(debt, payments)
     try {
       await updateDebt(debt.id, { remaining })
@@ -2253,9 +2291,10 @@ function DettesSection() {
       return
     }
     invalidateHistory(id)
-    await loadPayments()
-    const freshPayments = [...allPayments, { debtId: id, amount: amt, paidAt: payDate }]
-    const remaining = await syncRemaining(debt, freshPayments)
+    let fresh: PaymentRow[]
+    try { fresh = await loadPayments() }
+    catch { window.alert(REFRESH_FAILED); return }
+    const remaining = await syncRemaining(debt, fresh)
     if (debt.amount > 0 && remaining === 0 && !((debt as any).recurring ?? false)) setConfirmDeleteId(id)
     setPayingId(null); setPayAmount(''); setPayDate(new Date().toISOString().slice(0, 10)); setPayNote('')
   }
@@ -2270,9 +2309,11 @@ function DettesSection() {
       window.alert("Impossible de modifier le remboursement. Réessaie.")
       return
     }
-    await loadPayments()
+    let fresh: PaymentRow[]
+    try { fresh = await loadPayments() }
+    catch { window.alert(REFRESH_FAILED); return }
     const debt = debts.find(d => d.id === editingPayment.debtId)
-    if (debt) await syncRemaining(debt)
+    if (debt) await syncRemaining(debt, fresh)
     await reloadHistory(editingPayment.debtId)
     setEditingPayment(null)
   }
@@ -2284,13 +2325,23 @@ function DettesSection() {
       window.alert("Impossible de supprimer le remboursement. Réessaie.")
       return
     }
-    await loadPayments()
+    let fresh: PaymentRow[]
+    try { fresh = await loadPayments() }
+    catch { window.alert(REFRESH_FAILED); return }
     const debt = debts.find(d => d.id === h.debtId)
-    if (debt) await syncRemaining(debt)
+    if (debt) await syncRemaining(debt, fresh)
     await reloadHistory(h.debtId)
   }
 
   if (loading) return <div className="card text-center py-8 text-ink-soft">Chargement...</div>
+  if (loadError) {
+    return (
+      <div className="card text-center py-8 space-y-3">
+        <p className="text-sm text-danger">Impossible de charger tes dettes : {loadError}</p>
+        <button className="btn-ghost" onClick={loadAll}>Réessayer</button>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-3">
@@ -2627,6 +2678,7 @@ function suggestedMonthly(remaining: number, targetDate: string): number | null 
 function EpargneSection() {
   const [goals, setGoals] = useState<SavingsGoal[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(false)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [showConfetti, setShowConfetti] = useState(false)
@@ -2645,12 +2697,15 @@ function EpargneSection() {
   const [editDepDate, setEditDepDate] = useState('')
   const [form, setForm] = useState({ name: '', target: '', emoji: EMOJIS[0], targetDate: '' })
 
-  useEffect(() => {
+  function loadGoals() {
+    setLoading(true); setLoadError(null)
     getSavings()
       .then(setGoals)
-      .catch(() => window.alert('Impossible de charger tes objectifs. Réessaie.'))
+      .catch(e => setLoadError(e instanceof Error ? e.message : 'Erreur de chargement'))
       .finally(() => setLoading(false))
-  }, [])
+  }
+
+  useEffect(() => { loadGoals() }, [])
 
   const sortedGoals = [...goals].sort((a, b) => {
     const pctA = a.target > 0 ? a.saved / a.target : 0
@@ -2768,6 +2823,14 @@ function EpargneSection() {
   }
 
   if (loading) return <div className="card text-center py-8 text-ink-soft">Chargement...</div>
+  if (loadError) {
+    return (
+      <div className="card text-center py-8 space-y-3">
+        <p className="text-sm text-danger">Impossible de charger tes objectifs : {loadError}</p>
+        <button className="btn-ghost" onClick={loadGoals}>Réessayer</button>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-3">
