@@ -93,17 +93,6 @@ const DEFAULT_CATEGORIES = [
   'Vêtements', 'Éducation', 'Factures', 'Restaurants', 'Épargne', 'Autre'
 ]
 
-const CUSTOM_CATEGORIES_KEY = 'moneyapp_custom_categories'
-
-function loadCustomCategories(): string[] {
-  if (typeof window === 'undefined') return []
-  try { return JSON.parse(localStorage.getItem(CUSTOM_CATEGORIES_KEY) || '[]') }
-  catch { return [] }
-}
-function saveCustomCategories(cats: string[]) {
-  localStorage.setItem(CUSTOM_CATEGORIES_KEY, JSON.stringify(cats))
-}
-
 // "Autre" always stays last
 // "transport   SCOLAIRE" -> "Transport scolaire"
 function toProper(s: string): string {
@@ -180,27 +169,53 @@ async function renameCategoryEverywhere(oldName: string, newName: string): Promi
 }
 
 // Hook partagé par Transactions, Budget, Dettes et Factures
-function useCustomCategories(onChanged?: () => void) {
-  const [customCategories, setCustomCategories] = useState<string[]>(loadCustomCategories)
+function loadLegacyCustomCategories(): string[] {
+  if (typeof window === 'undefined') return []
+  try { return JSON.parse(localStorage.getItem('moneyapp_custom_categories') || '[]') }
+  catch { return [] }
+}
 
-  function addCustom(cat: string) {
+function useCustomCategories(onChanged?: () => void) {
+  const [customCategories, setCustomCategories] = useState<string[]>([])
+
+  useEffect(() => {
+    (async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+      const { data, error } = await supabase.from('custom_categories').select('name').eq('user_id', user.id)
+      if (error) { console.error(error); return }
+      let names = (data ?? []).map(r => r.name)
+
+      const legacy = loadLegacyCustomCategories().filter(
+        c => !names.some(n => n.toLowerCase() === c.toLowerCase())
+      )
+      if (legacy.length > 0) {
+        const { error: e2 } = await supabase.from('custom_categories')
+          .insert(legacy.map(name => ({ user_id: user.id, name })))
+        if (!e2) {
+          names = [...names, ...legacy]
+          localStorage.removeItem('moneyapp_custom_categories')
+        }
+      }
+      setCustomCategories(names)
+    })()
+  }, [])
+
+  async function addCustom(cat: string) {
     const proper = toProper(cat)
-    if (!proper) return
-    setCustomCategories(prev => {
-      if (prev.some(c => c.toLowerCase() === proper.toLowerCase())) return prev
-      const next = [...prev, proper]
-      saveCustomCategories(next)
-      return next
-    })
+    if (!proper || customCategories.some(c => c.toLowerCase() === proper.toLowerCase())) return
+    const { data: { user } } = await supabase.auth.getUser()
+    const { error } = await supabase.from('custom_categories').insert({ user_id: user!.id, name: proper })
+    if (error) { window.alert("Impossible d'ajouter la catégorie. Réessaie."); return }
+    setCustomCategories(prev => [...prev, proper])
   }
 
   async function removeCustom(cat: string) {
-    await reassignCategoryToAutre(cat) // si ça échoue, la catégorie n'est PAS supprimée
-    setCustomCategories(prev => {
-      const next = prev.filter(c => c !== cat)
-      saveCustomCategories(next)
-      return next
-    })
+    await reassignCategoryToAutre(cat)
+    const { data: { user } } = await supabase.auth.getUser()
+    const { error } = await supabase.from('custom_categories').delete().eq('user_id', user!.id).eq('name', cat)
+    if (error) throw error
+    setCustomCategories(prev => prev.filter(c => c !== cat))
     onChanged?.()
   }
 
@@ -211,12 +226,11 @@ function useCustomCategories(onChanged?: () => void) {
     const exists = [...DEFAULT_CATEGORIES, ...customCategories]
       .some(c => c !== oldName && c.toLowerCase() === proper.toLowerCase())
     if (exists) throw new Error('Cette catégorie existe déjà.')
-    await renameCategoryEverywhere(oldName, proper) // si ça échoue, rien n'est renommé
-    setCustomCategories(prev => {
-      const next = prev.map(c => (c === oldName ? proper : c))
-      saveCustomCategories(next)
-      return next
-    })
+    await renameCategoryEverywhere(oldName, proper)
+    const { data: { user } } = await supabase.auth.getUser()
+    const { error } = await supabase.from('custom_categories').update({ name: proper }).eq('user_id', user!.id).eq('name', oldName)
+    if (error) throw error
+    setCustomCategories(prev => prev.map(c => (c === oldName ? proper : c)))
     onChanged?.()
   }
 
@@ -1245,7 +1259,7 @@ function FacturesSection() {
   const [customFrom, setCustomFrom] = useState(toYMD(new Date()))
   const [customTo, setCustomTo] = useState(toYMD(new Date()))
 
-  // ← Catégories partagées (même clé localStorage que transactions/budget/dettes)
+  // ← Catégories partagées (Supabase, table custom_categories)
   const { customCategories, addCustom, removeCustom, renameCustom } = useCustomCategories(() => { loadFactures() })
 
   const [form, setForm] = useState({
@@ -1991,12 +2005,7 @@ function daysUntil(dateStr: string): number {
   const target = new Date(dateStr); target.setHours(0,0,0,0)
   return Math.round((target.getTime() - now.getTime()) / 86400000)
 }
-function projectedEndDate(remaining: number, minimumPayment: number): string | null {
-  if (!minimumPayment || minimumPayment <= 0 || remaining <= 0) return null
-  const months = Math.ceil(remaining / minimumPayment)
-  const d = new Date(); d.setMonth(d.getMonth() + months)
-  return d.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })
-}
+
 async function fetchHistory(debtId: string): Promise<DebtPaymentHistory[]> {
   const { data } = await supabase.from('debt_payment_history').select('*').eq('debt_id', debtId).order('paid_at', { ascending: false })
   return (data ?? []).map(r => ({ id: r.id, debtId: r.debt_id, amount: Number(r.amount), paidAt: r.paid_at, note: r.note ?? undefined, category: r.category ?? undefined }))
@@ -2214,6 +2223,38 @@ function DettesSection() {
     setHistoryMap(prev => ({ ...prev, [debtId]: h }))
   }
 
+  // Source de vérité : amount - somme des paiements. Pour une dette récurrente,
+  // on ne compte que les paiements DEPUIS le dernier "reset" (remise à zéro),
+  // repéré en rejouant l'historique.
+  function computeRemaining(debt: Debt, payments: { debtId: string; amount: number; paidAt: string }[]): number {
+    if (debt.amount <= 0) return 0
+    const mine = payments.filter(p => p.debtId === debt.id).sort((a, b) => a.paidAt.localeCompare(b.paidAt))
+    const isRecurring = (debt as any).recurring ?? false
+
+    if (!isRecurring) {
+      const paid = mine.reduce((s, p) => s + p.amount, 0)
+      return Math.max(0, debt.amount - paid)
+    }
+    // Récurrent : on "rejoue" les paiements et on remet à 0 dès que le cumul atteint amount
+    let running = 0
+    for (const p of mine) {
+      running += p.amount
+      if (running >= debt.amount) running = 0
+    }
+    return Math.max(0, debt.amount - running)
+  }
+
+  async function syncRemaining(debt: Debt, payments = allPayments) {
+    const remaining = computeRemaining(debt, payments)
+    try {
+      await updateDebt(debt.id, { remaining })
+      setDebts(prev => prev.map(d => d.id === debt.id ? { ...d, remaining } : d))
+    } catch {
+      window.alert("Impossible de mettre à jour le solde de la dette. Réessaie.")
+    }
+    return remaining
+  }
+
   async function handleAdd() {
     if (!form.person) return
     const debtData = {
@@ -2225,103 +2266,71 @@ function DettesSection() {
     } as any
 
     if (editingId) {
-        const newAmount = Number(form.amount) || debts.find(d => d.id === editingId)!.amount
-        try {
-          await updateDebt(editingId, { ...debtData, amount: newAmount })
-        } catch {
-          window.alert('Impossible de modifier la dette. Réessaie.')
-          return
-        }
-        const updated = { ...debts.find(d => d.id === editingId)!, ...debtData, amount: newAmount }
-        setDebts(prev => prev.map(d => d.id !== editingId ? d : updated))
-        await syncRemaining(updated) // recalcule depuis l'historique réel, pas depuis l'ancien solde
-      } else {
+      const newAmount = Number(form.amount) || debts.find(d => d.id === editingId)!.amount
+      try {
+        await updateDebt(editingId, { ...debtData, amount: newAmount })
+      } catch {
+        window.alert('Impossible de modifier la dette. Réessaie.')
+        return
+      }
+      const updated = { ...debts.find(d => d.id === editingId)!, ...debtData, amount: newAmount }
+      setDebts(prev => prev.map(d => d.id !== editingId ? d : updated))
+      await syncRemaining(updated) // recalcule depuis l'historique réel, pas depuis l'ancien solde
+    } else {
       const newDebt = await addDebt({ ...debtData, remaining: Number(form.amount) || 0 })
       setDebts(prev => [...prev, newDebt])
     }
     resetForm(); setShowForm(false)
   }
 
-  // Source de vérité : amount - somme des paiements. Pour une dette récurrente,
-// on ne compte que les paiements DEPUIS le dernier "reset" (remise à zéro),
-// repéré via la date du dernier paiement qui a soldé le cycle précédent.
-function computeRemaining(debt: Debt, allPayments: { debtId: string; amount: number; paidAt: string }[]): number {
-  if (debt.amount <= 0) return 0
-  const mine = allPayments.filter(p => p.debtId === debt.id).sort((a, b) => a.paidAt.localeCompare(b.paidAt))
-  const isRecurring = (debt as any).recurring ?? false
+  async function handlePay(id: string) {
+    const amt = Number(payAmount)
+    if (!amt || amt <= 0) return
+    const debt = debts.find(d => d.id === id)!
+    const debtCategory = (debt as any).category ?? 'Autre'
+    try {
+      await logPayment(id, amt, payDate, debtCategory, payNote)
+    } catch {
+      window.alert("Impossible d'enregistrer le remboursement. Réessaie.")
+      return
+    }
+    invalidateHistory(id)
+    await loadPayments()
+    const freshPayments = [...allPayments, { debtId: id, amount: amt, paidAt: payDate }]
+    const remaining = await syncRemaining(debt, freshPayments)
+    if (debt.amount > 0 && remaining === 0 && !((debt as any).recurring ?? false)) setConfirmDeleteId(id)
+    setPayingId(null); setPayAmount(''); setPayDate(new Date().toISOString().slice(0, 10)); setPayNote('')
+  }
 
-  if (!isRecurring) {
-    const paid = mine.reduce((s, p) => s + p.amount, 0)
-    return Math.max(0, debt.amount - paid)
+  async function handleEditPayment() {
+    if (!editingPayment) return
+    const newAmt = Number(editPayAmount)
+    if (!newAmt || newAmt <= 0) return
+    try {
+      await updatePayment(editingPayment.id, newAmt, editPayDate, editPayNote)
+    } catch {
+      window.alert("Impossible de modifier le remboursement. Réessaie.")
+      return
+    }
+    await loadPayments()
+    const debt = debts.find(d => d.id === editingPayment.debtId)
+    if (debt) await syncRemaining(debt)
+    await reloadHistory(editingPayment.debtId)
+    setEditingPayment(null)
   }
-  // Récurrent : on "rejoue" les paiements et on remet à 0 dès que le cumul atteint amount
-  let running = 0
-  for (const p of mine) {
-    running += p.amount
-    if (running >= debt.amount) running = 0
-  }
-  return Math.max(0, debt.amount - running)
-}
 
-async function syncRemaining(debt: Debt, payments = allPayments) {
-  const remaining = computeRemaining(debt, payments)
-  try {
-    await updateDebt(debt.id, { remaining })
-    setDebts(prev => prev.map(d => d.id === debt.id ? { ...d, remaining } : d))
-  } catch {
-    window.alert("Impossible de mettre à jour le solde de la dette. Réessaie.")
+  async function handleDeletePayment(h: DebtPaymentHistory) {
+    try {
+      await deletePayment(h.id)
+    } catch {
+      window.alert("Impossible de supprimer le remboursement. Réessaie.")
+      return
+    }
+    await loadPayments()
+    const debt = debts.find(d => d.id === h.debtId)
+    if (debt) await syncRemaining(debt)
+    await reloadHistory(h.debtId)
   }
-  return remaining
-}
-
-async function handlePay(id: string) {
-  const amt = Number(payAmount)
-  if (!amt || amt <= 0) return
-  const debt = debts.find(d => d.id === id)!
-  const debtCategory = (debt as any).category ?? 'Autre'
-  try {
-    await logPayment(id, amt, payDate, debtCategory, payNote)
-  } catch {
-    window.alert("Impossible d'enregistrer le remboursement. Réessaie.")
-    return
-  }
-  invalidateHistory(id)
-  await loadPayments()
-  const freshPayments = [...allPayments, { debtId: id, amount: amt, paidAt: payDate }]
-  const remaining = await syncRemaining(debt, freshPayments)
-  if (debt.amount > 0 && remaining === 0 && !((debt as any).recurring ?? false)) setConfirmDeleteId(id)
-  setPayingId(null); setPayAmount(''); setPayDate(new Date().toISOString().slice(0, 10)); setPayNote('')
-}
-
-async function handleEditPayment() {
-  if (!editingPayment) return
-  const newAmt = Number(editPayAmount)
-  if (!newAmt || newAmt <= 0) return
-  try {
-    await updatePayment(editingPayment.id, newAmt, editPayDate, editPayNote)
-  } catch {
-    window.alert("Impossible de modifier le remboursement. Réessaie.")
-    return
-  }
-  await loadPayments()
-  const debt = debts.find(d => d.id === editingPayment.debtId)
-  if (debt) await syncRemaining(debt)
-  await reloadHistory(editingPayment.debtId)
-  setEditingPayment(null)
-}
-
-async function handleDeletePayment(h: DebtPaymentHistory) {
-  try {
-    await deletePayment(h.id)
-  } catch {
-    window.alert("Impossible de supprimer le remboursement. Réessaie.")
-    return
-  }
-  await loadPayments()
-  const debt = debts.find(d => d.id === h.debtId)
-  if (debt) await syncRemaining(debt)
-  await reloadHistory(h.debtId)
-}
 
   if (loading) return <div className="card text-center py-8 text-ink-soft">Chargement...</div>
 
@@ -2446,7 +2455,7 @@ async function handleDeletePayment(h: DebtPaymentHistory) {
               const paidPct      = d.amount > 0 ? Math.round(((d.amount - d.remaining) / d.amount) * 100) : 0
               const isRecurring  = (d as any).recurring ?? false
               const debtCategory = (d as any).category ?? 'Autre'
-              const endDate      = projectedEndDate(d.remaining, d.minimumPayment)
+              const end          = debtEndLabel(d)
               const showHistory  = openHistoryId === d.id
               const debtHistory  = historyMap[d.id] ?? []
               const paidThisMonth = monthlyPaid[d.id] || 0
@@ -2478,7 +2487,11 @@ async function handleDeletePayment(h: DebtPaymentHistory) {
                             Min. <span className="font-semibold text-ink">{formatAmount(d.minimumPayment)}</span>/mois
                           </span>
                         )}
-                        {endDate && !isRecurring && <span className="text-xs text-ink-soft">Fin : <span className="font-semibold text-ink">{endDate}</span></span>}
+                        {end && !isRecurring && (
+                          end.neverEnds
+                            ? <span className="text-xs text-danger font-semibold">⚠️ Le minimum ne couvre pas les intérêts</span>
+                            : <span className="text-xs text-ink-soft">{end.text}</span>
+                        )}
                       </div>
                       {d.type === 'owe' && d.minimumPayment > 0 && (
                         <div className="mt-1.5">
@@ -2819,13 +2832,13 @@ function EpargneSection() {
                     {done && <span className="text-xs bg-positive text-white px-2 py-0.5 rounded-full font-bold">✅ Objectif atteint !</span>}
                   </div>
                   <p className="font-bold text-ink leading-tight">{g.name}</p>
-                    {targetDate && <p className="text-xs text-ink-soft mt-0.5">🎯 {new Date(targetDate).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })}</p>}
-                    {!done && <p className="text-xs text-ink-soft">{formatAmount(g.target - g.saved)} restant</p>}
-                    {!done && targetDate && (
-                      suggested
-                        ? <p className="text-xs text-accent font-semibold mt-0.5">💡 Mets {formatAmount(suggested)}/mois pour atteindre ton objectif à temps</p>
-                        : <p className="text-xs text-danger font-semibold mt-0.5">⏰ Date cible dépassée — objectif toujours actif</p>
-                    )}
+                  {targetDate && <p className="text-xs text-ink-soft mt-0.5">🎯 {new Date(targetDate).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })}</p>}
+                  {!done && <p className="text-xs text-ink-soft">{formatAmount(g.target - g.saved)} restant</p>}
+                  {!done && targetDate && (
+                    suggested
+                      ? <p className="text-xs text-accent font-semibold mt-0.5">💡 Mets {formatAmount(suggested)}/mois pour atteindre ton objectif à temps</p>
+                      : <p className="text-xs text-danger font-semibold mt-0.5">⏰ Date cible dépassée — objectif toujours actif</p>
+                  )}
                 </div>
               </div>
               <div className="flex gap-1 flex-shrink-0 ml-2">
