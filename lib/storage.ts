@@ -43,7 +43,7 @@ export interface SavingsGoal {
   target: number
   saved: number
   emoji: string
-  category: string        // ← nouveau
+  category: string
   createdAt: string
 }
 
@@ -52,7 +52,7 @@ export interface DebtPaymentHistory {
   debtId: string
   amount: number
   paidAt: string
-  category?: string       // ← nouveau (héritée de la dette)
+  category?: string
   createdAt: string
 }
 
@@ -67,7 +67,7 @@ export interface Debt {
   note: string
   dueDate?: string
   recurring: boolean
-  category: string        // ← nouveau (obligatoire)
+  category: string
   createdAt: string
 }
 
@@ -363,7 +363,8 @@ export async function addTransaction(tx: Omit<Transaction, 'id' | 'createdAt'>):
 }
 
 export async function deleteTransaction(id: string): Promise<void> {
-  await supabase.from('transactions').delete().eq('id', id)
+  const { error } = await supabase.from('transactions').delete().eq('id', id)
+  if (error) throw error
 }
 
 // ─── Budget ───────────────────────────────────────────────────────────────────
@@ -389,17 +390,19 @@ function mapBudget(r: any): BudgetCategory {
 export async function getBudgets(): Promise<BudgetCategory[]> {
   const userId = await getUserId()
 
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('budget_categories')
     .select('*')
     .eq('user_id', userId)
+  if (error) throw error   // sinon une erreur réseau recréerait les budgets par défaut en double
 
   if (!data || data.length === 0) {
     const toInsert = DEFAULT_BUDGETS.map(b => ({ ...b, user_id: userId }))
-    const { data: inserted } = await supabase
+    const { data: inserted, error: insertError } = await supabase
       .from('budget_categories')
       .insert(toInsert)
       .select()
+    if (insertError) throw insertError
     return (inserted ?? []).map(mapBudget)
   }
 
@@ -439,7 +442,8 @@ export async function updateBudget(
 }
 
 export async function deleteBudget(id: string): Promise<void> {
-  await supabase.from('budget_categories').delete().eq('id', id)
+  const { error } = await supabase.from('budget_categories').delete().eq('id', id)
+  if (error) throw error
 }
 
 // ─── Savings ──────────────────────────────────────────────────────────────────
@@ -486,11 +490,13 @@ export async function addSavingsGoal(g: Omit<SavingsGoal, 'id' | 'createdAt'>): 
 }
 
 export async function updateSavingsGoal(id: string, saved: number): Promise<void> {
-  await supabase.from('savings_goals').update({ saved }).eq('id', id)
+  const { error } = await supabase.from('savings_goals').update({ saved }).eq('id', id)
+  if (error) throw error
 }
 
 export async function deleteSavingsGoal(id: string): Promise<void> {
-  await supabase.from('savings_goals').delete().eq('id', id)
+  const { error } = await supabase.from('savings_goals').delete().eq('id', id)
+  if (error) throw error
 }
 
 // ─── Debts ────────────────────────────────────────────────────────────────────
@@ -571,11 +577,13 @@ export async function updateDebt(id: string, fields: Partial<Omit<Debt, 'id' | '
   if (fields.dueDate         !== undefined) update.due_date         = fields.dueDate
   if (fields.recurring       !== undefined) update.recurring        = fields.recurring
   if (fields.category        !== undefined) update.category         = fields.category
-  await supabase.from('debts').update(update).eq('id', id)
+  const { error } = await supabase.from('debts').update(update).eq('id', id)
+  if (error) throw error
 }
 
 export async function deleteDebt(id: string): Promise<void> {
-  await supabase.from('debts').delete().eq('id', id)
+  const { error } = await supabase.from('debts').delete().eq('id', id)
+  if (error) throw error
 }
 
 // ─── Debt Payment History ─────────────────────────────────────────────────────
@@ -603,12 +611,13 @@ export async function addDebtPaymentHistory(
   paidAt?: string,
   category?: string,
 ): Promise<void> {
-  await supabase.from('debt_payment_history').insert({
+  const { error } = await supabase.from('debt_payment_history').insert({
     debt_id:  debtId,
     amount,
     paid_at:  paidAt ?? new Date().toISOString().slice(0, 10),
     category: category ?? null,
   })
+  if (error) throw error
 }
 
 // ─── Recurring Payments ───────────────────────────────────────────────────────
