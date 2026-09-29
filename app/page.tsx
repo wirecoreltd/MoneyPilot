@@ -11,43 +11,61 @@ import HistoriqueTab from '../HistoriqueTab'
 import { ensureRecurring } from '@/lib/recurring'
 import { getTransactions, Transaction, getUserProfile, UserProfile } from '@/lib/storage'
 import { supabase } from '@/lib/supabase'
-import { LogOut } from "lucide-react"
+import { LogOut } from 'lucide-react'
 
 export type MoneySubTab = 'transactions' | 'budget' | 'dettes' | 'epargne' | 'factures' | 'revenus'
 
 export default function Page() {
   const [profile,      setProfile]      = useState<UserProfile | null>(null)
-  const [tab, setTab] = useState<Tab>('home') // identique côté serveur ET premier rendu client
-
-useEffect(() => {
-  const saved = localStorage.getItem('activeTab')
-  if (saved) setTab(saved as Tab)
-}, [])
+  const [tab,          setTab]          = useState<Tab>('home') // identique côté serveur ET premier rendu client
   const [moneySubTab,  setMoneySubTab]  = useState<MoneySubTab>('transactions')
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [loading,      setLoading]      = useState(true)
+  const [loadError,    setLoadError]    = useState<string | null>(null)
 
-  const refresh = useCallback(async () => {
-    const txs = await getTransactions()
-    setTransactions(txs)
+  // Restaure l'onglet actif après l'hydratation
+  useEffect(() => {
+    const saved = localStorage.getItem('activeTab')
+    if (saved) setTab(saved as Tab)
   }, [])
 
-  useEffect(() => {
-    async function init() {
-      const { data: { session } } = await supabase.auth.getSession()
+  const refresh = useCallback(async () => {
+    try {
+      const txs = await getTransactions()
+      setTransactions(txs)
+    } catch (e) {
+      console.error('Rafraîchissement des transactions échoué :', e)
+    }
+  }, [])
+
+  const init = useCallback(async () => {
+    setLoading(true)
+    setLoadError(null)
+    let redirecting = false
+    try {
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession()
+      if (sessionError) throw sessionError
       if (!session) {
+        redirecting = true
         window.location.href = '/login'
         return
       }
       try { await ensureRecurring(supabase, session.user.id) }
-catch (e) { console.error('Récurrents non générés :', e) } // ne bloque pas l'app
-const [p, txs] = await Promise.all([getUserProfile(), getTransactions()])
+      catch (e) { console.error('Récurrents non générés :', e) } // ne bloque pas l'app
+
+      const [p, txs] = await Promise.all([getUserProfile(), getTransactions()])
       setProfile(p)
       setTransactions(txs)
-      setLoading(false)
+    } catch (e) {
+      console.error('Chargement échoué :', e)
+      setProfile(null)
+      setLoadError(e instanceof Error && e.message ? e.message : 'Erreur de chargement')
+    } finally {
+      if (!redirecting) setLoading(false)
     }
-    init()
   }, [])
+
+  useEffect(() => { init() }, [init])
 
   function handleOnboardingComplete(p: UserProfile) {
     setProfile(p)
@@ -80,6 +98,22 @@ const [p, txs] = await Promise.all([getUserProfile(), getTransactions()])
     )
   }
 
+  // Échec de chargement : on n'affiche JAMAIS l'onboarding dans ce cas
+  if (loadError) {
+    return (
+      <div className="min-h-screen bg-mist flex items-center justify-center px-4">
+        <div className="card text-center py-8 space-y-3 max-w-sm w-full">
+          <p className="text-3xl">⚠️</p>
+          <p className="font-semibold text-ink">Impossible de charger tes données</p>
+          <p className="text-sm text-danger">{loadError}</p>
+          <button className="btn-primary w-full" onClick={init}>Réessayer</button>
+          <button className="btn-ghost w-full" onClick={handleSignOut}>Se déconnecter</button>
+        </div>
+      </div>
+    )
+  }
+
+  // Chargement réussi et profil réellement absent ou incomplet
   if (!profile?.completed) {
     return <Onboarding onComplete={handleOnboardingComplete} />
   }
