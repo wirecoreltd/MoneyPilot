@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { CalendarDays, ChevronDown, ChevronUp } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { formatAmount, currentYearMonth } from '@/lib/storage'
@@ -15,6 +15,7 @@ interface HistoriqueEvent {
   type: EventType
   label: string
   sublabel?: string
+  category?: string   // catégorie budgétaire (indépendante du sous-libellé affiché)
   amount: number
   isNegative: boolean
 }
@@ -66,6 +67,19 @@ function monthOptions() {
   })
 }
 
+// Déballe une réponse Supabase : lance une exception si la requête a échoué
+// (sinon une requête en erreur ressemble à « aucune donnée »).
+function ok<T>(res: { data: T | null; error: { message?: string } | null }): T {
+  if (res.error) throw res.error
+  return (res.data ?? []) as T
+}
+
+function errMsg(e: unknown): string {
+  if (e instanceof Error && e.message) return e.message
+  const m = (e as { message?: unknown } | null)?.message
+  return typeof m === 'string' && m ? m : 'Erreur de chargement'
+}
+
 // ─── Composant principal ──────────────────────────────────────────────────────
 
 export default function HistoriqueTab() {
@@ -77,9 +91,11 @@ export default function HistoriqueTab() {
   const [budgetStats, setBudgetStats] = useState<BudgetStat[]>([])
   const [projectCount, setProjectCount] = useState(0)
   const [loading, setLoading]         = useState(false)
+  const [error, setError]             = useState<string | null>(null)
   const [expandedDays, setExpandedDays] = useState<Set<string>>(new Set())
   const [activeFilter, setActiveFilter] = useState<FilterType>('all')
   const [showAll, setShowAll] = useState(false)
+  const seq = useRef(0)
 
   // ── Dates effectives ────────────────────────────────────────────────────────
   const { dateFrom, dateTo } = useMemo(() => {
@@ -93,128 +109,142 @@ export default function HistoriqueTab() {
 
   const canLoad = !!dateFrom && !!dateTo && dateFrom <= dateTo
 
-  useEffect(() => { if (canLoad) load() }, [dateFrom, dateTo])
-
   // ── Chargement ──────────────────────────────────────────────────────────────
-  async function load() {
+  const load = useCallback(async () => {
+    const mine = ++seq.current   // ignore les réponses d'une période déjà remplacée
     setLoading(true)
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) { setLoading(false); return }
-    const uid = user.id
-    const all: HistoriqueEvent[] = []
+    setError(null)
+    try {
+      const { data: { user }, error: authError } = await supabase.auth.getUser()
+      if (authError) throw authError
+      if (!user) throw new Error('Non authentifié')
+      const uid = user.id
+      const all: HistoriqueEvent[] = []
 
-    // 1. Transactions dépenses
-    const { data: txs } = await supabase
-      .from('transactions').select('id, amount, category, note, date')
-      .eq('user_id', uid).eq('type', 'expense').gte('date', dateFrom).lte('date', dateTo)
-    ;(txs ?? []).forEach(r => all.push({
-      id: r.id, date: toYMD(r.date), type: 'expense',
-      label: r.note || r.category, sublabel: r.category,
-      amount: Number(r.amount), isNegative: true,
-    }))
+      // 1. Transactions dépenses
+      const txs = ok(await supabase
+        .from('transactions').select('id, amount, category, note, date')
+        .eq('user_id', uid).eq('type', 'expense').gte('date', dateFrom).lte('date', dateTo))
+      txs.forEach((r: any) => all.push({
+        id: r.id, date: toYMD(r.date), type: 'expense',
+        label: r.note || r.category, sublabel: r.category, category: r.category,
+        amount: Number(r.amount), isNegative: true,
+      }))
 
-    // 2. Revenus
-    const { data: incomes } = await supabase
-      .from('monthly_incomes').select('id, label, amount, month, is_fixed')
-      .eq('user_id', uid).gte('month', dateFrom.slice(0,7)).lte('month', dateTo.slice(0,7))
-    ;(incomes ?? []).forEach(r => {
-      const day = `${r.month}-01`
-      if (day >= dateFrom && day <= dateTo) all.push({
-        id: r.id, date: day, type: 'income',
-        label: r.label, sublabel: r.is_fixed ? 'Fixe' : 'Variable',
-        amount: Number(r.amount), isNegative: false,
+      // 2. Revenus (à leur vraie date de réception, sinon au 1er du mois)
+      const incomes = ok(await supabase
+        .from('monthly_incomes').select('id, label, amount, month, is_fixed, received_at')
+        .eq('user_id', uid).gte('month', dateFrom.slice(0, 7)).lte('month', dateTo.slice(0, 7)))
+      incomes.forEach((r: any) => {
+        const day = r.received_at ? toYMD(r.received_at) : `${r.month}-01`
+        if (day >= dateFrom && day <= dateTo) all.push({
+          id: r.id, date: day, type: 'income',
+          label: r.label, sublabel: r.is_fixed ? 'Fixe' : 'Variable',
+          amount: Number(r.amount), isNegative: false,
+        })
       })
-    })
 
-    // 3. Factures payées
-    const { data: factures } = await supabase.from('factures').select('id, name, category').eq('user_id', uid)
-    const factureMap: Record<string, { name: string; category: string }> = {}
-    ;(factures ?? []).forEach(f => { factureMap[f.id] = { name: f.name, category: f.category } })
-    const factureIds = Object.keys(factureMap)
-    if (factureIds.length > 0) {
-      const { data: fph } = await supabase
-        .from('facture_payment_history').select('id, facture_id, amount, paid_at, note')
-        .in('facture_id', factureIds).gte('paid_at', dateFrom).lte('paid_at', dateTo)
-      ;(fph ?? []).forEach(r => {
-        const f = factureMap[r.facture_id]
-        all.push({ id: r.id, date: toYMD(r.paid_at), type: 'facture',
-          label: f?.name ?? 'Facture', sublabel: f?.category,
-          amount: Number(r.amount), isNegative: true })
-      })
-    }
-
-    // 4. Remboursements dettes
-    const { data: userDebts } = await supabase.from('debts').select('id, person, category').eq('user_id', uid)
-    const debtMap: Record<string, { person: string; category: string }> = {}
-    ;(userDebts ?? []).forEach(d => { debtMap[d.id] = { person: d.person, category: d.category } })
-    const debtIds = Object.keys(debtMap)
-    if (debtIds.length > 0) {
-      const { data: dph } = await supabase
-        .from('debt_payment_history').select('id, debt_id, amount, paid_at, note, category')
-        .in('debt_id', debtIds).gte('paid_at', dateFrom).lte('paid_at', dateTo)
-      ;(dph ?? []).forEach(r => {
-        const d = debtMap[r.debt_id]
-        all.push({ id: r.id, date: toYMD(r.paid_at), type: 'dette',
-          label: d?.person ?? 'Dette', sublabel: r.note || r.category || d?.category,
-          amount: Number(r.amount), isNegative: true })
-      })
-    }
-
-    // 5. Épargne — depuis savings_goals directement
-    const { data: goals } = await supabase
-      .from('savings_goals').select('id, name, saved, created_at')
-      .eq('user_id', uid)
-    ;(goals ?? []).forEach(g => {
-      const day = toYMD(g.created_at)
-      if (day >= dateFrom && day <= dateTo && Number(g.saved) > 0) {
-        all.push({
-          id: g.id, date: day, type: 'epargne',
-          label: g.name, sublabel: 'Épargne',
-          amount: Number(g.saved), isNegative: true,
+      // 3. Factures payées
+      const factures = ok(await supabase.from('factures').select('id, name, category').eq('user_id', uid))
+      const factureMap: Record<string, { name: string; category: string }> = {}
+      factures.forEach((f: any) => { factureMap[f.id] = { name: f.name, category: f.category } })
+      const factureIds = Object.keys(factureMap)
+      if (factureIds.length > 0) {
+        const fph = ok(await supabase
+          .from('facture_payment_history').select('id, facture_id, amount, paid_at, note')
+          .in('facture_id', factureIds).gte('paid_at', dateFrom).lte('paid_at', dateTo))
+        fph.forEach((r: any) => {
+          const f = factureMap[r.facture_id]
+          all.push({ id: r.id, date: toYMD(r.paid_at), type: 'facture',
+            label: f?.name ?? 'Facture', sublabel: f?.category, category: f?.category,
+            amount: Number(r.amount), isNegative: true })
         })
       }
-    })
 
-    // 6. Budget — on prend le mois de dateFrom pour les stats
-    const ym = dateFrom.slice(0, 7)
-    const { data: budgets } = await supabase.from('budget_categories').select('id, name, limit, color').eq('user_id', uid)
-    if ((budgets ?? []).length > 0) {
-      // Dépenses par catégorie sur la période
-      const spentMap: Record<string, number> = {}
-      all.filter(e => e.type === 'expense').forEach(e => {
-        if (e.sublabel) spentMap[e.sublabel] = (spentMap[e.sublabel] || 0) + e.amount
-      })
-      // Ajouter factures payées par catégorie
-      all.filter(e => e.type === 'facture').forEach(e => {
-        if (e.sublabel) spentMap[e.sublabel] = (spentMap[e.sublabel] || 0) + e.amount
-      })
-      // Ajouter remboursements dettes par catégorie
-      all.filter(e => e.type === 'dette').forEach(e => {
-        if (e.sublabel) spentMap[e.sublabel] = (spentMap[e.sublabel] || 0) + e.amount
-      })
-      setBudgetStats((budgets ?? []).map(b => ({
-        name: b.name,
-        limit: Number(b.limit),
-        spent: spentMap[b.name] || 0,
-        respected: (spentMap[b.name] || 0) <= Number(b.limit),
-      })))
-    } else {
-      setBudgetStats([])
+      // 4. Remboursements dettes
+      const userDebts = ok(await supabase.from('debts').select('id, person, category').eq('user_id', uid))
+      const debtMap: Record<string, { person: string; category: string }> = {}
+      userDebts.forEach((d: any) => { debtMap[d.id] = { person: d.person, category: d.category } })
+      const debtIds = Object.keys(debtMap)
+      if (debtIds.length > 0) {
+        const dph = ok(await supabase
+          .from('debt_payment_history').select('id, debt_id, amount, paid_at, note, category')
+          .in('debt_id', debtIds).gte('paid_at', dateFrom).lte('paid_at', dateTo))
+        dph.forEach((r: any) => {
+          const d = debtMap[r.debt_id]
+          all.push({ id: r.id, date: toYMD(r.paid_at), type: 'dette',
+            label: d?.person ?? 'Dette', sublabel: r.note || r.category || d?.category,
+            category: r.category || d?.category,
+            amount: Number(r.amount), isNegative: true })
+        })
+      }
+
+      // 5. Épargne — vrais mouvements (dépôts / retraits) de la période
+      const goals = ok(await supabase.from('savings_goals').select('id, name').eq('user_id', uid))
+      const goalMap: Record<string, string> = {}
+      goals.forEach((g: any) => { goalMap[g.id] = g.name })
+      const goalIds = Object.keys(goalMap)
+      if (goalIds.length > 0) {
+        const deps = ok(await supabase
+          .from('savings_deposits').select('id, goal_id, amount, is_withdrawal, note, deposited_at')
+          .in('goal_id', goalIds).gte('deposited_at', dateFrom).lte('deposited_at', dateTo))
+        deps.forEach((r: any) => {
+          const withdrawal = !!r.is_withdrawal
+          all.push({
+            id: r.id, date: toYMD(r.deposited_at), type: 'epargne',
+            label: goalMap[r.goal_id] ?? 'Épargne',
+            sublabel: r.note || (withdrawal ? 'Retrait' : 'Dépôt'),
+            amount: Number(r.amount),
+            isNegative: !withdrawal,   // un dépôt sort de ta poche, un retrait y revient
+          })
+        })
+      }
+
+      // 6. Budget — dépenses de la période par catégorie
+      const budgets = ok(await supabase.from('budget_categories').select('id, name, limit, color').eq('user_id', uid))
+      let stats: BudgetStat[] = []
+      if (budgets.length > 0) {
+        const spentMap: Record<string, number> = {}
+        all.filter(e => (e.type === 'expense' || e.type === 'facture' || e.type === 'dette') && e.category)
+          .forEach(e => { spentMap[e.category!] = (spentMap[e.category!] || 0) + e.amount })
+        stats = budgets.map((b: any) => ({
+          name: b.name,
+          limit: Number(b.limit),
+          spent: spentMap[b.name] || 0,
+          respected: (spentMap[b.name] || 0) <= Number(b.limit),
+        }))
+      }
+
+      // 7. Projets — juste le count
+      const { count, error: projError } = await supabase
+        .from('projects').select('id', { count: 'exact', head: true }).eq('user_id', uid)
+      if (projError) throw projError
+
+      all.sort((a, b) => b.date.localeCompare(a.date))
+
+      if (mine !== seq.current) return
+      setEvents(all)
+      setBudgetStats(stats)
+      setProjectCount(count ?? 0)
+    } catch (e) {
+      console.error("Chargement de l'historique échoué :", e)
+      if (mine === seq.current) setError(errMsg(e))
+    } finally {
+      if (mine === seq.current) setLoading(false)
     }
+  }, [dateFrom, dateTo])
 
-    // 7. Projets — juste le count
-    const { count } = await supabase.from('projects').select('id', { count: 'exact', head: true }).eq('user_id', uid)
-    setProjectCount(count ?? 0)
-
-    all.sort((a, b) => b.date.localeCompare(a.date))
-    setEvents(all)
-    setLoading(false)
-  }
+  useEffect(() => {
+    if (canLoad) load()
+  }, [canLoad, load])
 
   // ── Calculs ─────────────────────────────────────────────────────────────────
   const totals = useMemo(() => {
     const t = { expense: 0, income: 0, facture: 0, dette: 0, epargne: 0 }
-    for (const e of events) t[e.type] += e.amount
+    for (const e of events) {
+      if (e.type === 'epargne') t.epargne += e.isNegative ? e.amount : -e.amount  // dépôts − retraits
+      else t[e.type] += e.amount
+    }
     return t
   }, [events])
 
@@ -224,7 +254,7 @@ export default function HistoriqueTab() {
   const budgetSpent     = budgetStats.reduce((s, b) => s + b.spent, 0)
   const budgetLimit     = budgetStats.reduce((s, b) => s + b.limit, 0)
 
- const filtered = useMemo(() => {
+  const filtered = useMemo(() => {
     if (activeFilter === 'all' || activeFilter === 'budget' || activeFilter === 'projet') return [...events]
     return events.filter(e => e.type === activeFilter)
   }, [events, activeFilter])
@@ -260,6 +290,7 @@ export default function HistoriqueTab() {
   }
 
   // ── 7 cartes config ─────────────────────────────────────────────────────────
+  const epargneCount = events.filter(e => e.type === 'epargne').length
   const CARDS: {
     id: FilterType
     emoji: string
@@ -308,7 +339,7 @@ export default function HistoriqueTab() {
     {
       id: 'epargne', emoji: '🪙', label: 'Épargne',
       value: `${formatAmount(totals.epargne)}`,
-      sub: `${events.filter(e => e.type === 'epargne').length} dépôt${events.filter(e => e.type === 'epargne').length > 1 ? 's' : ''}`,
+      sub: `${epargneCount} mouvement${epargneCount > 1 ? 's' : ''}`,
       activeBg: 'bg-accent', activeText: 'text-white',
       inactiveBg: 'bg-accent-light', inactiveBorder: 'border-blue-200', inactiveText: 'text-accent',
       showAlways: true,
@@ -375,8 +406,16 @@ export default function HistoriqueTab() {
         </div>
       )}
 
+      {/* ── Erreur de chargement ── */}
+      {canLoad && error && !loading && (
+        <div className="card text-center py-8 space-y-3">
+          <p className="text-sm text-danger">Impossible de charger l'historique : {error}</p>
+          <button className="btn-ghost" onClick={load}>Réessayer</button>
+        </div>
+      )}
+
       {/* ── 7 cartes cliquables ── */}
-      {canLoad && !loading && (
+      {canLoad && !loading && !error && (
         <div className="grid grid-cols-2 gap-2">
           {CARDS.map(card => {
             const isActive = activeFilter === card.id
@@ -423,7 +462,7 @@ export default function HistoriqueTab() {
       )}
 
       {/* Filtre actif → détail budget ou liste */}
-      {activeFilter === 'budget' && budgetStats.length > 0 && (
+      {!error && activeFilter === 'budget' && budgetStats.length > 0 && (
         <div className="card space-y-2">
           <p className="text-xs font-bold text-ink-soft uppercase tracking-wide">Détail par catégorie</p>
           {budgetStats.map(b => {
@@ -448,7 +487,7 @@ export default function HistoriqueTab() {
         </div>
       )}
 
-      {activeFilter === 'projet' && (
+      {!error && activeFilter === 'projet' && (
         <div className="card text-center py-6">
           <p className="text-3xl mb-2">🚀</p>
           <p className="text-sm font-semibold text-ink">{projectCount} projet{projectCount > 1 ? 's' : ''} actif{projectCount > 1 ? 's' : ''}</p>
@@ -457,8 +496,7 @@ export default function HistoriqueTab() {
       )}
 
       {/* Bande filtre actif (hors budget/projet) */}
-      {/* Bande filtre actif (hors budget/projet) */}
-      {activeFilter !== 'all' && activeFilter !== 'budget' && activeFilter !== 'projet' && (
+      {!error && activeFilter !== 'all' && activeFilter !== 'budget' && activeFilter !== 'projet' && (
         <div className="flex items-center justify-between px-3 py-2 bg-mist rounded-xl">
           <p className="text-xs text-ink-soft">
             Filtre : <strong className="text-ink">{TYPE_CONFIG[activeFilter].emoji} {TYPE_CONFIG[activeFilter].label}</strong>
@@ -484,7 +522,7 @@ export default function HistoriqueTab() {
           <p className="text-sm text-ink-soft">Chargement...</p>
         </div>
       )}
-      {canLoad && !loading && events.length === 0 && (
+      {canLoad && !loading && !error && events.length === 0 && (
         <div className="card text-center py-10">
           <p className="text-3xl mb-2">🕳️</p>
           <p className="font-semibold text-ink">Aucune opération sur cette période</p>
@@ -492,13 +530,13 @@ export default function HistoriqueTab() {
         </div>
       )}
 
-      {/* ── Liste groupée par jour ── */}      
-      {!loading && activeFilter !== 'all' && activeFilter !== 'budget' && activeFilter !== 'projet' && dayGroups.length > 0 && (
+      {/* ── Liste groupée par jour ── */}
+      {!loading && !error && activeFilter !== 'all' && activeFilter !== 'budget' && activeFilter !== 'projet' && dayGroups.length > 0 && (
         <div className="space-y-2">
           {dayGroups.map(group => {
-           const isOpen = expandedDays.has(group.date)
+            const isOpen = expandedDays.has(group.date)
             const dayTotal = group.events.reduce((s, e) => e.isNegative ? s - e.amount : s + e.amount, 0)
-          
+
             return (
               <div key={group.date} className="rounded-2xl border border-mist-dark overflow-hidden bg-white">
                 <button
@@ -514,7 +552,7 @@ export default function HistoriqueTab() {
                       <p className="text-xs text-ink-soft">{group.events.length} opération{group.events.length > 1 ? 's' : ''}</p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 flex-shrink-0">                    
+                  <div className="flex items-center gap-2 flex-shrink-0">
                     <span className={`font-mono text-sm font-bold ${dayTotal >= 0 ? 'text-positive' : 'text-danger'}`}>
                       {dayTotal >= 0 ? '+' : '−'}{formatAmount(Math.abs(dayTotal))}
                     </span>
