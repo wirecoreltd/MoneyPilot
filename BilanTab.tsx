@@ -1,3 +1,4 @@
+'use client'
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis,
@@ -270,7 +271,6 @@ function ChecklistSection({
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
         <p style={{ fontSize: 12, color: "#8896B0" }}>{paidCount}/{checklist.length} payés</p>
-        <button style={{ width: 34, height: 34, borderRadius: 12, background: "#EFF6FF", color: "#2563EB", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>+</button>
       </div>
       {checklist.length === 0 && (
         <p style={{ fontSize: 13, color: "#8896B0", textAlign: "center", padding: "12px 0" }}>Aucune charge récurrente ou dette à suivre ce mois-ci</p>
@@ -411,6 +411,10 @@ function IncomeList({
     try {
       await onAdd(data);
       setShowForm(false);
+    } catch (e) {
+      console.error("Ajout du revenu échoué :", e);
+      window.alert("Impossible d'ajouter le revenu. Réessaie.");
+      // le formulaire reste ouvert pour ne pas perdre la saisie
     } finally {
       setSaving(false);
     }
@@ -514,6 +518,7 @@ export default function BilanDashboard({ transactions = [] }: { transactions?: T
   const month = currentYearMonth();
 
   const loadAll = useCallback(async () => {
+    setLoading(true);
     setError(null);
     try {
       const [d, s, i, p, r, c] = await Promise.all([
@@ -542,22 +547,42 @@ export default function BilanDashboard({ transactions = [] }: { transactions?: T
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Recharge la checklist sans jamais lancer d'exception (utilisé dans les rollbacks)
+  async function reloadChecklistSafe() {
+    try {
+      setChecklist(await getMonthlyChecklist(month));
+    } catch (e) {
+      console.error("Rechargement de la checklist échoué :", e);
+    }
+  }
+
   async function toggleItem(item: ChecklistItem) {
+    const sameItem = (c: ChecklistItem) => c.id === item.id && c.source === item.source;
+
     // Mise à jour optimiste de l'UI
-    setChecklist((prev) => prev.map((c) => (c.id === item.id ? { ...c, paid: !c.paid } : c)));
+    setChecklist((prev) => prev.map((c) => (sameItem(c) ? { ...c, paid: !c.paid } : c)));
     try {
       if (item.source === "recurring") {
         await toggleRecurringPayment(item.id, month);
       } else {
         await toggleDebtPayment(item.id, month);
       }
-      // Resynchronise avec la base (montants/dette soldée peuvent changer)
+    } catch (e) {
+      console.error("Changement de statut échoué :", e);
+      // Rollback + message
+      setChecklist((prev) => prev.map((c) => (sameItem(c) ? { ...c, paid: item.paid } : c)));
+      window.alert("Impossible de mettre à jour ce paiement. Réessaie.");
+      return;
+    }
+
+    // Resynchronise avec la base (montants / dette soldée peuvent changer).
+    // Si ça échoue, l'écriture a quand même réussi : on ne fait pas de rollback.
+    try {
       const [c, d] = await Promise.all([getMonthlyChecklist(month), getDebts()]);
       setChecklist(c);
       setDebts(d);
     } catch (e) {
-      // Rollback en cas d'échec
-      setChecklist((prev) => prev.map((c) => (c.id === item.id ? { ...c, paid: item.paid } : c)));
+      console.error("Resynchronisation échouée :", e);
     }
   }
 
@@ -566,9 +591,9 @@ export default function BilanDashboard({ transactions = [] }: { transactions?: T
     try {
       await deleteRecurringPayment(id);
     } catch (e) {
-      // En cas d'échec, on recharge l'état réel depuis la base
-      const c = await getMonthlyChecklist(month);
-      setChecklist(c);
+      console.error("Suppression du paiement récurrent échouée :", e);
+      window.alert("Impossible de supprimer ce paiement récurrent. Réessaie.");
+      await reloadChecklistSafe();
     }
   }
 
@@ -577,11 +602,17 @@ export default function BilanDashboard({ transactions = [] }: { transactions?: T
     try {
       await deleteMonthlyIncome(id);
     } catch (e) {
-      const i = await getMonthlyIncomes(month);
-      setIncomes(i);
+      console.error("Suppression du revenu échouée :", e);
+      window.alert("Impossible de supprimer ce revenu. Réessaie.");
+      try {
+        setIncomes(await getMonthlyIncomes(month));
+      } catch (e2) {
+        console.error("Rechargement des revenus échoué :", e2);
+      }
     }
   }
 
+  // Lance une exception en cas d'échec : IncomeList l'attrape et affiche l'alerte
   async function handleAddIncome(data: { label: string; amount: number; isFixed: boolean }) {
     const created = await addMonthlyIncome({
       label: data.label,
