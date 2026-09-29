@@ -1,6 +1,6 @@
 'use client'
 import { useState, useRef, useEffect } from 'react'
-import { Plus, X, MessageCircle, Send, ChevronRight, AlertCircle, Clock, Target, CheckCircle2 } from 'lucide-react'
+import { Plus, X, MessageCircle, Send, ChevronRight, AlertCircle, Clock, Target } from 'lucide-react'
 import {
   Transaction, TransactionType, EXPENSE_CATEGORIES, INCOME_CATEGORIES,
   BudgetCategory, addTransaction, getBudgets, formatAmount, UserProfile,
@@ -41,11 +41,116 @@ const emptyForm = {
   date: new Date().toISOString().slice(0, 10),
 }
 
-// Montant tant que les chiffres ne sont pas chargés -> « — »
+const DAILY_THOUGHTS = [
+  "Chaque petit pas que tu fais aujourd'hui compte, sois fier du chemin parcouru.",
+  "Prendre soin de tes finances, c'est aussi prendre soin de toi. Respire, tu avances bien.",
+  "Tu n'as pas besoin d'être parfait, juste un peu meilleur qu'hier.",
+  "Les erreurs d'argent ne définissent pas ta valeur. Continue d'apprendre, c'est déjà énorme.",
+  "Aujourd'hui, accorde-toi un moment de gratitude pour tout ce que tu as déjà construit.",
+  "La discipline d'aujourd'hui est la liberté de demain, mais profite aussi de l'instant présent.",
+  "Prends soin de ta santé mentale autant que de ton portefeuille, les deux comptent.",
+  "Tu fais de ton mieux avec ce que tu as, et c'est largement suffisant.",
+  "Un sourire offert aujourd'hui ne coûte rien et vaut une fortune.",
+  "Ta famille et tes proches sont ta vraie richesse, n'oublie pas de leur dire.",
+  "Le repos n'est pas une perte de temps, c'est un investissement sur toi-même.",
+  "Sois patient avec toi-même, les grandes réussites prennent du temps.",
+  "Chaque jour est une nouvelle occasion de devenir la meilleure version de toi-même.",
+  "La gratitude transforme ce que tu as en suffisance.",
+  "Tu as déjà surmonté des défis difficiles, tu peux affronter celui d'aujourd'hui aussi.",
+  "Prendre un instant pour souffler aujourd'hui n'est pas une faiblesse, c'est de la sagesse.",
+  "Aide quelqu'un aujourd'hui, même un petit geste peut changer sa journée.",
+  "Tu n'es pas en retard dans ta vie, tu suis ton propre chemin.",
+  "Célèbre tes petites victoires, elles construisent les grandes.",
+  "Avoir confiance en toi aujourd'hui, c'est déjà un cadeau que tu te fais.",
+  "Le bonheur se trouve souvent dans les choses simples : un café chaud, un rire partagé.",
+  "Tu mérites autant de bienveillance envers toi-même que celle que tu donnes aux autres.",
+  "Avance à ton rythme, ce qui compte c'est la direction, pas la vitesse.",
+  "Prends le temps d'apprécier les gens qui t'entourent aujourd'hui.",
+  "Ce n'est pas grave de ne pas tout savoir, l'important est d'essayer.",
+  "Ton bien-être d'aujourd'hui prépare ta sérénité de demain.",
+  "Respire profondément, tu fais déjà beaucoup mieux que tu ne le penses.",
+  "La bienveillance envers toi-même est le point de départ de tout le reste.",
+  "Chaque effort que tu fais, même invisible, te rapproche de tes objectifs.",
+  "Aujourd'hui est une bonne journée pour être fier de qui tu es en train de devenir.",
+]
+
+function getDailyThought(): string {
+  const start = new Date(new Date().getFullYear(), 0, 0)
+  const dayOfYear = Math.floor((Date.now() - start.getTime()) / 86400000)
+  return DAILY_THOUGHTS[dayOfYear % DAILY_THOUGHTS.length]
+}
+
 const amt = (v: number | undefined) => (v === undefined ? '—' : formatAmount(v))
 const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0)
 
-// ─── Chat coach (inchangé, isolé dans son composant) ──────────────────────────
+function useCountUp(target: number, duration = 900) {
+  const [value, setValue] = useState(0)
+  const raf = useRef<number | null>(null)
+  useEffect(() => {
+    let start: number | null = null
+    const animate = (ts: number) => {
+      if (!start) start = ts
+      const progress = Math.min((ts - start) / duration, 1)
+      setValue(Math.round((1 - Math.pow(1 - progress, 3)) * target))
+      if (progress < 1) raf.current = requestAnimationFrame(animate)
+    }
+    raf.current = requestAnimationFrame(animate)
+    return () => { if (raf.current) cancelAnimationFrame(raf.current) }
+  }, [target, duration])
+  return value
+}
+
+function HealthArc({ score, color }: { score: number; color: string }) {
+  const animated = useCountUp(score)
+  const R = 54, cx = 64, cy = 64
+  const toRad = (a: number) => (a * Math.PI) / 180
+  const startAngle = -210, endAngle = 30
+  const arcX = (a: number) => cx + R * Math.cos(toRad(a))
+  const arcY = (a: number) => cy + R * Math.sin(toRad(a))
+  const fillAngle = startAngle + (animated / 100) * (endAngle - startAngle)
+  const trackD = `M ${arcX(startAngle)} ${arcY(startAngle)} A ${R} ${R} 0 1 1 ${arcX(endAngle)} ${arcY(endAngle)}`
+  const fillD = animated > 0
+    ? `M ${arcX(startAngle)} ${arcY(startAngle)} A ${R} ${R} 0 ${fillAngle - startAngle > 180 ? 1 : 0} 1 ${arcX(fillAngle)} ${arcY(fillAngle)}`
+    : null
+  return (
+    <svg width="112" height="84" viewBox="0 0 128 96" style={{ overflow: 'visible' }}>
+      <path d={trackD} fill="none" stroke="#E8EAF0" strokeWidth={8} strokeLinecap="round" />
+      {fillD && <path d={fillD} fill="none" stroke={color} strokeWidth={8} strokeLinecap="round" />}
+      <text x={cx} y={cy + 6} textAnchor="middle" fontSize={28} fontWeight={800} fill={color} fontFamily="monospace">{animated}</text>
+      <text x={cx} y={cy + 20} textAnchor="middle" fontSize={10} fill="#8896B0">/100</text>
+    </svg>
+  )
+}
+
+// ─── Tuile chiffre : blanche, une info + un contexte, barre facultative ───────
+
+function Tile({ icon, label, value, sub, pct, onClick, wide }: {
+  icon: string; label: string; value: string; sub?: string
+  pct?: number; onClick: () => void; wide?: boolean
+}) {
+  return (
+    <button onClick={onClick}
+      className={`card text-left active:scale-95 transition-all ${wide ? 'col-span-2' : ''}`}>
+      <div className="flex items-center justify-between mb-1.5">
+        <div className="flex items-center gap-1.5">
+          <span className="text-sm">{icon}</span>
+          <p className="text-[11px] font-semibold text-ink-soft">{label}</p>
+        </div>
+        <ChevronRight size={12} className="text-ink-soft opacity-50" />
+      </div>
+      <p className="text-lg font-bold font-mono text-ink">{value}</p>
+      {pct !== undefined && (
+        <div className="w-full h-1.5 bg-mist-dark rounded-full overflow-hidden mt-2">
+          <div className={`h-full rounded-full transition-all duration-700 ${pct >= 100 ? 'bg-positive' : 'bg-accent'}`}
+            style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} />
+        </div>
+      )}
+      {sub && <p className="text-[11px] text-ink-soft mt-1">{sub}</p>}
+    </button>
+  )
+}
+
+// ─── Chat coach ───────────────────────────────────────────────────────────────
 
 function CoachChat({ onClose }: { onClose: () => void }) {
   const [input, setInput] = useState('')
@@ -63,7 +168,6 @@ function CoachChat({ onClose }: { onClose: () => void }) {
     setMessages(next)
     setLoading(true)
     try {
-      // Le contexte financier est construit côté serveur : on n'envoie que la conversation.
       const { reply } = await authedPost<{ reply: string }>('/api/coach-chat', { messages: next })
       setMessages(prev => [...prev, { role: 'assistant', content: reply }])
     } catch (e) {
@@ -78,9 +182,7 @@ function CoachChat({ onClose }: { onClose: () => void }) {
       <div className="bg-white rounded-t-3xl w-full max-w-lg flex flex-col" style={{ height: '80vh' }}>
         <div className="flex items-center justify-between p-5 border-b border-mist-dark">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-accent flex items-center justify-center">
-              <span className="text-xl">🤖</span>
-            </div>
+            <div className="w-10 h-10 rounded-2xl bg-accent flex items-center justify-center"><span className="text-xl">🤖</span></div>
             <div>
               <p className="font-bold text-ink text-sm">Coach IA</p>
               <p className="text-xs text-positive">● En ligne</p>
@@ -97,36 +199,28 @@ function CoachChat({ onClose }: { onClose: () => void }) {
               <div className="mt-4 space-y-2">
                 {['Est-ce que je peux me permettre une voiture à crédit ?', 'Comment réduire mes dépenses ce mois ?', 'Quelle dette rembourser en premier ?'].map(q => (
                   <button key={q} onClick={() => setInput(q)}
-                    className="block w-full text-left text-xs bg-mist text-ink-soft p-3 rounded-2xl hover:bg-mist-dark transition-colors">
-                    {q}
-                  </button>
+                    className="block w-full text-left text-xs bg-mist text-ink-soft p-3 rounded-2xl hover:bg-mist-dark transition-colors">{q}</button>
                 ))}
               </div>
             </div>
           )}
           {messages.map((m, i) => (
             <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-              <div className={`max-w-[80%] p-3 rounded-2xl text-sm leading-relaxed
-                ${m.role === 'user' ? 'bg-accent text-white rounded-br-sm' : 'bg-mist text-ink rounded-bl-sm'}`}>
-                {m.content}
-              </div>
+              <div className={`max-w-[80%] p-3 rounded-2xl text-sm leading-relaxed ${m.role === 'user' ? 'bg-accent text-white rounded-br-sm' : 'bg-mist text-ink rounded-bl-sm'}`}>{m.content}</div>
             </div>
           ))}
           {loading && (
             <div className="flex justify-start">
               <div className="bg-mist p-3 rounded-2xl rounded-bl-sm flex gap-1">
-                {[0, 1, 2].map(i => (
-                  <div key={i} className="w-2 h-2 rounded-full bg-ink-soft animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />
-                ))}
+                {[0, 1, 2].map(i => <div key={i} className="w-2 h-2 rounded-full bg-ink-soft animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />)}
               </div>
             </div>
           )}
           <div ref={endRef} />
         </div>
         <div className="p-4 border-t border-mist-dark flex gap-2">
-          <input className="input flex-1" placeholder="Pose ta question..."
-            value={input} onChange={e => setInput(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && send()} />
+          <input className="input flex-1" placeholder="Pose ta question..." value={input}
+            onChange={e => setInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && send()} />
           <button onClick={send} disabled={!input.trim() || loading}
             className="w-12 h-12 rounded-2xl bg-accent text-white flex items-center justify-center disabled:opacity-40 active:scale-95 transition-all flex-shrink-0">
             <Send size={18} />
@@ -150,20 +244,26 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
   const { snapshot, summary, health, plan, error, reload } = useMonthSummary(ym, transactions)
 
   // Plafonds : même règle que l'onglet Budget (cycle courant de chaque plafond)
-  useEffect(() => {
-    getBudgets().then(setBudgets).catch(e => console.error('Budgets:', e))
-  }, [])
+  useEffect(() => { getBudgets().then(setBudgets).catch(e => console.error('Budgets:', e)) }, [])
   const { lines } = useSpendingLines(earliestCycleStart(budgets), transactions)
   const budgetStatuses = computeBudgetStatuses(budgets, lines)
 
   const categories = form.type === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES
   const projects = snapshot?.projects ?? []
+  const recent = transactions.slice(0, 3)
 
-  // ── Reste à vivre + barre « dépensé / revenus » ──
+  const healthScore = health?.score ?? 0
+  const healthColor = health?.color ?? '#8896B0'
+  const healthLabel = health?.label ?? 'Chargement…'
+
   const free = summary?.remainingToLive
   const freeIsNegative = free !== undefined && free < 0
   const hasIncome = !!summary && summary.income > 0
   const spentPct = hasIncome ? Math.min(100, Math.max(0, (summary!.totalOut / summary!.income) * 100)) : 0
+
+  const savingsRate = hasIncome ? `${Math.round((summary!.savedNet / summary!.income) * 100)}%` : '—'
+  const debtRate = hasIncome ? `${Math.round((summary!.debtDue / summary!.income) * 100)}%` : '—'
+  const safety = summary?.safetyMonths != null ? `${summary.safetyMonths.toFixed(1)}m` : '—'
 
   // ── « À faire » : 3 lignes maximum, les plus urgentes d'abord ──
   function buildTodos(): Todo[] {
@@ -175,7 +275,6 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
       items.push({ key: 'income', tone: 'accent', title: 'Ajoute tes revenus du mois', detail: 'Pour calculer ton reste à vivre', go: 'revenus' })
     }
 
-    // Factures du mois encore impayées
     const paidBy: Record<string, number> = {}
     snapshot.facturePayments.forEach(p => { paidBy[p.factureId] = (paidBy[p.factureId] || 0) + p.amount })
     const unpaid = snapshot.factures.filter(f => f.amount - (paidBy[f.id] || 0) > 0)
@@ -197,7 +296,6 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
       })
     }
 
-    // Dettes : échéance dépassée, puis mensualités du mois
     const overdueDebts = snapshot.debts.filter(d =>
       d.type === 'owe' && !d.recurring && d.remaining > 0 && d.dueDate && d.dueDate.slice(0, 10) < today)
     if (overdueDebts.length > 0) {
@@ -215,7 +313,6 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
       })
     }
 
-    // Plafonds de budget
     const over = budgetStatuses.filter(b => b.status === 'over')
     const near = budgetStatuses.filter(b => b.status === 'near')
     if (over.length > 0) {
@@ -237,7 +334,6 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
   }
   const todos = buildTodos()
 
-  // ── Conseil du Coach ──
   function buildTip(): string {
     if (!summary || !plan) return 'Je prépare ton point du mois…'
     if (plan.alerts.length > 0) return plan.alerts[0]
@@ -258,7 +354,7 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
       console.error('Ajout de transaction échoué :', e)
       window.alert("Impossible d'enregistrer la transaction. Réessaie.")
       setSaving(false)
-      return // on garde le formulaire ouvert et rempli
+      return
     }
     setForm(emptyForm)
     setShowForm(false)
@@ -277,34 +373,21 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
         </div>
       )}
 
-      {/* ── 1. Reste à vivre : le seul gros chiffre de la page ── */}
+      {/* ── 1. Reste à vivre : le chiffre principal ── */}
       <div className="card-lg space-y-3">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-sm text-ink-soft capitalize">{monthLabel(ym)}</p>
-            <p className="text-xs font-bold text-ink-soft uppercase tracking-wider mt-2">Reste à vivre</p>
-            <p className={`text-4xl font-bold font-mono mt-1 ${freeIsNegative ? 'text-danger' : 'text-ink'}`}>{amt(free)}</p>
-          </div>
-          {health?.complete && (
-            <span
-              className="text-xs font-bold px-2.5 py-1 rounded-full flex-shrink-0"
-              style={{ color: health.color, backgroundColor: `${health.color}1A` }}
-            >
-              {health.score}/100
-            </span>
-          )}
+        <div>
+          <p className="text-xs text-ink-soft capitalize">{monthLabel(ym)}</p>
+          <p className="text-xs font-bold text-ink-soft uppercase tracking-wider mt-1.5">Reste à vivre</p>
+          <p className={`text-4xl font-bold font-mono mt-1 ${freeIsNegative ? 'text-danger' : 'text-ink'}`}>{amt(free)}</p>
         </div>
-
         {hasIncome ? (
           <div className="space-y-1.5">
             <div className="w-full h-2 bg-mist-dark rounded-full overflow-hidden">
-              <div
-                className={`h-full rounded-full transition-all duration-700 ${spentPct >= 100 ? 'bg-danger' : 'bg-accent'}`}
-                style={{ width: `${spentPct}%` }}
-              />
+              <div className={`h-full rounded-full transition-all duration-700 ${spentPct >= 100 ? 'bg-danger' : 'bg-accent'}`}
+                style={{ width: `${spentPct}%` }} />
             </div>
             <p className="text-xs text-ink-soft">
-              {formatAmount(summary!.totalOut)} dépensés sur {formatAmount(summary!.income)} de revenus
+              {formatAmount(summary!.totalOut)} sortis sur {formatAmount(summary!.income)} de revenus
             </p>
           </div>
         ) : summary ? (
@@ -314,82 +397,148 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
         ) : null}
       </div>
 
-      {/* ── 2. À faire (3 lignes max) ── */}
-      {summary && (
-        todos.length === 0 ? (
-          <div className="card flex items-center gap-3">
-            <CheckCircle2 size={20} className="text-positive flex-shrink-0" />
-            <p className="text-sm font-semibold text-ink">Tout est à jour ce mois-ci</p>
+      {/* ── 2. À faire : seulement s'il y a quelque chose ── */}
+      {todos.length > 0 && (
+        <div className="card">
+          <p className="text-xs font-bold text-ink-soft uppercase tracking-wider mb-1">À faire</p>
+          {todos.map(t => {
+            const cfg = TONE[t.tone]
+            const Icon = cfg.icon
+            return (
+              <button key={t.key} onClick={() => onGoToMoney(t.go)}
+                className="w-full flex items-center gap-3 py-3 border-b border-mist last:border-0 text-left active:scale-[0.99] transition-all">
+                <div className={`w-9 h-9 rounded-xl ${cfg.bg} flex items-center justify-center flex-shrink-0`}>
+                  <Icon size={18} className={cfg.text} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-ink truncate">{t.title}</p>
+                  <p className="text-xs text-ink-soft truncate">{t.detail}</p>
+                </div>
+                <ChevronRight size={16} className="text-ink-soft flex-shrink-0" />
+              </button>
+            )
+          })}
+        </div>
+      )}
+
+      {/* ── 3. Les essentiels du mois : tuiles blanches, avec contexte ── */}
+      <div className="grid grid-cols-2 gap-3">
+        <Tile icon="💰" label="Revenus" value={amt(summary?.income)}
+          onClick={() => onGoToMoney('revenus')} />
+        <Tile icon="💸" label="Dépenses" value={amt(summary?.expenses)}
+          sub="Dépenses ponctuelles" onClick={() => onGoToMoney('transactions')} />
+        <Tile icon="🧾" label="Factures"
+          value={amt(summary?.billsPaid)}
+          sub={summary ? `payées sur ${formatAmount(summary.billsPlanned)}` : undefined}
+          pct={summary && summary.billsPlanned > 0 ? (summary.billsPaid / summary.billsPlanned) * 100 : undefined}
+          onClick={() => onGoToMoney('factures')} />
+        <Tile icon="💳" label="Dettes"
+          value={!summary ? '—' : summary.debtDue > 0 ? formatAmount(summary.debtPaid) : formatAmount(summary.totalDebtOwed)}
+          sub={!summary ? undefined : summary.debtDue > 0 ? `payées sur ${formatAmount(summary.debtDue)}` : 'capital restant'}
+          pct={summary && summary.debtDue > 0 ? (summary.debtPaid / summary.debtDue) * 100 : undefined}
+          onClick={() => onGoToMoney('dettes')} />
+        <Tile wide icon="🪙" label="Épargne totale" value={amt(summary?.totalSavings)}
+          sub={summary
+            ? `${summary.savedNet >= 0 ? '+' : '−'}${formatAmount(Math.abs(summary.savedNet))} ce mois${summary.safetyMonths != null ? ` · ${summary.safetyMonths.toFixed(1)} mois de sécurité` : ''}`
+            : undefined}
+          onClick={() => onGoToMoney('epargne')} />
+      </div>
+
+      {/* ── 4. Situation financière ── */}
+      <div className="card-lg">
+        <div className="flex items-center justify-between mb-2">
+          <div>
+            <p className="text-xs font-bold text-ink-soft uppercase tracking-wider">Situation financière</p>
+            <p className="text-base font-bold mt-0.5" style={{ color: healthColor }}>{healthLabel}</p>
           </div>
-        ) : (
-          <div className="card">
-            <p className="text-xs font-bold text-ink-soft uppercase tracking-wider mb-1">À faire</p>
-            {todos.map(t => {
-              const cfg = TONE[t.tone]
-              const Icon = cfg.icon
+          <button onClick={() => setShowChat(true)} aria-label="Poser une question au coach"
+            className="w-10 h-10 rounded-2xl bg-accent-light text-accent flex items-center justify-center active:scale-95">
+            <MessageCircle size={18} />
+          </button>
+        </div>
+        <div className="flex items-center gap-3">
+          <HealthArc score={healthScore} color={healthColor} />
+          <div className="flex-1 space-y-1.5">
+            {(health?.details ?? []).slice(0, 3).map((d, i) => (
+              <p key={i} className="text-xs text-ink-soft leading-snug">{d}</p>
+            ))}
+          </div>
+        </div>
+        <div className="grid grid-cols-3 gap-2 mt-3 pt-3 border-t border-mist">
+          {[
+            { label: 'Taux épargne', value: savingsRate },
+            { label: 'Endettement', value: debtRate },
+            { label: 'Mois sécurité', value: safety },
+          ].map(m => (
+            <div key={m.label} className="text-center">
+              <p className="text-sm font-bold font-mono text-ink">{m.value}</p>
+              <p className="text-[10px] text-ink-soft mt-0.5">{m.label}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ── 5. Projets ── */}
+      {projects.length > 0 && (
+        <button onClick={onGoToProjects} className="card w-full text-left active:scale-[0.99] transition-all">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-xs font-bold text-ink-soft uppercase tracking-wider">🎯 Projets ({projects.length})</p>
+            <ChevronRight size={14} className="text-ink-soft opacity-50" />
+          </div>
+          <div className="space-y-2">
+            {projects.slice(0, 3).map(p => {
+              const pct = p.targetAmount > 0 ? Math.min(100, (p.savedAmount / p.targetAmount) * 100) : 0
               return (
-                <button
-                  key={t.key}
-                  onClick={() => onGoToMoney(t.go)}
-                  className="w-full flex items-center gap-3 py-3 border-b border-mist last:border-0 text-left active:scale-[0.99] transition-all"
-                >
-                  <div className={`w-9 h-9 rounded-xl ${cfg.bg} flex items-center justify-center flex-shrink-0`}>
-                    <Icon size={18} className={cfg.text} />
+                <div key={p.id} className="flex items-center gap-2">
+                  <span className="text-sm w-5">{p.emoji}</span>
+                  <p className="text-xs text-ink font-medium flex-1 truncate">{p.name}</p>
+                  <div className="w-20 h-1.5 bg-mist-dark rounded-full overflow-hidden">
+                    <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: pct >= 100 ? '#16A34A' : '#3B82F6' }} />
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-ink truncate">{t.title}</p>
-                    <p className="text-xs text-ink-soft truncate">{t.detail}</p>
-                  </div>
-                  <ChevronRight size={16} className="text-ink-soft flex-shrink-0" />
-                </button>
+                  <span className="text-[10px] font-mono text-ink-soft w-8 text-right">{pct.toFixed(0)}%</span>
+                </div>
               )
             })}
           </div>
-        )
-      )}
-
-      {/* ── 3. Deux chiffres ── */}
-      <div className="grid grid-cols-2 gap-3">
-        <button onClick={() => onGoToMoney('epargne')} className="card text-left active:scale-95 transition-all">
-          <p className="text-xs text-ink-soft">Épargné ce mois</p>
-          <p className="text-lg font-bold font-mono text-ink mt-1">{amt(summary?.savedNet)}</p>
-        </button>
-        <button onClick={() => onGoToMoney('dettes')} className="card text-left active:scale-95 transition-all">
-          <p className="text-xs text-ink-soft">Dettes payées</p>
-          <p className="text-lg font-bold font-mono text-ink mt-1">
-            {!summary ? '—' : summary.debtDue > 0 ? `${formatAmount(summary.debtPaid)}` : 'Aucune'}
-          </p>
-          {summary && summary.debtDue > 0 && (
-            <p className="text-[11px] text-ink-soft">sur {formatAmount(summary.debtDue)} prévus</p>
-          )}
-        </button>
-      </div>
-
-      {/* ── Projets : une seule ligne ── */}
-      {projects.length > 0 && (
-        <button onClick={onGoToProjects} className="card w-full flex items-center justify-between active:scale-[0.99] transition-all">
-          <div className="flex items-center gap-2">
-            <span className="text-base">🎯</span>
-            <p className="text-sm font-semibold text-ink">
-              {projects.length} projet{projects.length > 1 ? 's' : ''} en cours
-            </p>
-          </div>
-          <ChevronRight size={16} className="text-ink-soft" />
         </button>
       )}
 
-      {/* ── 4. Coach ── */}
+      {/* ── 6. Coach + action ── */}
       <CoachTip message={buildTip()} />
-      <button onClick={() => setShowChat(true)} className="btn-ghost w-full gap-2">
-        <MessageCircle size={16} /> Poser une question au coach
-      </button>
 
-      {/* ── 5. Action principale ── */}
       <button onClick={() => setShowForm(true)} className="btn-primary w-full gap-2 text-base py-4">
         <Plus size={20} /> Ajouter une transaction
       </button>
 
-      {/* ── Formulaire d'ajout ── */}
+      {/* ── 7. Récentes (3) ── */}
+      {recent.length > 0 && (
+        <button onClick={() => onGoToMoney('transactions')} className="card w-full text-left active:scale-[0.99] transition-all">
+          <div className="flex items-center justify-between mb-1">
+            <p className="text-xs font-bold text-ink-soft uppercase tracking-wider">Récentes</p>
+            <span className="text-xs text-accent font-semibold flex items-center gap-0.5">Voir tout <ChevronRight size={12} /></span>
+          </div>
+          {recent.map(tx => (
+            <div key={tx.id} className="flex items-center justify-between py-2.5 border-b border-mist last:border-0">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${tx.type === 'income' ? 'bg-positive-light' : 'bg-danger-light'}`}>
+                  <span className="text-base">{tx.type === 'income' ? '💰' : '💸'}</span>
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-ink truncate">{tx.note || tx.category}</p>
+                  <p className="text-xs text-ink-soft">{tx.category} · {new Date(tx.date).toLocaleDateString('fr-FR')}</p>
+                </div>
+              </div>
+              <span className={`font-mono text-sm font-bold flex-shrink-0 ml-2 ${tx.type === 'income' ? 'text-positive' : 'text-danger'}`}>
+                {tx.type === 'income' ? '+' : '−'}{formatAmount(tx.amount)}
+              </span>
+            </div>
+          ))}
+        </button>
+      )}
+
+      {/* ── Pensée du jour : discrète, en bas ── */}
+      <p className="text-xs text-ink-soft text-center italic px-6 pb-2">✨ {getDailyThought()}</p>
+
       {showForm && (
         <div className="bottom-sheet bg-black/40">
           <div className="bottom-sheet-content">
@@ -398,16 +547,10 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
               <button className="btn-icon bg-mist" onClick={() => setShowForm(false)}><X size={20} /></button>
             </div>
             <div className="flex rounded-2xl overflow-hidden border-2 border-mist-dark">
-              <button
-                className={`flex-1 py-3 text-sm font-bold ${form.type === 'expense' ? 'bg-danger text-white' : 'bg-white text-ink-soft'}`}
-                onClick={() => setForm(f => ({ ...f, type: 'expense', category: EXPENSE_CATEGORIES[0] }))}>
-                💸 Dépense
-              </button>
-              <button
-                className={`flex-1 py-3 text-sm font-bold ${form.type === 'income' ? 'bg-positive text-white' : 'bg-white text-ink-soft'}`}
-                onClick={() => setForm(f => ({ ...f, type: 'income', category: INCOME_CATEGORIES[0] as any }))}>
-                💰 Revenu
-              </button>
+              <button className={`flex-1 py-3 text-sm font-bold ${form.type === 'expense' ? 'bg-danger text-white' : 'bg-white text-ink-soft'}`}
+                onClick={() => setForm(f => ({ ...f, type: 'expense', category: EXPENSE_CATEGORIES[0] }))}>💸 Dépense</button>
+              <button className={`flex-1 py-3 text-sm font-bold ${form.type === 'income' ? 'bg-positive text-white' : 'bg-white text-ink-soft'}`}
+                onClick={() => setForm(f => ({ ...f, type: 'income', category: INCOME_CATEGORIES[0] as any }))}>💰 Revenu</button>
             </div>
             <div>
               <label className="label">Montant (Rs)</label>
@@ -416,20 +559,17 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
             </div>
             <div>
               <label className="label">Catégorie</label>
-              <select className="input" value={form.category}
-                onChange={e => setForm(f => ({ ...f, category: e.target.value as any }))}>
+              <select className="input" value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value as any }))}>
                 {categories.map(c => <option key={c}>{c}</option>)}
               </select>
             </div>
             <div>
               <label className="label">Note (optionnel)</label>
-              <input className="input" placeholder="Ex: Courses Jumbo"
-                value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} />
+              <input className="input" placeholder="Ex: Courses Jumbo" value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} />
             </div>
             <div>
               <label className="label">Date</label>
-              <input className="input" type="date" value={form.date}
-                onChange={e => setForm(f => ({ ...f, date: e.target.value }))} />
+              <input className="input" type="date" value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))} />
             </div>
             <button className="btn-primary w-full py-4 text-base" onClick={handleSubmit} disabled={saving}>
               {saving ? 'Enregistrement...' : 'Enregistrer'}
