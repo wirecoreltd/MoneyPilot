@@ -19,7 +19,7 @@ import {
   currentCycle, sumByCategory, sumCategory, durationLabel, BUDGET_DURATIONS,
   computeBudgetStatuses, earliestCycleStart,
 } from '@/lib/budgetPeriods'
-import PeriodFilter, { usePeriod, PERIOD_LABEL } from './PeriodFilter'
+import PeriodFilter, { usePeriod, PERIOD_LABEL } from './components/money/PeriodFilter'
 
 type SubTab = MoneySubTab
 
