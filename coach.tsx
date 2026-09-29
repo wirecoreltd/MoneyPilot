@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import type { UserProfile } from '@/lib/storage'
 import { getUserProfile, formatAmount } from '@/lib/storage'
 import { RefreshCw, ChevronRight, AlertTriangle, TrendingUp, Shield, Zap } from 'lucide-react'
@@ -186,6 +186,7 @@ function CoachThinking({ name }: { name: string }) {
   useEffect(() => {
     const t = setInterval(() => setPhase(p => Math.min(p + 1, phases.length - 1)), 1400)
     return () => clearInterval(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   return (
@@ -209,69 +210,98 @@ function CoachThinking({ name }: { name: string }) {
   )
 }
 
+// ─── Error state ──────────────────────────────────────────────────────────────
+
+function ErrorCard({ title, message, onRetry }: { title: string; message: string; onRetry: () => void }) {
+  return (
+    <div className="bg-white rounded-3xl p-6 border border-red-100 shadow-sm text-center space-y-3">
+      <p className="text-3xl">⚠️</p>
+      <p className="font-bold text-gray-800">{title}</p>
+      <p className="text-sm text-red-500">{message}</p>
+      <button
+        onClick={onRetry}
+        className="px-4 py-2 rounded-xl bg-violet-600 text-white text-sm font-bold active:scale-95 transition-all"
+      >
+        Réessayer
+      </button>
+    </div>
+  )
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function CoachPage() {
   const [profile, setProfile] = useState<UserProfile | null>(null)
+  const [booting, setBooting] = useState(true)               // chargement du profil
+  const [bootError, setBootError] = useState<string | null>(null)
   const [analysis, setAnalysis] = useState<CoachAnalysis | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [analysisError, setAnalysisError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)              // analyse en cours
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
-  const hasFetched = useRef(false)
-
-  useEffect(() => {
-    async function init() {
-      const p = await getUserProfile()
-      setProfile(p)
-      if (p && !hasFetched.current) {
-        hasFetched.current = true
-        fetchAnalysis(p)
-      } else {
-        setLoading(false)
-      }
-    }
-    init()
-  }, [])
+  const hasInit = useRef(false)
 
   // Le serveur reconstruit tout lui-même depuis la base (profil, dettes, épargne,
   // transactions, factures, historique...). On n'envoie plus rien : juste un
   // POST authentifié. Voir app/api/coach-analysis/route.ts.
-  async function fetchAnalysis(p: UserProfile) {
+  const fetchAnalysis = useCallback(async () => {
     setLoading(true)
+    setAnalysisError(null)
     try {
       const parsed = await authedPost<CoachAnalysis>('/api/coach-analysis')
       setAnalysis(parsed)
       setLastUpdated(new Date())
     } catch (err) {
       console.error('Coach analysis failed:', err)
-      setAnalysis({
-        greeting: `${p.firstName}, voici ton analyse.`,
-        situation: err instanceof Error ? err.message : "Impossible de charger l'analyse complète. Vérifie ta connexion et réessaie.",
-        urgency: 'medium',
-        score: 50,
-        scoreEvolution: 0,
-        contradictions: [],
-        actions: [{
-          label: 'Cette semaine',
-          title: 'Note toutes tes dépenses fixes',
-          detail: 'Loyer, abonnements, crédits — liste tout ce qui sort automatiquement chaque mois.',
-          impact: 'Visibilité totale sur tes finances',
-          priority: 'urgent',
-        }],
-        budgetRecommendation: [],
-        insight: "La connaissance de ses finances est le premier pas vers la liberté financière.",
-      })
-      setLastUpdated(new Date())
+      setAnalysisError(
+        err instanceof Error && err.message
+          ? err.message
+          : "Impossible de charger l'analyse. Vérifie ta connexion et réessaie."
+      )
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
+  }, [])
+
+  const init = useCallback(async () => {
+    setBooting(true)
+    setBootError(null)
+    try {
+      const p = await getUserProfile()
+      setProfile(p)
+      if (p) fetchAnalysis()
+    } catch (e) {
+      console.error('Chargement du profil échoué :', e)
+      setBootError(e instanceof Error && e.message ? e.message : 'Erreur de chargement')
+    } finally {
+      setBooting(false)
+    }
+  }, [fetchAnalysis])
+
+  useEffect(() => {
+    if (hasInit.current) return
+    hasInit.current = true
+    init()
+  }, [init])
+
+  // 1. Chargement du profil
+  if (booting) {
+    return (
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <p className="text-gray-400 text-sm">Chargement…</p>
+      </div>
+    )
   }
 
-  function refresh() {
-    if (profile) {
-      hasFetched.current = false
-      fetchAnalysis(profile)
-    }
+  // 2. Échec de chargement du profil
+  if (bootError) {
+    return (
+      <div className="max-w-lg mx-auto px-4 pt-6">
+        <ErrorCard title="Impossible de charger ton profil" message={bootError} onRetry={init} />
+      </div>
+    )
   }
 
+  // 3. Chargement réussi mais aucun profil
   if (!profile) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
@@ -294,7 +324,7 @@ export default function CoachPage() {
           )}
         </div>
         <button
-          onClick={refresh}
+          onClick={fetchAnalysis}
           disabled={loading}
           className="flex items-center gap-2 px-3 py-2 rounded-xl bg-violet-50 text-violet-600 text-xs font-bold border border-violet-100 active:scale-95 transition-all disabled:opacity-40"
         >
@@ -302,6 +332,16 @@ export default function CoachPage() {
           Actualiser
         </button>
       </div>
+
+      {/* Échec d'un rafraîchissement alors qu'une ancienne analyse est affichée */}
+      {analysisError && analysis && !loading && (
+        <div className="bg-red-50 border border-red-100 rounded-2xl px-4 py-3 flex items-center justify-between gap-3">
+          <p className="text-xs text-red-700">Actualisation impossible : {analysisError}</p>
+          <button onClick={fetchAnalysis} className="text-xs font-semibold text-red-700 underline flex-shrink-0">
+            Réessayer
+          </button>
+        </div>
+      )}
 
       {loading ? (
         <CoachThinking name={profile.firstName} />
@@ -383,6 +423,8 @@ export default function CoachPage() {
             <p className="text-white text-sm leading-relaxed font-medium italic">"{analysis.insight}"</p>
           </div>
         </>
+      ) : analysisError ? (
+        <ErrorCard title="Analyse indisponible" message={analysisError} onRetry={fetchAnalysis} />
       ) : null}
     </div>
   )
