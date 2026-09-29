@@ -139,49 +139,116 @@ export async function getMonthlyChecklist(month: string): Promise<ChecklistItem[
   return [...recurringItems, ...debtItems]
 }
 
+// ─── Checklist dettes : helpers ───────────────────────────────────────────────
+
+function nextMonthStart(month: string): string {
+  const [y, m] = month.split('-').map(Number)
+  return m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, '0')}-01`
+}
+
+// Date enregistrée dans l'historique pour un paiement coché dans la checklist du mois :
+// aujourd'hui si c'est le mois en cours, sinon le 1er du mois coché.
+function checklistPaidAt(month: string): string {
+  const today = new Date().toISOString().slice(0, 10)
+  return today.startsWith(month) ? today : `${month}-01`
+}
+
+// Retrouve la ligne d'historique correspondant à un paiement de la checklist (même dette, même montant, même mois)
+async function findMonthHistoryId(debtId: string, month: string, amount: number): Promise<string | null> {
+  const { data, error } = await supabase
+    .from('debt_payment_history')
+    .select('id')
+    .eq('debt_id', debtId)
+    .eq('amount', amount)
+    .gte('paid_at', `${month}-01`)
+    .lt('paid_at', nextMonthStart(month))
+    .order('paid_at', { ascending: false })
+    .order('created_at', { ascending: false })
+    .limit(1)
+  if (error) throw error
+  return data?.[0]?.id ?? null
+}
+
+async function deleteHistoryRow(id: string): Promise<void> {
+  const { error } = await supabase.from('debt_payment_history').delete().eq('id', id)
+  if (error) throw error
+}
+
+// Même règle que MoneyTab : solde = montant - paiements de l'historique.
+// Pour une dette récurrente, le cumul repart à 0 chaque fois qu'il atteint le montant.
+async function recomputeDebtRemaining(debtId: string, total: number, recurring: boolean): Promise<number> {
+  const { data, error } = await supabase
+    .from('debt_payment_history')
+    .select('amount, paid_at, created_at')
+    .eq('debt_id', debtId)
+    .order('paid_at', { ascending: true })
+    .order('created_at', { ascending: true })
+  if (error) throw error
+
+  let running = 0
+  for (const p of data ?? []) {
+    running += Number(p.amount)
+    if (recurring && running >= total) running = 0
+  }
+  const remaining = Math.max(0, total - running)
+
+  const { error: updateError } = await supabase.from('debts').update({ remaining }).eq('id', debtId)
+  if (updateError) throw updateError
+  return remaining
+}
+
 export async function toggleDebtPayment(debtId: string, month: string, amount?: number): Promise<{ deleted: boolean }> {
-  const { data: debt } = await supabase.from('debts').select('*').eq('id', debtId).single()
+  const { data: debt, error: debtError } = await supabase.from('debts').select('*').eq('id', debtId).single()
+  if (debtError) throw debtError
   if (!debt) throw new Error('Dette introuvable')
 
-  const { data: existing } = await supabase
+  const { data: existing, error: existingError } = await supabase
     .from('debt_payment_checks')
     .select('*')
     .eq('debt_id', debtId)
     .eq('month', month)
     .maybeSingle()
+  if (existingError) throw existingError
 
+  const total = Number(debt.amount)
+  const tracksBalance = total > 0
+  const recurring = !!debt.recurring
+
+  // ── Décochage : on annule aussi le paiement dans l'historique ──
   if (existing?.paid && amount === undefined) {
-    await supabase.from('debt_payment_checks').update({ paid: false }).eq('id', existing.id)
-    if (debt.amount > 0) {
-      await supabase.from('debts').update({ remaining: debt.remaining + existing.amount }).eq('id', debtId)
+    const { error } = await supabase.from('debt_payment_checks').update({ paid: false }).eq('id', existing.id)
+    if (error) throw error
+    if (tracksBalance) {
+      const historyId = await findMonthHistoryId(debtId, month, Number(existing.amount))
+      if (historyId) await deleteHistoryRow(historyId)
+      await recomputeDebtRemaining(debtId, total, recurring)
     }
     return { deleted: false }
   }
 
-  let currentRemaining = debt.remaining
-  if (existing?.paid && debt.amount > 0) currentRemaining += existing.amount
+  const payAmount = Number(amount ?? existing?.amount ?? debt.minimum_payment)
 
-  const payAmount = amount ?? existing?.amount ?? debt.minimum_payment
-
-  if (existing) {
-    await supabase.from('debt_payment_checks').update({ paid: true, amount: payAmount }).eq('id', existing.id)
-  } else {
-    await supabase.from('debt_payment_checks').insert({ debt_id: debtId, month, paid: true, amount: payAmount })
+  // Modification du montant d'un paiement déjà coché : on retire l'ancienne ligne d'historique
+  if (existing?.paid && tracksBalance) {
+    const oldId = await findMonthHistoryId(debtId, month, Number(existing.amount))
+    if (oldId) await deleteHistoryRow(oldId)
   }
 
-  if (debt.amount > 0) {
-    const newRemaining = Math.max(0, currentRemaining - payAmount)
-    if (newRemaining === 0) {
-      if (debt.recurring) {
-        await supabase.from('debts').update({ remaining: debt.amount }).eq('id', debtId)
-        await addDebtPaymentHistory(debtId, payAmount, undefined, debt.category)
-        return { deleted: false }
-      }
+  if (existing) {
+    const { error } = await supabase.from('debt_payment_checks').update({ paid: true, amount: payAmount }).eq('id', existing.id)
+    if (error) throw error
+  } else {
+    const { error } = await supabase.from('debt_payment_checks').insert({ debt_id: debtId, month, paid: true, amount: payAmount })
+    if (error) throw error
+  }
+
+  if (tracksBalance) {
+    await addDebtPaymentHistory(debtId, payAmount, checklistPaidAt(month), debt.category)
+    const remaining = await recomputeDebtRemaining(debtId, total, recurring)
+    if (remaining === 0 && !recurring) {
       await deleteDebt(debtId)
       return { deleted: true }
     }
-    await supabase.from('debts').update({ remaining: newRemaining }).eq('id', debtId)
-    await addDebtPaymentHistory(debtId, payAmount, undefined, debt.category)
   }
 
   return { deleted: false }
@@ -267,16 +334,18 @@ async function getUserId(): Promise<string> {
 
 // ─── Profile ──────────────────────────────────────────────────────────────────
 
+// Renvoie null UNIQUEMENT si aucun profil n'existe (→ onboarding).
+// Toute erreur Supabase lance une exception.
 export async function getUserProfile(): Promise<UserProfile | null> {
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return null
+  const userId = await getUserId()
 
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('profiles')
     .select('*')
-    .eq('id', user.id)
-    .single()
+    .eq('id', userId)
+    .maybeSingle()
 
+  if (error) throw error
   if (!data) return null
 
   return {
@@ -297,7 +366,7 @@ export async function getUserProfile(): Promise<UserProfile | null> {
 export async function saveUserProfile(profile: UserProfile): Promise<void> {
   const userId = await getUserId()
 
-  await supabase.from('profiles').upsert({
+  const { error } = await supabase.from('profiles').upsert({
     id:             userId,
     first_name:     profile.firstName,
     situation:      profile.situation,
@@ -309,6 +378,7 @@ export async function saveUserProfile(profile: UserProfile): Promise<void> {
     currency:       profile.currency,
     language:       profile.language,
   })
+  if (error) throw error
 }
 
 // ─── Transactions ─────────────────────────────────────────────────────────────
@@ -316,11 +386,12 @@ export async function saveUserProfile(profile: UserProfile): Promise<void> {
 export async function getTransactions(): Promise<Transaction[]> {
   const userId = await getUserId()
 
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('transactions')
     .select('*')
     .eq('user_id', userId)
     .order('date', { ascending: false })
+  if (error) throw error
 
   return (data ?? []).map(r => ({
     id:        r.id,
@@ -676,38 +747,44 @@ export async function addRecurringPayment(p: Omit<RecurringPayment, 'id' | 'paym
 }
 
 export async function deleteRecurringPayment(id: string): Promise<void> {
-  await supabase.from('recurring_payments').delete().eq('id', id)
+  const { error } = await supabase.from('recurring_payments').delete().eq('id', id)
+  if (error) throw error
 }
 
 export async function toggleRecurringPayment(id: string, month: string, amount?: number): Promise<void> {
-  const { data: existing } = await supabase
+  // maybeSingle : "aucune ligne" n'est pas une erreur, mais un vrai échec Supabase l'est
+  const { data: existing, error: existingError } = await supabase
     .from('recurring_payment_checks')
     .select('*')
     .eq('payment_id', id)
     .eq('month', month)
-    .single()
+    .maybeSingle()
+  if (existingError) throw existingError
 
   if (existing) {
-    await supabase
+    const { error } = await supabase
       .from('recurring_payment_checks')
       .update({
         paid:   amount !== undefined ? true : !existing.paid,
         amount: amount ?? existing.amount,
       })
       .eq('id', existing.id)
+    if (error) throw error
   } else {
-    const { data: parent } = await supabase
+    const { data: parent, error: parentError } = await supabase
       .from('recurring_payments')
       .select('default_amount')
       .eq('id', id)
-      .single()
+      .maybeSingle()
+    if (parentError) throw parentError
 
-    await supabase.from('recurring_payment_checks').insert({
+    const { error } = await supabase.from('recurring_payment_checks').insert({
       payment_id: id,
       month,
       paid:   true,
       amount: amount ?? parent?.default_amount ?? 0,
     })
+    if (error) throw error
   }
 }
 
@@ -752,7 +829,8 @@ export async function addMonthlyIncome(i: Omit<MonthlyIncome, 'id'>): Promise<Mo
 }
 
 export async function deleteMonthlyIncome(id: string): Promise<void> {
-  await supabase.from('monthly_incomes').delete().eq('id', id)
+  const { error } = await supabase.from('monthly_incomes').delete().eq('id', id)
+  if (error) throw error
 }
 
 // ─── Projects ─────────────────────────────────────────────────────────────────
@@ -825,11 +903,13 @@ export async function updateProject(id: string, fields: Partial<Omit<Project, 'i
   if (fields.targetDate          !== undefined) update.target_date          = fields.targetDate
   if (fields.monthlyContribution !== undefined) update.monthly_contribution = fields.monthlyContribution
   if (fields.note                !== undefined) update.note                 = fields.note
-  await supabase.from('projects').update(update).eq('id', id)
+  const { error } = await supabase.from('projects').update(update).eq('id', id)
+  if (error) throw error
 }
 
 export async function deleteProject(id: string): Promise<void> {
-  await supabase.from('projects').delete().eq('id', id)
+  const { error } = await supabase.from('projects').delete().eq('id', id)
+  if (error) throw error
 }
 
 // ─── Health Score ─────────────────────────────────────────────────────────────
