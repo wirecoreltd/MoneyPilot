@@ -2224,77 +2224,103 @@ function DettesSection() {
     } as any
 
     if (editingId) {
-      const existing = debts.find(d => d.id === editingId)!
-      const newAmount    = Number(form.amount) || existing.amount
-      const paidSoFar    = existing.amount - existing.remaining
-      const newRemaining = Math.max(0, newAmount - paidSoFar)
-      await updateDebt(editingId, { ...debtData, remaining: newRemaining })
-      setDebts(prev => prev.map(d => d.id !== editingId ? d : { ...d, ...debtData, amount: newAmount, remaining: newRemaining }))
-    } else {
+        const newAmount = Number(form.amount) || debts.find(d => d.id === editingId)!.amount
+        try {
+          await updateDebt(editingId, { ...debtData, amount: newAmount })
+        } catch {
+          window.alert('Impossible de modifier la dette. Réessaie.')
+          return
+        }
+        const updated = { ...debts.find(d => d.id === editingId)!, ...debtData, amount: newAmount }
+        setDebts(prev => prev.map(d => d.id !== editingId ? d : updated))
+        await syncRemaining(updated) // recalcule depuis l'historique réel, pas depuis l'ancien solde
+      } else {
       const newDebt = await addDebt({ ...debtData, remaining: Number(form.amount) || 0 })
       setDebts(prev => [...prev, newDebt])
     }
     resetForm(); setShowForm(false)
   }
 
-  async function handlePay(id: string) {
-    const amt = Number(payAmount)
-    if (!amt || amt <= 0) return
-    const debt = debts.find(d => d.id === id)!
-    const isRecurring  = (debt as any).recurring ?? false
-    const debtCategory = (debt as any).category ?? 'Autre'
+  // Source de vérité : amount - somme des paiements. Pour une dette récurrente,
+// on ne compte que les paiements DEPUIS le dernier "reset" (remise à zéro),
+// repéré via la date du dernier paiement qui a soldé le cycle précédent.
+function computeRemaining(debt: Debt, allPayments: { debtId: string; amount: number; paidAt: string }[]): number {
+  if (debt.amount <= 0) return 0
+  const mine = allPayments.filter(p => p.debtId === debt.id).sort((a, b) => a.paidAt.localeCompare(b.paidAt))
+  const isRecurring = (debt as any).recurring ?? false
+
+  if (!isRecurring) {
+    const paid = mine.reduce((s, p) => s + p.amount, 0)
+    return Math.max(0, debt.amount - paid)
+  }
+  // Récurrent : on "rejoue" les paiements et on remet à 0 dès que le cumul atteint amount
+  let running = 0
+  for (const p of mine) {
+    running += p.amount
+    if (running >= debt.amount) running = 0
+  }
+  return Math.max(0, debt.amount - running)
+}
+
+async function syncRemaining(debt: Debt, payments = allPayments) {
+  const remaining = computeRemaining(debt, payments)
+  try {
+    await updateDebt(debt.id, { remaining })
+    setDebts(prev => prev.map(d => d.id === debt.id ? { ...d, remaining } : d))
+  } catch {
+    window.alert("Impossible de mettre à jour le solde de la dette. Réessaie.")
+  }
+  return remaining
+}
+
+async function handlePay(id: string) {
+  const amt = Number(payAmount)
+  if (!amt || amt <= 0) return
+  const debt = debts.find(d => d.id === id)!
+  const debtCategory = (debt as any).category ?? 'Autre'
+  try {
     await logPayment(id, amt, payDate, debtCategory, payNote)
-    invalidateHistory(id)
-    await loadPayments()
-    if (debt.amount === 0) {
-      setConfirmDeleteId(id); setPayingId(null); setPayAmount(''); setPayDate(new Date().toISOString().slice(0, 10)); setPayNote(''); return
-    }
-    const newRemaining = Math.max(0, debt.remaining - amt)
-    if (newRemaining === 0) {
-      if (isRecurring) {
-        await updateDebt(id, { remaining: debt.amount })
-        setDebts(prev => prev.map(d => d.id !== id ? d : { ...d, remaining: debt.amount }))
-      } else {
-        await updateDebt(id, { remaining: 0 })
-        setDebts(prev => prev.map(d => d.id !== id ? d : { ...d, remaining: 0 }))
-        setConfirmDeleteId(id)
-      }
-    } else {
-      await updateDebt(id, { remaining: newRemaining })
-      setDebts(prev => prev.map(d => d.id !== id ? d : { ...d, remaining: newRemaining }))
-    }
-    setPayingId(null); setPayAmount(''); setPayDate(new Date().toISOString().slice(0, 10)); setPayNote('')
+  } catch {
+    window.alert("Impossible d'enregistrer le remboursement. Réessaie.")
+    return
   }
+  invalidateHistory(id)
+  await loadPayments()
+  const freshPayments = [...allPayments, { debtId: id, amount: amt, paidAt: payDate }]
+  const remaining = await syncRemaining(debt, freshPayments)
+  if (debt.amount > 0 && remaining === 0 && !((debt as any).recurring ?? false)) setConfirmDeleteId(id)
+  setPayingId(null); setPayAmount(''); setPayDate(new Date().toISOString().slice(0, 10)); setPayNote('')
+}
 
-  async function handleEditPayment() {
-    if (!editingPayment) return
-    const newAmt = Number(editPayAmount)
-    if (!newAmt || newAmt <= 0) return
-    const oldAmt = editingPayment.amount
-    const diff = newAmt - oldAmt
+async function handleEditPayment() {
+  if (!editingPayment) return
+  const newAmt = Number(editPayAmount)
+  if (!newAmt || newAmt <= 0) return
+  try {
     await updatePayment(editingPayment.id, newAmt, editPayDate, editPayNote)
-    const debt = debts.find(d => d.id === editingPayment.debtId)
-    if (debt && debt.amount > 0) {
-      const newRemaining = Math.max(0, debt.remaining - diff)
-      await updateDebt(debt.id, { remaining: newRemaining })
-      setDebts(prev => prev.map(d => d.id === debt.id ? { ...d, remaining: newRemaining } : d))
-    }
-    await loadPayments()
-    await reloadHistory(editingPayment.debtId)
-    setEditingPayment(null)
+  } catch {
+    window.alert("Impossible de modifier le remboursement. Réessaie.")
+    return
   }
+  await loadPayments()
+  const debt = debts.find(d => d.id === editingPayment.debtId)
+  if (debt) await syncRemaining(debt)
+  await reloadHistory(editingPayment.debtId)
+  setEditingPayment(null)
+}
 
-  async function handleDeletePayment(h: DebtPaymentHistory) {
-    const debt = debts.find(d => d.id === h.debtId)
-    if (debt && debt.amount > 0) {
-      const newRemaining = Math.min(debt.amount, debt.remaining + h.amount)
-      await updateDebt(debt.id, { remaining: newRemaining })
-      setDebts(prev => prev.map(d => d.id === debt.id ? { ...d, remaining: newRemaining } : d))
-    }
+async function handleDeletePayment(h: DebtPaymentHistory) {
+  try {
     await deletePayment(h.id)
-    await loadPayments()
-    await reloadHistory(h.debtId)
+  } catch {
+    window.alert("Impossible de supprimer le remboursement. Réessaie.")
+    return
   }
+  await loadPayments()
+  const debt = debts.find(d => d.id === h.debtId)
+  if (debt) await syncRemaining(debt)
+  await reloadHistory(h.debtId)
+}
 
   if (loading) return <div className="card text-center py-8 text-ink-soft">Chargement...</div>
 
