@@ -118,6 +118,7 @@ const amt = (v: number | undefined) => (v === undefined ? '—' : formatAmount(v
 
 export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, onGoToProjects }: Props) {
   const [showForm, setShowForm] = useState(false)
+  const [saving, setSaving] = useState(false)
   const [showChat, setShowChat] = useState(false)
   const [form, setForm] = useState(empty)
   const [chatInput, setChatInput] = useState('')
@@ -167,10 +168,19 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
   }, [messages])
 
   async function handleSubmit() {
-    if (!form.amount || Number(form.amount) <= 0) return
-    await addTransaction({ ...form, amount: Number(form.amount) })
+    if (saving || !form.amount || Number(form.amount) <= 0) return
+    setSaving(true)
+    try {
+      await addTransaction({ ...form, amount: Number(form.amount) })
+    } catch (e) {
+      console.error('Ajout de transaction échoué :', e)
+      window.alert("Impossible d'enregistrer la transaction. Réessaie.")
+      setSaving(false)
+      return // on garde le formulaire ouvert et rempli
+    }
     setForm(empty)
     setShowForm(false)
+    setSaving(false)
     onUpdate()
     reload() // rafraîchit tout de suite les KPIs, le score et le conseil
   }
@@ -432,7 +442,9 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
               <input className="input" type="date" value={form.date}
                 onChange={e => setForm(f => ({ ...f, date: e.target.value }))} />
             </div>
-            <button className="btn-primary w-full py-4 text-base" onClick={handleSubmit}>Enregistrer</button>
+            <button className="btn-primary w-full py-4 text-base" onClick={handleSubmit} disabled={saving}>
+              {saving ? 'Enregistrement...' : 'Enregistrer'}
+            </button>
           </div>
         </div>
       )}
