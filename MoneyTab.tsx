@@ -1,9 +1,9 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
-import { Plus, Trash2, X, Info, Pencil, History, ChevronDown, Check, ChevronUp, ChevronRight, Minus, ChevronUp as ChevronUpIcon } from 'lucide-react'
+import { Plus, Trash2, X, Pencil, History, ChevronDown, Check, ChevronUp, ChevronRight, Minus } from 'lucide-react'
 import {
   Transaction, BudgetCategory, SavingsGoal, Debt,
-  EXPENSE_CATEGORIES, INCOME_CATEGORIES,
+  EXPENSE_CATEGORIES,
   addTransaction, deleteTransaction,
   getBudgets, addBudget, deleteBudget,
   getSavings, addSavingsGoal, updateSavingsGoal, deleteSavingsGoal,
@@ -13,18 +13,15 @@ import {
 import CoachTip from './CoachTip'
 import { supabase } from '@/lib/supabase'
 import { MoneySubTab } from '@/app/page'
-import { useMonthSummary } from '@/lib/useMonthSummary'
-import { budgetStatus } from '@/lib/finance'
-import { debtEndLabel } from '@/lib/finance'
-import type { BudgetStatus } from '@/lib/finance'
+import { budgetStatus, debtEndLabel } from '@/lib/finance'
 import { useSpendingLines } from '@/lib/useSpendingLines'
 import {
   currentCycle, sumByCategory, sumCategory, durationLabel, BUDGET_DURATIONS,
   computeBudgetStatuses, earliestCycleStart,
 } from '@/lib/budgetPeriods'
+import PeriodFilter, { usePeriod, PERIOD_LABEL } from './PeriodFilter'
 
 type SubTab = MoneySubTab
-
 
 interface Props {
   transactions: Transaction[]
@@ -50,8 +47,6 @@ interface SavingsDeposit {
   note?: string
   depositedAt: string
 }
-
-interface Creditor { id: string; name: string }
 
 interface Facture {
   id: string
@@ -93,7 +88,6 @@ const DEFAULT_CATEGORIES = [
   'Vêtements', 'Éducation', 'Factures', 'Restaurants', 'Épargne', 'Autre'
 ]
 
-// "Autre" always stays last
 // "transport   SCOLAIRE" -> "Transport scolaire"
 function toProper(s: string): string {
   const t = s.trim().replace(/\s+/g, ' ').toLowerCase()
@@ -544,39 +538,12 @@ function CategoryManager({
 // ─── Transactions ─────────────────────────────────────────────────────────────
 const SHOW_MORE_LIMIT = 3
 
-type Period = '1j' | '5j' | '1m' | '3m' | 'custom'
-const PERIODS: { id: Period; label: string }[] = [
-  { id: '1j', label: '1J' }, { id: '5j', label: '5J' },
-  { id: '1m', label: '1 mois' }, { id: '3m', label: '3 mois' },
-  { id: 'custom', label: 'Perso' },
-]
-const PERIOD_LABEL: Record<Period, string> = {
-  '1j': "aujourd'hui", '5j': 'les 5 derniers jours',
-  '1m': 'le dernier mois', '3m': 'les 3 derniers mois', custom: 'la période choisie',
-}
-
-function toYMD(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-}
-function getPeriodRange(p: Period, customFrom: string, customTo: string) {
-  if (p === 'custom') return { from: customFrom || '0000-01-01', to: customTo || '9999-12-31' }
-  const today = new Date(); today.setHours(0, 0, 0, 0)
-  const from = new Date(today)
-  if (p === '5j') from.setDate(from.getDate() - 4)
-  if (p === '1m') { from.setMonth(from.getMonth() - 1); from.setDate(from.getDate() + 1) }
-  if (p === '3m') { from.setMonth(from.getMonth() - 3); from.setDate(from.getDate() + 1) }
-  return { from: toYMD(from), to: toYMD(today) }
-}
-
-// Plafond ramené à un montant mensuel (un plafond de 3 mois = limite / 3 par mois)
-
 function TransactionsSection({ transactions, onUpdate }: { transactions: Transaction[]; onUpdate: () => void }) {
   const [showForm, setShowForm] = useState(false)
   const [loading, setLoading] = useState(false)
   const [search, setSearch] = useState('')
-  const [period, setPeriod] = useState<Period>('1m')
-  const [customFrom, setCustomFrom] = useState(toYMD(new Date()))
-  const [customTo, setCustomTo] = useState(toYMD(new Date()))
+  const periodState = usePeriod()
+  const { period, range } = periodState
   const [editingTx, setEditingTx] = useState<Transaction | null>(null)
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set())
   const [showMoreCategories, setShowMoreCategories] = useState<Set<string>>(new Set())
@@ -598,8 +565,6 @@ function TransactionsSection({ transactions, onUpdate }: { transactions: Transac
   const statusByCat = Object.fromEntries(
     computeBudgetStatuses(budgets, lines).map(s => [s.name, s]),
   )
-
-  const range = getPeriodRange(period, customFrom, customTo)
 
   const periodTxs = transactions.filter(t => {
     if (t.type !== 'expense') return false
@@ -651,17 +616,26 @@ function TransactionsSection({ transactions, onUpdate }: { transactions: Transac
   async function handleSubmit() {
     if (!form.amount || Number(form.amount) <= 0) return
     setLoading(true)
-    if (editingTx) {
-      await supabase.from('transactions').update({
-        type: 'expense', amount: Number(form.amount),
-        category: form.category, note: form.note, date: form.date,
-      }).eq('id', editingTx.id)
-    } else {
-      await addTransaction({ type: 'expense', amount: Number(form.amount), category: form.category, note: form.note, date: form.date })
+    try {
+      if (editingTx) {
+        const { error } = await supabase.from('transactions').update({
+          type: 'expense', amount: Number(form.amount),
+          category: form.category, note: form.note, date: form.date,
+        }).eq('id', editingTx.id)
+        if (error) throw error
+      } else {
+        await addTransaction({ type: 'expense', amount: Number(form.amount), category: form.category, note: form.note, date: form.date })
+      }
+      setShowForm(false); setEditingTx(null); onUpdate()
+    } catch {
+      window.alert("Impossible d'enregistrer la dépense. Réessaie.")
     }
-    setShowForm(false); setEditingTx(null); onUpdate(); setLoading(false)
+    setLoading(false)
   }
-  async function handleDelete(id: string) { await deleteTransaction(id); onUpdate() }
+  async function handleDelete(id: string) {
+    try { await deleteTransaction(id); onUpdate() }
+    catch { window.alert('Impossible de supprimer la dépense. Réessaie.') }
+  }
 
   const categoryEntries = Object.entries(grouped).sort((a, b) =>
     b[1].reduce((s, t) => s + t.amount, 0) - a[1].reduce((s, t) => s + t.amount, 0)
@@ -681,30 +655,7 @@ function TransactionsSection({ transactions, onUpdate }: { transactions: Transac
         </p>
       </div>
 
-      <div className="flex gap-1.5 overflow-x-auto">
-        {PERIODS.map(p => (
-          <button key={p.id} onClick={() => setPeriod(p.id)}
-            className={`flex-1 whitespace-nowrap px-3 py-2 rounded-xl text-xs font-bold border-2 transition-colors ${
-              period === p.id ? 'bg-accent text-white border-transparent' : 'bg-white text-ink-soft border-mist-dark'}`}>
-            {p.label}
-          </button>
-        ))}
-      </div>
-
-      {period === 'custom' && (
-        <div className="grid grid-cols-2 gap-2">
-          <div>
-            <label className="label">Du</label>
-            <input className="input" type="date" value={customFrom} max={customTo || undefined}
-              onChange={e => setCustomFrom(e.target.value)}/>
-          </div>
-          <div>
-            <label className="label">Au</label>
-            <input className="input" type="date" value={customTo} min={customFrom || undefined}
-              onChange={e => setCustomTo(e.target.value)}/>
-          </div>
-        </div>
-      )}
+      <PeriodFilter {...periodState} activeClass="bg-accent text-white" />
 
       <div className="card bg-danger-light">
         <p className="text-xs font-bold text-danger uppercase tracking-wide">Total dépenses · {PERIOD_LABEL[period]}</p>
@@ -872,14 +823,14 @@ function RevenusSection() {
   const [revenus, setRevenus] = useState<RevenuSource[]>([])
   const [savedSources, setSavedSources] = useState<SavedSource[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [open, setOpen] = useState(false)
   const [showForm, setShowForm] = useState(false)
   const [sourceDropdownOpen, setSourceDropdownOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [period, setPeriod] = useState<Period>('1m')
-  const [customFrom, setCustomFrom] = useState(toYMD(new Date()))
-  const [customTo, setCustomTo] = useState(toYMD(new Date()))
+  const periodState = usePeriod()
+  const { period, range } = periodState
   const [form, setForm] = useState({
     label: '', amount: '', type: 'fixed' as 'fixed' | 'variable', saveSource: false,
     date: new Date().toISOString().slice(0, 10),
@@ -898,24 +849,28 @@ function RevenusSection() {
 
   async function loadAll() {
     setLoading(true)
-    const { data: { user } } = await supabase.auth.getUser()
-    const [
-      { data: inc },
-      { data: src }
-    ] = await Promise.all([
-      supabase.from('monthly_incomes').select('*').eq('user_id', user!.id),
-      supabase.from('income_sources').select('*').eq('user_id', user!.id).order('name')
-    ])
-    const incData: RevenuSource[] = (inc ?? []).map(r => ({
-      id: r.id, label: r.label, amount: Number(r.amount),
-      type: r.is_fixed ? 'fixed' : 'variable', month: r.month,
-      date: r.received_at ?? `${r.month}-01`,
-    }))
-    setRevenus(incData)
-    if (incData.length > 0) setOpen(true)
-    setSavedSources((src ?? []).map(r => ({
-      id: r.id, name: r.name, type: r.is_fixed ? 'fixed' : 'variable',
-    })))
+    setLoadError(null)
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      const [incRes, srcRes] = await Promise.all([
+        supabase.from('monthly_incomes').select('*').eq('user_id', user!.id),
+        supabase.from('income_sources').select('*').eq('user_id', user!.id).order('name'),
+      ])
+      if (incRes.error) throw incRes.error
+      if (srcRes.error) throw srcRes.error
+      const incData: RevenuSource[] = (incRes.data ?? []).map(r => ({
+        id: r.id, label: r.label, amount: Number(r.amount),
+        type: r.is_fixed ? 'fixed' : 'variable', month: r.month,
+        date: r.received_at ?? `${r.month}-01`,
+      }))
+      setRevenus(incData)
+      if (incData.length > 0) setOpen(true)
+      setSavedSources((srcRes.data ?? []).map(r => ({
+        id: r.id, name: r.name, type: r.is_fixed ? 'fixed' : 'variable',
+      })))
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : 'Erreur de chargement')
+    }
     setLoading(false)
   }
 
@@ -941,22 +896,25 @@ function RevenusSection() {
     if (!form.label.trim() || !form.amount || Number(form.amount) <= 0 || !form.date) return
     setSaving(true)
 
-    // Mode modification
-    if (editingId) {
-      const { error } = await supabase.from('monthly_incomes').update({
-        label: form.label.trim(),
-        amount: Number(form.amount),
-        is_fixed: form.type === 'fixed',
-        received_at: form.date,
-        month: form.date.slice(0, 7),
-      }).eq('id', editingId)
-      if (!error) {
+    try {
+      // Mode modification
+      if (editingId) {
+        const { error } = await supabase.from('monthly_incomes').update({
+          label: form.label.trim(),
+          amount: Number(form.amount),
+          is_fixed: form.type === 'fixed',
+          received_at: form.date,
+          month: form.date.slice(0, 7),
+        }).eq('id', editingId)
+        if (error) throw error
+
         // Si c'est un revenu fixe renommé, on renomme aussi les autres occurrences fixes
         const old = revenus.find(r => r.id === editingId)
         if (old && old.type === 'fixed' && old.label !== form.label.trim()) {
           const { data: { user } } = await supabase.auth.getUser()
-          await supabase.from('monthly_incomes').update({ label: form.label.trim() })
+          const { error: renameError } = await supabase.from('monthly_incomes').update({ label: form.label.trim() })
             .eq('user_id', user!.id).eq('label', old.label).eq('is_fixed', true)
+          if (renameError) throw renameError
           setRevenus(prev => prev.map(r => r.type === 'fixed' && r.label === old.label ? { ...r, label: form.label.trim() } : r))
         }
         setRevenus(prev => prev.map(r => r.id === editingId
@@ -964,59 +922,67 @@ function RevenusSection() {
               date: form.date, month: form.date.slice(0, 7) }
           : r))
         resetForm()
-      } else {
-        window.alert("Impossible de modifier le revenu. Réessaie.")
+        setSaving(false)
+        return
       }
-      setSaving(false)
-      return
-    }
 
-    const { data: { user } } = await supabase.auth.getUser()
-    if (form.saveSource && form.label.trim()) {
-      const alreadySaved = savedSources.some(s => s.name.toLowerCase() === form.label.trim().toLowerCase())
-      if (!alreadySaved) {
-        const { data: newSrc } = await supabase.from('income_sources').insert({
-          user_id: user!.id, name: form.label.trim(), is_fixed: form.type === 'fixed',
-        }).select().single()
-        if (newSrc) setSavedSources(prev => [...prev, { id: newSrc.id, name: newSrc.name, type: newSrc.is_fixed ? 'fixed' : 'variable' }])
+      const { data: { user } } = await supabase.auth.getUser()
+      if (form.saveSource && form.label.trim()) {
+        const alreadySaved = savedSources.some(s => s.name.toLowerCase() === form.label.trim().toLowerCase())
+        if (!alreadySaved) {
+          const { data: newSrc, error: srcError } = await supabase.from('income_sources').insert({
+            user_id: user!.id, name: form.label.trim(), is_fixed: form.type === 'fixed',
+          }).select().single()
+          if (srcError) throw srcError
+          if (newSrc) setSavedSources(prev => [...prev, { id: newSrc.id, name: newSrc.name, type: newSrc.is_fixed ? 'fixed' : 'variable' }])
+        }
       }
+      const { data, error } = await supabase.from('monthly_incomes').insert({
+        user_id: user!.id, label: form.label.trim(),
+        amount: Number(form.amount), is_fixed: form.type === 'fixed',
+        month: form.date.slice(0, 7), received_at: form.date,
+      }).select().single()
+      if (error) throw error
+      if (data) {
+        setRevenus(prev => [...prev, {
+          id: data.id, label: data.label, amount: Number(data.amount),
+          type: data.is_fixed ? 'fixed' : 'variable', month: data.month,
+          date: data.received_at ?? form.date,
+        }])
+      }
+      resetForm()
+      setOpen(true)
+    } catch {
+      window.alert(editingId ? "Impossible de modifier le revenu. Réessaie." : "Impossible d'ajouter le revenu. Réessaie.")
     }
-    const { data } = await supabase.from('monthly_incomes').insert({
-      user_id: user!.id, label: form.label.trim(),
-      amount: Number(form.amount), is_fixed: form.type === 'fixed',
-      month: form.date.slice(0, 7), received_at: form.date,
-    }).select().single()
-    if (data) {
-      setRevenus(prev => [...prev, {
-        id: data.id, label: data.label, amount: Number(data.amount),
-        type: data.is_fixed ? 'fixed' : 'variable', month: data.month,
-        date: data.received_at ?? form.date,
-      }])
-    }
-    resetForm()
-    setOpen(true)
     setSaving(false)
   }
 
   async function handleDelete(id: string) {
     const r = revenus.find(x => x.id === id)
-    if (r?.type === 'fixed') {
-      if (!window.confirm(`« ${r.label} » est un revenu fixe.\nLe supprimer l'arrête : il ne sera plus recréé chaque mois (l'historique passe en « Variable »).`)) return
-      const { data: { user } } = await supabase.auth.getUser()
-      await supabase.from('monthly_incomes').update({ is_fixed: false })
-        .eq('user_id', user!.id).eq('label', r.label).eq('is_fixed', true)
-      setRevenus(prev => prev.map(x => x.label === r.label ? { ...x, type: 'variable' } : x))
+    try {
+      if (r?.type === 'fixed') {
+        if (!window.confirm(`« ${r.label} » est un revenu fixe.\nLe supprimer l'arrête : il ne sera plus recréé chaque mois (l'historique passe en « Variable »).`)) return
+        const { data: { user } } = await supabase.auth.getUser()
+        const { error: stopError } = await supabase.from('monthly_incomes').update({ is_fixed: false })
+          .eq('user_id', user!.id).eq('label', r.label).eq('is_fixed', true)
+        if (stopError) throw stopError
+        setRevenus(prev => prev.map(x => x.label === r.label ? { ...x, type: 'variable' } : x))
+      }
+      const { error } = await supabase.from('monthly_incomes').delete().eq('id', id)
+      if (error) throw error
+      setRevenus(prev => prev.filter(x => x.id !== id))
+    } catch {
+      window.alert('Impossible de supprimer le revenu. Réessaie.')
     }
-    await supabase.from('monthly_incomes').delete().eq('id', id)
-    setRevenus(prev => prev.filter(x => x.id !== id))
   }
 
   async function handleDeleteSource(id: string) {
-    await supabase.from('income_sources').delete().eq('id', id)
+    const { error } = await supabase.from('income_sources').delete().eq('id', id)
+    if (error) { window.alert('Impossible de supprimer la source. Réessaie.'); return }
     setSavedSources(prev => prev.filter(s => s.id !== id))
   }
 
-  const range = getPeriodRange(period, customFrom, customTo)
   const filtered = revenus
     .filter(r => r.date >= range.from && r.date <= range.to)
     .sort((a, b) => b.date.localeCompare(a.date))
@@ -1029,6 +995,14 @@ function RevenusSection() {
   )
 
   if (loading) return <div className="card text-center py-8 text-ink-soft">Chargement...</div>
+  if (loadError) {
+    return (
+      <div className="card text-center py-8 space-y-3">
+        <p className="text-sm text-danger">Impossible de charger tes revenus : {loadError}</p>
+        <button className="btn-ghost" onClick={loadAll}>Réessayer</button>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-3">
@@ -1039,30 +1013,7 @@ function RevenusSection() {
         </p>
       </div>
 
-      <div className="flex gap-1.5 overflow-x-auto">
-        {PERIODS.map(p => (
-          <button key={p.id} onClick={() => setPeriod(p.id)}
-            className={`flex-1 whitespace-nowrap px-3 py-2 rounded-xl text-xs font-bold border-2 transition-colors ${
-              period === p.id ? 'bg-positive text-white border-transparent' : 'bg-white text-ink-soft border-mist-dark'}`}>
-            {p.label}
-          </button>
-        ))}
-      </div>
-
-      {period === 'custom' && (
-        <div className="grid grid-cols-2 gap-2">
-          <div>
-            <label className="label">Du</label>
-            <input className="input" type="date" value={customFrom} max={customTo || undefined}
-              onChange={e => setCustomFrom(e.target.value)}/>
-          </div>
-          <div>
-            <label className="label">Au</label>
-            <input className="input" type="date" value={customTo} min={customFrom || undefined}
-              onChange={e => setCustomTo(e.target.value)}/>
-          </div>
-        </div>
-      )}
+      <PeriodFilter {...periodState} activeClass="bg-positive text-white" />
 
       <button onClick={() => setOpen(o => !o)} className="w-full card bg-positive-light border border-positive/20 text-left">
         <div className="flex items-center justify-between">
@@ -1208,17 +1159,21 @@ function RevenusSection() {
 
 // ─── Facture helpers ──────────────────────────────────────────────────────────
 async function fetchFacturePayments(factureId: string): Promise<FacturePayment[]> {
-  const { data } = await supabase.from('facture_payment_history').select('*').eq('facture_id', factureId).order('paid_at', { ascending: false })
+  const { data, error } = await supabase.from('facture_payment_history').select('*').eq('facture_id', factureId).order('paid_at', { ascending: false })
+  if (error) throw error
   return (data ?? []).map(r => ({ id: r.id, factureId: r.facture_id, amount: Number(r.amount), paidAt: r.paid_at, note: r.note ?? undefined }))
 }
 async function addFacturePayment(factureId: string, amount: number, paidAt: string, note?: string): Promise<void> {
-  await supabase.from('facture_payment_history').insert({ facture_id: factureId, amount, paid_at: paidAt, note: note || null })
+  const { error } = await supabase.from('facture_payment_history').insert({ facture_id: factureId, amount, paid_at: paidAt, note: note || null })
+  if (error) throw error
 }
 async function updateFacturePayment(id: string, amount: number, paidAt: string, note?: string): Promise<void> {
-  await supabase.from('facture_payment_history').update({ amount, paid_at: paidAt, note: note || null }).eq('id', id)
+  const { error } = await supabase.from('facture_payment_history').update({ amount, paid_at: paidAt, note: note || null }).eq('id', id)
+  if (error) throw error
 }
 async function deleteFacturePayment(id: string): Promise<void> {
-  await supabase.from('facture_payment_history').delete().eq('id', id)
+  const { error } = await supabase.from('facture_payment_history').delete().eq('id', id)
+  if (error) throw error
 }
 
 // ─── FacturesSection ──────────────────────────────────────────────────────────
@@ -1239,6 +1194,7 @@ function sortFactures(list: Facture[]): Facture[] {
 function FacturesSection() {
   const [factures, setFactures] = useState<Facture[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(false)
   const [editingFacture, setEditingFacture] = useState<Facture | null>(null)
   const [saving, setSaving] = useState(false)
@@ -1255,9 +1211,8 @@ function FacturesSection() {
   const [editPayNote, setEditPayNote] = useState('')
 
   // Filtre de période
-  const [period, setPeriod] = useState<Period>('1m')
-  const [customFrom, setCustomFrom] = useState(toYMD(new Date()))
-  const [customTo, setCustomTo] = useState(toYMD(new Date()))
+  const periodState = usePeriod()
+  const { period, range } = periodState
 
   // ← Catégories partagées (Supabase, table custom_categories)
   const { customCategories, addCustom, removeCustom, renameCustom } = useCustomCategories(() => { loadFactures() })
@@ -1272,16 +1227,22 @@ function FacturesSection() {
 
   async function loadFactures() {
     setLoading(true)
-    const { data: { user } } = await supabase.auth.getUser()
-    // Toutes les factures de l'utilisateur : le filtre de période se fait côté client
-    const { data } = await supabase.from('factures').select('*').eq('user_id', user!.id).order('created_at', { ascending: true })
-    setFactures((data ?? []).map(r => ({
-      id: r.id, name: r.name, amount: Number(r.amount),
-      dueDate: r.due_date ?? undefined, isRecurring: r.is_recurring ?? false,
-      category: r.category ?? DEFAULT_CATEGORIES[0], paid: r.paid ?? false,
-      month: r.month, note: r.note ?? undefined,
-      createdAt: r.created_at ?? undefined,
-    })))
+    setLoadError(null)
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      // Toutes les factures de l'utilisateur : le filtre de période se fait côté client
+      const { data, error } = await supabase.from('factures').select('*').eq('user_id', user!.id).order('created_at', { ascending: true })
+      if (error) throw error
+      setFactures((data ?? []).map(r => ({
+        id: r.id, name: r.name, amount: Number(r.amount),
+        dueDate: r.due_date ?? undefined, isRecurring: r.is_recurring ?? false,
+        category: r.category ?? DEFAULT_CATEGORIES[0], paid: r.paid ?? false,
+        month: r.month, note: r.note ?? undefined,
+        createdAt: r.created_at ?? undefined,
+      })))
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : 'Erreur de chargement')
+    }
     setLoading(false)
   }
 
@@ -1314,66 +1275,74 @@ function FacturesSection() {
   async function handleSave() {
     if (!form.name.trim() || !form.amount || Number(form.amount) <= 0) return
     setSaving(true)
-    const { data: { user } } = await supabase.auth.getUser()
-    const dueDate = form.isRecurring ? computeDueDate(form.dueDayOfMonth, ym) : (form.dueDate || null)
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      const dueDate = form.isRecurring ? computeDueDate(form.dueDayOfMonth, ym) : (form.dueDate || null)
 
-    if (editingFacture) {
-      const editing = editingFacture
-      const newName = form.name.trim()
+      if (editingFacture) {
+        const editing = editingFacture
+        const newName = form.name.trim()
 
-      const { error } = await supabase.from('factures').update({
-        name: newName, amount: Number(form.amount), category: form.category,
-        due_date: dueDate, is_recurring: form.isRecurring, note: form.note || null,
-      }).eq('id', editing.id)
+        const { error } = await supabase.from('factures').update({
+          name: newName, amount: Number(form.amount), category: form.category,
+          due_date: dueDate, is_recurring: form.isRecurring, note: form.note || null,
+        }).eq('id', editing.id)
+        if (error) throw error
 
-      if (error) {
-        window.alert('Impossible de modifier la facture. Réessaie.')
-        setSaving(false)
-        return
+        // Facture récurrente renommée : on renomme aussi les autres occurrences récurrentes
+        if (editing.isRecurring && editing.name !== newName) {
+          const { error: renameError } = await supabase.from('factures').update({ name: newName })
+            .eq('user_id', user!.id).eq('name', editing.name).eq('is_recurring', true)
+          if (renameError) throw renameError
+          setFactures(prev => prev.map(x =>
+            x.isRecurring && x.name === editing.name ? { ...x, name: newName } : x
+          ))
+        }
+
+        setFactures(prev => prev.map(f => f.id === editing.id ? {
+          ...f, name: newName, amount: Number(form.amount), category: form.category,
+          dueDate: dueDate ?? undefined, isRecurring: form.isRecurring, note: form.note || undefined,
+        } : f))
+      } else {
+        const { data, error } = await supabase.from('factures').insert({
+          user_id: user!.id, name: form.name.trim(), amount: Number(form.amount),
+          category: form.category, due_date: dueDate, is_recurring: form.isRecurring,
+          note: form.note || null, paid: false, month: ym,
+        }).select().single()
+        if (error) throw error
+        if (data) {
+          setFactures(prev => [...prev, {
+            id: data.id, name: data.name, amount: Number(data.amount),
+            dueDate: data.due_date ?? undefined, isRecurring: data.is_recurring,
+            category: data.category, paid: data.paid, month: data.month, note: data.note ?? undefined,
+            createdAt: data.created_at ?? new Date().toISOString(),
+          }])
+        }
       }
-
-      // Facture récurrente renommée : on renomme aussi les autres occurrences récurrentes
-      if (editing.isRecurring && editing.name !== newName) {
-        await supabase.from('factures').update({ name: newName })
-          .eq('user_id', user!.id).eq('name', editing.name).eq('is_recurring', true)
-        setFactures(prev => prev.map(x =>
-          x.isRecurring && x.name === editing.name ? { ...x, name: newName } : x
-        ))
-      }
-
-      setFactures(prev => prev.map(f => f.id === editing.id ? {
-        ...f, name: newName, amount: Number(form.amount), category: form.category,
-        dueDate: dueDate ?? undefined, isRecurring: form.isRecurring, note: form.note || undefined,
-      } : f))
-    } else {
-      const { data } = await supabase.from('factures').insert({
-        user_id: user!.id, name: form.name.trim(), amount: Number(form.amount),
-        category: form.category, due_date: dueDate, is_recurring: form.isRecurring,
-        note: form.note || null, paid: false, month: ym,
-      }).select().single()
-      if (data) {
-        setFactures(prev => [...prev, {
-          id: data.id, name: data.name, amount: Number(data.amount),
-          dueDate: data.due_date ?? undefined, isRecurring: data.is_recurring,
-          category: data.category, paid: data.paid, month: data.month, note: data.note ?? undefined,
-          createdAt: data.created_at ?? new Date().toISOString(),
-        }])
-      }
+      resetForm(); setShowForm(false)
+    } catch {
+      window.alert(editingFacture ? 'Impossible de modifier la facture. Réessaie.' : "Impossible d'ajouter la facture. Réessaie.")
     }
-    resetForm(); setShowForm(false); setSaving(false)
+    setSaving(false)
   }
 
   async function handleDelete(id: string) {
     const f = factures.find(x => x.id === id)
-    if (f?.isRecurring) {
-      if (!window.confirm(`« ${f.name} » est récurrente.\nLa supprimer l'arrête : elle ne sera plus recréée chaque mois.`)) return
-      const { data: { user } } = await supabase.auth.getUser()
-      await supabase.from('factures').update({ is_recurring: false })
-        .eq('user_id', user!.id).eq('name', f.name).eq('is_recurring', true)
-      setFactures(prev => prev.map(x => x.name === f.name ? { ...x, isRecurring: false } : x))
+    try {
+      if (f?.isRecurring) {
+        if (!window.confirm(`« ${f.name} » est récurrente.\nLa supprimer l'arrête : elle ne sera plus recréée chaque mois.`)) return
+        const { data: { user } } = await supabase.auth.getUser()
+        const { error: stopError } = await supabase.from('factures').update({ is_recurring: false })
+          .eq('user_id', user!.id).eq('name', f.name).eq('is_recurring', true)
+        if (stopError) throw stopError
+        setFactures(prev => prev.map(x => x.name === f.name ? { ...x, isRecurring: false } : x))
+      }
+      const { error } = await supabase.from('factures').delete().eq('id', id)
+      if (error) throw error
+      setFactures(prev => prev.filter(x => x.id !== id))
+    } catch {
+      window.alert('Impossible de supprimer la facture. Réessaie.')
     }
-    await supabase.from('factures').delete().eq('id', id)
-    setFactures(prev => prev.filter(x => x.id !== id))
   }
 
   async function toggleHistory(factureId: string) {
@@ -1381,74 +1350,67 @@ function FacturesSection() {
     setOpenHistoryId(factureId)
     if (!paymentsMap[factureId]) {
       setHistoryLoading(true)
-      const p = await fetchFacturePayments(factureId)
-      setPaymentsMap(prev => ({ ...prev, [factureId]: p }))
+      try {
+        const p = await fetchFacturePayments(factureId)
+        setPaymentsMap(prev => ({ ...prev, [factureId]: p }))
+      } catch {
+        window.alert("Impossible de charger l'historique. Réessaie.")
+        setOpenHistoryId(null)
+      }
       setHistoryLoading(false)
     }
   }
 
-  async function reloadPayments(factureId: string) {
-    const p = await fetchFacturePayments(factureId)
-    setPaymentsMap(prev => ({ ...prev, [factureId]: p }))
+  // Recharge l'historique d'une facture et recalcule son statut "payée" depuis la base
+  async function syncPaidStatus(factureId: string) {
+    const payments = await fetchFacturePayments(factureId)
+    setPaymentsMap(prev => ({ ...prev, [factureId]: payments }))
+    const facture = factures.find(f => f.id === factureId)
+    if (!facture) return
+    const totalPaid = payments.reduce((s, p) => s + p.amount, 0)
+    const nowPaid = totalPaid >= facture.amount
+    if (nowPaid !== facture.paid) {
+      const { error } = await supabase.from('factures').update({ paid: nowPaid }).eq('id', factureId)
+      if (error) throw error
+      setFactures(prev => prev.map(f => f.id === factureId ? { ...f, paid: nowPaid } : f))
+    }
   }
 
   async function handlePay(factureId: string) {
     const amt = Number(payAmount)
     if (!amt || amt <= 0) return
-    const facture = factures.find(f => f.id === factureId)!
-    await addFacturePayment(factureId, amt, payDate, payNote)
-    const existingPayments = paymentsMap[factureId] ?? []
-    const totalPaid = existingPayments.reduce((s, p) => s + p.amount, 0) + amt
-    const nowPaid = totalPaid >= facture.amount
-    if (nowPaid !== facture.paid) {
-      await supabase.from('factures').update({ paid: nowPaid }).eq('id', factureId)
-      setFactures(prev => prev.map(f => f.id === factureId ? { ...f, paid: nowPaid } : f))
+    try {
+      await addFacturePayment(factureId, amt, payDate, payNote)
+      await syncPaidStatus(factureId)
+      setPayingId(null); setPayAmount(''); setPayDate(new Date().toISOString().slice(0, 10)); setPayNote('')
+    } catch {
+      window.alert("Impossible d'enregistrer le paiement. Réessaie.")
     }
-    if (openHistoryId === factureId) {
-      const p = await fetchFacturePayments(factureId)
-      setPaymentsMap(prev => ({ ...prev, [factureId]: p }))
-    } else {
-      setPaymentsMap(prev => { const n = { ...prev }; delete n[factureId]; return n })
-    }
-    setPayingId(null); setPayAmount(''); setPayDate(new Date().toISOString().slice(0, 10)); setPayNote('')
   }
 
   async function handleEditPayment() {
     if (!editingPayment) return
     const newAmt = Number(editPayAmount)
     if (!newAmt || newAmt <= 0) return
-    await updateFacturePayment(editingPayment.id, newAmt, editPayDate, editPayNote)
-    await reloadPayments(editingPayment.factureId)
-    const payments = await fetchFacturePayments(editingPayment.factureId)
-    const totalPaid = payments.reduce((s, p) => s + p.amount, 0)
-    const facture = factures.find(f => f.id === editingPayment.factureId)
-    if (facture) {
-      const nowPaid = totalPaid >= facture.amount
-      if (nowPaid !== facture.paid) {
-        await supabase.from('factures').update({ paid: nowPaid }).eq('id', facture.id)
-        setFactures(prev => prev.map(f => f.id === facture.id ? { ...f, paid: nowPaid } : f))
-      }
+    try {
+      await updateFacturePayment(editingPayment.id, newAmt, editPayDate, editPayNote)
+      await syncPaidStatus(editingPayment.factureId)
+      setEditingPayment(null)
+    } catch {
+      window.alert('Impossible de modifier le paiement. Réessaie.')
     }
-    setEditingPayment(null)
   }
 
   async function handleDeletePayment(p: FacturePayment) {
-    await deleteFacturePayment(p.id)
-    await reloadPayments(p.factureId)
-    const payments = await fetchFacturePayments(p.factureId)
-    const totalPaid = payments.reduce((s, pay) => s + pay.amount, 0)
-    const facture = factures.find(f => f.id === p.factureId)
-    if (facture) {
-      const nowPaid = totalPaid >= facture.amount
-      if (nowPaid !== facture.paid) {
-        await supabase.from('factures').update({ paid: nowPaid }).eq('id', facture.id)
-        setFactures(prev => prev.map(f => f.id === facture.id ? { ...f, paid: nowPaid } : f))
-      }
+    try {
+      await deleteFacturePayment(p.id)
+      await syncPaidStatus(p.factureId)
+    } catch {
+      window.alert('Impossible de supprimer le paiement. Réessaie.')
     }
   }
 
   // ── Filtre de période + tri (non payées en haut, puis A→Z) ──
-  const range = getPeriodRange(period, customFrom, customTo)
   const visible = factures.filter(f => {
     const d = factureRefDate(f)
     return d >= range.from && d <= range.to
@@ -1468,6 +1430,14 @@ function FacturesSection() {
     : `⏳ ${visible.length - paidCount} facture${visible.length - paidCount > 1 ? 's' : ''} en attente · ${formatAmount(unpaidAmount)} à payer`
 
   if (loading) return <div className="card text-center py-8 text-ink-soft">Chargement...</div>
+  if (loadError) {
+    return (
+      <div className="card text-center py-8 space-y-3">
+        <p className="text-sm text-danger">Impossible de charger tes factures : {loadError}</p>
+        <button className="btn-ghost" onClick={loadFactures}>Réessayer</button>
+      </div>
+    )
+  }
 
   function renderCard(f: Facture) {
     return (
@@ -1494,31 +1464,7 @@ function FacturesSection() {
         </p>
       </div>
 
-      {/* Filtre de période */}
-      <div className="flex gap-1.5 overflow-x-auto">
-        {PERIODS.map(p => (
-          <button key={p.id} onClick={() => setPeriod(p.id)}
-            className={`flex-1 whitespace-nowrap px-3 py-2 rounded-xl text-xs font-bold border-2 transition-colors ${
-              period === p.id ? 'bg-yellow-500 text-white border-transparent' : 'bg-white text-ink-soft border-mist-dark'}`}>
-            {p.label}
-          </button>
-        ))}
-      </div>
-
-      {period === 'custom' && (
-        <div className="grid grid-cols-2 gap-2">
-          <div>
-            <label className="label">Du</label>
-            <input className="input" type="date" value={customFrom} max={customTo || undefined}
-              onChange={e => setCustomFrom(e.target.value)}/>
-          </div>
-          <div>
-            <label className="label">Au</label>
-            <input className="input" type="date" value={customTo} min={customFrom || undefined}
-              onChange={e => setCustomTo(e.target.value)}/>
-          </div>
-        </div>
-      )}
+      <PeriodFilter {...periodState} activeClass="bg-yellow-500 text-white" />
 
       {visible.length > 0 && (
         <div className="grid grid-cols-3 gap-2">
@@ -1784,9 +1730,8 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
   const [form, setForm] = useState({ name: '', limit: '', color: COLORS[0], periodMonths: 1 })
 
   // Filtre de période
-  const [period, setPeriod] = useState<Period>('1m')
-  const [customFrom, setCustomFrom] = useState(toYMD(new Date()))
-  const [customTo, setCustomTo] = useState(toYMD(new Date()))
+  const periodState = usePeriod()
+  const { period, range } = periodState
 
   async function loadBudgets() {
     try { setBudgets(await getBudgets()); setBudgetError(null) }
@@ -1795,7 +1740,6 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
   useEffect(() => { loadBudgets() }, [])
 
   // Cycle courant de chaque plafond + plage de données à charger
-  const range = getPeriodRange(period, customFrom, customTo)
   const rows = (budgets ?? []).map(b => ({ b, cycle: currentCycle(b.createdAt, b.periodMonths ?? 1) }))
   const minFrom = range.from < '2000-01-01' ? '2000-01-01' : range.from
   const fetchFrom = budgets ? rows.reduce((m, r) => (r.cycle.from < m ? r.cycle.from : m), minFrom) : null
@@ -1849,7 +1793,9 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
   }
 
   async function handleDelete(id: string) {
-    try { await deleteBudget(id) } finally { await loadBudgets() }
+    try { await deleteBudget(id) }
+    catch { window.alert('Impossible de supprimer le plafond. Réessaie.') }
+    finally { await loadBudgets() }
   }
 
   if (!budgets) {
@@ -1889,30 +1835,7 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
 
       {/* Filtre de période */}
       <p className="text-xs font-bold text-ink-soft uppercase tracking-wider">Voir mes dépenses sur</p>
-      <div className="flex gap-1.5 overflow-x-auto">
-        {PERIODS.map(p => (
-          <button key={p.id} onClick={() => setPeriod(p.id)}
-            className={`flex-1 whitespace-nowrap px-3 py-2 rounded-xl text-xs font-bold border-2 transition-colors ${
-              period === p.id ? 'bg-orange-500 text-white border-transparent' : 'bg-white text-ink-soft border-mist-dark'}`}>
-            {p.label}
-          </button>
-        ))}
-      </div>
-
-      {period === 'custom' && (
-        <div className="grid grid-cols-2 gap-2">
-          <div>
-            <label className="label">Du</label>
-            <input className="input" type="date" value={customFrom} max={customTo || undefined}
-              onChange={e => setCustomFrom(e.target.value)}/>
-          </div>
-          <div>
-            <label className="label">Au</label>
-            <input className="input" type="date" value={customTo} min={customFrom || undefined}
-              onChange={e => setCustomTo(e.target.value)}/>
-          </div>
-        </div>
-      )}
+      <PeriodFilter {...periodState} activeClass="bg-orange-500 text-white" />
 
       <div className="card bg-orange-50 border border-orange-200">
         <p className="text-xs font-bold text-orange-700 uppercase tracking-wide">Total dépenses · {PERIOD_LABEL[period]}</p>
@@ -2007,17 +1930,21 @@ function daysUntil(dateStr: string): number {
 }
 
 async function fetchHistory(debtId: string): Promise<DebtPaymentHistory[]> {
-  const { data } = await supabase.from('debt_payment_history').select('*').eq('debt_id', debtId).order('paid_at', { ascending: false })
+  const { data, error } = await supabase.from('debt_payment_history').select('*').eq('debt_id', debtId).order('paid_at', { ascending: false })
+  if (error) throw error
   return (data ?? []).map(r => ({ id: r.id, debtId: r.debt_id, amount: Number(r.amount), paidAt: r.paid_at, note: r.note ?? undefined, category: r.category ?? undefined }))
 }
 async function logPayment(debtId: string, amount: number, date: string, category: string, note?: string): Promise<void> {
-  await supabase.from('debt_payment_history').insert({ debt_id: debtId, amount, paid_at: date, category, note: note || null })
+  const { error } = await supabase.from('debt_payment_history').insert({ debt_id: debtId, amount, paid_at: date, category, note: note || null })
+  if (error) throw error
 }
 async function updatePayment(id: string, amount: number, date: string, note?: string): Promise<void> {
-  await supabase.from('debt_payment_history').update({ amount, paid_at: date, note: note || null }).eq('id', id)
+  const { error } = await supabase.from('debt_payment_history').update({ amount, paid_at: date, note: note || null }).eq('id', id)
+  if (error) throw error
 }
 async function deletePayment(id: string): Promise<void> {
-  await supabase.from('debt_payment_history').delete().eq('id', id)
+  const { error } = await supabase.from('debt_payment_history').delete().eq('id', id)
+  if (error) throw error
 }
 async function fetchCreditors(): Promise<{ id: string; name: string }[]> {
   const { data } = await supabase.from('debt_creditors').select('*').order('name')
@@ -2030,7 +1957,8 @@ async function saveCreditor(name: string): Promise<{ id: string; name: string }>
   return { id: data.id, name: data.name }
 }
 async function deleteCreditor(id: string): Promise<void> {
-  await supabase.from('debt_creditors').delete().eq('id', id)
+  const { error } = await supabase.from('debt_creditors').delete().eq('id', id)
+  if (error) throw error
 }
 
 function CreditorPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
@@ -2050,22 +1978,31 @@ function CreditorPicker({ value, onChange }: { value: string; onChange: (v: stri
   async function handleAdd() {
     if (!newName.trim()) return
     setAdding(true)
-    const c = await saveCreditor(newName.trim())
-    setCreditors(prev => {
-      const updated = [...prev, c]
-      return updated.sort((a, b) => {
-        if (a.name === 'Autre') return 1
-        if (b.name === 'Autre') return -1
-        return a.name.localeCompare(b.name)
+    try {
+      const c = await saveCreditor(newName.trim())
+      setCreditors(prev => {
+        const updated = [...prev, c]
+        return updated.sort((a, b) => {
+          if (a.name === 'Autre') return 1
+          if (b.name === 'Autre') return -1
+          return a.name.localeCompare(b.name)
+        })
       })
-    })
-    onChange(c.name); setNewName(''); setOpen(false); setAdding(false)
+      onChange(c.name); setNewName(''); setOpen(false)
+    } catch {
+      window.alert("Impossible d'ajouter le créancier. Réessaie.")
+    }
+    setAdding(false)
   }
   async function handleDelete(c: { id: string; name: string }, e: React.MouseEvent) {
     e.stopPropagation()
-    await deleteCreditor(c.id)
-    setCreditors(prev => prev.filter(x => x.id !== c.id))
-    if (value === c.name) onChange('')
+    try {
+      await deleteCreditor(c.id)
+      setCreditors(prev => prev.filter(x => x.id !== c.id))
+      if (value === c.name) onChange('')
+    } catch {
+      window.alert('Impossible de supprimer le créancier. Réessaie.')
+    }
   }
 
   return (
@@ -2128,9 +2065,8 @@ function DettesSection() {
   const { customCategories, addCustom, removeCustom, renameCustom } = useCustomCategories(() => { getDebts().then(setDebts) })
   const [expandedCreditors, setExpandedCreditors] = useState<Set<string>>(new Set())
   const [allPayments, setAllPayments] = useState<{ debtId: string; amount: number; paidAt: string }[]>([])
-  const [period, setPeriod] = useState<Period>('1m')
-  const [customFrom, setCustomFrom] = useState(toYMD(new Date()))
-  const [customTo, setCustomTo] = useState(toYMD(new Date()))
+  const periodState = usePeriod()
+  const { period, range } = periodState
   const ym = currentYearMonth()
 
   const [form, setForm] = useState({
@@ -2165,7 +2101,6 @@ function DettesSection() {
       monthlyPaid[p.debtId] = (monthlyPaid[p.debtId] || 0) + p.amount
   })
 
-  const range = getPeriodRange(period, customFrom, customTo)
   const periodPaidByDebt: Record<string, number> = {}
   allPayments.forEach(p => {
     if (p.paidAt >= range.from && p.paidAt <= range.to)
@@ -2212,15 +2147,24 @@ function DettesSection() {
     setOpenHistoryId(debtId)
     if (!historyMap[debtId]) {
       setHistoryLoading(true)
-      const h = await fetchHistory(debtId)
-      setHistoryMap(prev => ({ ...prev, [debtId]: h }))
+      try {
+        const h = await fetchHistory(debtId)
+        setHistoryMap(prev => ({ ...prev, [debtId]: h }))
+      } catch {
+        window.alert("Impossible de charger l'historique. Réessaie.")
+        setOpenHistoryId(null)
+      }
       setHistoryLoading(false)
     }
   }
   function invalidateHistory(debtId: string) { setHistoryMap(prev => { const n = { ...prev }; delete n[debtId]; return n }) }
   async function reloadHistory(debtId: string) {
-    const h = await fetchHistory(debtId)
-    setHistoryMap(prev => ({ ...prev, [debtId]: h }))
+    try {
+      const h = await fetchHistory(debtId)
+      setHistoryMap(prev => ({ ...prev, [debtId]: h }))
+    } catch {
+      invalidateHistory(debtId)
+    }
   }
 
   // Source de vérité : amount - somme des paiements. Pour une dette récurrente,
@@ -2277,10 +2221,24 @@ function DettesSection() {
       setDebts(prev => prev.map(d => d.id !== editingId ? d : updated))
       await syncRemaining(updated) // recalcule depuis l'historique réel, pas depuis l'ancien solde
     } else {
-      const newDebt = await addDebt({ ...debtData, remaining: Number(form.amount) || 0 })
-      setDebts(prev => [...prev, newDebt])
+      try {
+        const newDebt = await addDebt({ ...debtData, remaining: Number(form.amount) || 0 })
+        setDebts(prev => [...prev, newDebt])
+      } catch {
+        window.alert("Impossible d'ajouter la dette. Réessaie.")
+        return
+      }
     }
     resetForm(); setShowForm(false)
+  }
+
+  async function handleDeleteDebt(id: string) {
+    try {
+      await deleteDebt(id)
+      setDebts(prev => prev.filter(x => x.id !== id))
+    } catch {
+      window.alert('Impossible de supprimer la dette. Réessaie.')
+    }
   }
 
   async function handlePay(id: string) {
@@ -2344,30 +2302,7 @@ function DettesSection() {
         </p>
       </div>
 
-      <div className="flex gap-1.5 overflow-x-auto">
-        {PERIODS.map(p => (
-          <button key={p.id} onClick={() => setPeriod(p.id)}
-            className={`flex-1 whitespace-nowrap px-3 py-2 rounded-xl text-xs font-bold border-2 transition-colors ${
-              period === p.id ? 'bg-danger text-white border-transparent' : 'bg-white text-ink-soft border-mist-dark'}`}>
-            {p.label}
-          </button>
-        ))}
-      </div>
-
-      {period === 'custom' && (
-        <div className="grid grid-cols-2 gap-2">
-          <div>
-            <label className="label">Du</label>
-            <input className="input" type="date" value={customFrom} max={customTo || undefined}
-              onChange={e => setCustomFrom(e.target.value)}/>
-          </div>
-          <div>
-            <label className="label">Au</label>
-            <input className="input" type="date" value={customTo} min={customFrom || undefined}
-              onChange={e => setCustomTo(e.target.value)}/>
-          </div>
-        </div>
-      )}
+      <PeriodFilter {...periodState} activeClass="bg-danger text-white" />
 
       <div className="card bg-danger-light">
         <p className="text-xs font-bold text-danger uppercase tracking-wide">Remboursé · {PERIOD_LABEL[period]}</p>
@@ -2515,7 +2450,7 @@ function DettesSection() {
                       <div className="flex gap-1 mt-0.5">
                         <button className={`w-8 h-8 rounded-xl flex items-center justify-center transition-colors ${showHistory ? 'bg-accent text-white' : 'bg-mist hover:bg-accent-light text-ink-soft hover:text-accent'}`} onClick={() => toggleHistory(d.id)}><History size={14}/></button>
                         <button className="w-8 h-8 rounded-xl bg-mist hover:bg-mist-dark text-ink-soft hover:text-ink flex items-center justify-center" onClick={() => openEdit(d)}><Pencil size={14}/></button>
-                        <button className="w-8 h-8 rounded-xl bg-mist hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center" onClick={async () => { await deleteDebt(d.id); setDebts(prev => prev.filter(x => x.id !== d.id)) }}><Trash2 size={14}/></button>
+                        <button className="w-8 h-8 rounded-xl bg-mist hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center" onClick={() => handleDeleteDebt(d.id)}><Trash2 size={14}/></button>
                       </div>
                     </div>
                   </div>
@@ -2591,7 +2526,7 @@ function DettesSection() {
             <p className="text-sm text-ink-soft">Tu as remboursé cette dette entièrement. Veux-tu la supprimer ?</p>
             <div className="flex gap-2 mt-3">
               <button className="btn-ghost flex-1" onClick={() => setConfirmDeleteId(null)}>Garder</button>
-              <button className="btn-primary flex-1" style={{ backgroundColor: '#DC2626' }} onClick={async () => { await deleteDebt(confirmDeleteId); setDebts(prev => prev.filter(d => d.id !== confirmDeleteId)); setConfirmDeleteId(null) }}>Oui, supprimer</button>
+              <button className="btn-primary flex-1" style={{ backgroundColor: '#DC2626' }} onClick={async () => { await handleDeleteDebt(confirmDeleteId); setConfirmDeleteId(null) }}>Oui, supprimer</button>
             </div>
           </div>
         </div>
@@ -2658,7 +2593,8 @@ function DettesSection() {
 
 // ─── Savings helpers ──────────────────────────────────────────────────────────
 async function fetchSavingsDeposits(goalId: string): Promise<SavingsDeposit[]> {
-  const { data } = await supabase.from('savings_deposits').select('*').eq('goal_id', goalId).order('deposited_at', { ascending: false })
+  const { data, error } = await supabase.from('savings_deposits').select('*').eq('goal_id', goalId).order('deposited_at', { ascending: false })
+  if (error) throw error
   return (data ?? []).map(r => ({
     id: r.id, goalId: r.goal_id, amount: Number(r.amount),
     isWithdrawal: r.is_withdrawal ?? false, note: r.note ?? undefined,
@@ -2666,13 +2602,16 @@ async function fetchSavingsDeposits(goalId: string): Promise<SavingsDeposit[]> {
   }))
 }
 async function addSavingsDeposit(goalId: string, amount: number, isWithdrawal: boolean, note: string, date: string): Promise<void> {
-  await supabase.from('savings_deposits').insert({ goal_id: goalId, amount, is_withdrawal: isWithdrawal, note: note || null, deposited_at: date })
+  const { error } = await supabase.from('savings_deposits').insert({ goal_id: goalId, amount, is_withdrawal: isWithdrawal, note: note || null, deposited_at: date })
+  if (error) throw error
 }
 async function updateSavingsDeposit(id: string, amount: number, note: string, date: string): Promise<void> {
-  await supabase.from('savings_deposits').update({ amount, note: note || null, deposited_at: date }).eq('id', id)
+  const { error } = await supabase.from('savings_deposits').update({ amount, note: note || null, deposited_at: date }).eq('id', id)
+  if (error) throw error
 }
 async function deleteSavingsDeposit(id: string): Promise<void> {
-  await supabase.from('savings_deposits').delete().eq('id', id)
+  const { error } = await supabase.from('savings_deposits').delete().eq('id', id)
+  if (error) throw error
 }
 
 function monthsBetween(from: Date, to: Date): number {
@@ -2706,7 +2645,12 @@ function EpargneSection() {
   const [editDepDate, setEditDepDate] = useState('')
   const [form, setForm] = useState({ name: '', target: '', emoji: EMOJIS[0], targetDate: '' })
 
-  useEffect(() => { getSavings().then(setGoals).finally(() => setLoading(false)) }, [])
+  useEffect(() => {
+    getSavings()
+      .then(setGoals)
+      .catch(() => window.alert('Impossible de charger tes objectifs. Réessaie.'))
+      .finally(() => setLoading(false))
+  }, [])
 
   const sortedGoals = [...goals].sort((a, b) => {
     const pctA = a.target > 0 ? a.saved / a.target : 0
@@ -2719,14 +2663,18 @@ function EpargneSection() {
 
   async function handleAdd() {
     if (!form.name || !form.target) return
-    const newGoal = await addSavingsGoal({
-      name: form.name, target: Number(form.target), saved: 0, emoji: form.emoji,
-      category: 'Épargne',
-      ...({ targetDate: form.targetDate || null } as any)
-    })
-    setGoals(prev => [...prev, newGoal])
-    setForm({ name: '', target: '', emoji: EMOJIS[0], targetDate: '' })
-    setShowForm(false)
+    try {
+      const newGoal = await addSavingsGoal({
+        name: form.name, target: Number(form.target), saved: 0, emoji: form.emoji,
+        category: 'Épargne',
+        ...({ targetDate: form.targetDate || null } as any)
+      })
+      setGoals(prev => [...prev, newGoal])
+      setForm({ name: '', target: '', emoji: EMOJIS[0], targetDate: '' })
+      setShowForm(false)
+    } catch {
+      window.alert("Impossible de créer l'objectif. Réessaie.")
+    }
   }
 
   async function handleDeposit() {
@@ -2735,8 +2683,13 @@ function EpargneSection() {
     const amt = Number(depositAmount)
     const delta = isWithdrawal ? -amt : amt
     const newSaved = Math.max(0, goal.saved + delta)
-    await addSavingsDeposit(depositGoalId, amt, isWithdrawal, depositNote, depositDate)
-    await updateSavingsGoal(depositGoalId, newSaved)
+    try {
+      await addSavingsDeposit(depositGoalId, amt, isWithdrawal, depositNote, depositDate)
+      await updateSavingsGoal(depositGoalId, newSaved)
+    } catch {
+      window.alert("Impossible d'enregistrer le mouvement. Réessaie.")
+      return
+    }
     setGoals(prev => prev.map(g => g.id === depositGoalId ? { ...g, saved: newSaved } : g))
     if (!isWithdrawal && newSaved >= goal.target && goal.saved < goal.target && !celebratedGoals.has(depositGoalId)) {
       setShowConfetti(true)
@@ -2751,8 +2704,13 @@ function EpargneSection() {
     setOpenHistoryId(goalId)
     if (!depositsMap[goalId]) {
       setHistoryLoading(true)
-      const d = await fetchSavingsDeposits(goalId)
-      setDepositsMap(prev => ({ ...prev, [goalId]: d }))
+      try {
+        const d = await fetchSavingsDeposits(goalId)
+        setDepositsMap(prev => ({ ...prev, [goalId]: d }))
+      } catch {
+        window.alert("Impossible de charger l'historique. Réessaie.")
+        setOpenHistoryId(null)
+      }
       setHistoryLoading(false)
     }
   }
@@ -2767,27 +2725,46 @@ function EpargneSection() {
     if (!newAmt || newAmt <= 0) return
     const oldAmt = editingDeposit.amount
     const diff = editingDeposit.isWithdrawal ? (oldAmt - newAmt) : (newAmt - oldAmt)
-    await updateSavingsDeposit(editingDeposit.id, newAmt, editDepNote, editDepDate)
-    const goal = goals.find(g => g.id === editingDeposit.goalId)
-    if (goal) {
-      const newSaved = Math.max(0, goal.saved + diff)
-      await updateSavingsGoal(goal.id, newSaved)
-      setGoals(prev => prev.map(g => g.id === goal.id ? { ...g, saved: newSaved } : g))
+    try {
+      await updateSavingsDeposit(editingDeposit.id, newAmt, editDepNote, editDepDate)
+      const goal = goals.find(g => g.id === editingDeposit.goalId)
+      if (goal) {
+        const newSaved = Math.max(0, goal.saved + diff)
+        await updateSavingsGoal(goal.id, newSaved)
+        setGoals(prev => prev.map(g => g.id === goal.id ? { ...g, saved: newSaved } : g))
+      }
+      await reloadDeposits(editingDeposit.goalId)
+      setEditingDeposit(null)
+    } catch {
+      window.alert('Impossible de modifier le mouvement. Réessaie.')
     }
-    await reloadDeposits(editingDeposit.goalId)
-    setEditingDeposit(null)
   }
 
   async function handleDeleteDeposit(d: SavingsDeposit) {
-    const goal = goals.find(g => g.id === d.goalId)
-    if (goal) {
-      const delta = d.isWithdrawal ? d.amount : -d.amount
-      const newSaved = Math.max(0, goal.saved + delta)
-      await updateSavingsGoal(goal.id, newSaved)
-      setGoals(prev => prev.map(g => g.id === goal.id ? { ...g, saved: newSaved } : g))
+    try {
+      // On supprime d'abord le mouvement : si ça échoue, le solde n'est pas touché
+      await deleteSavingsDeposit(d.id)
+      const goal = goals.find(g => g.id === d.goalId)
+      if (goal) {
+        const delta = d.isWithdrawal ? d.amount : -d.amount
+        const newSaved = Math.max(0, goal.saved + delta)
+        await updateSavingsGoal(goal.id, newSaved)
+        setGoals(prev => prev.map(g => g.id === goal.id ? { ...g, saved: newSaved } : g))
+      }
+      await reloadDeposits(d.goalId)
+    } catch {
+      window.alert('Impossible de supprimer le mouvement. Réessaie.')
     }
-    await deleteSavingsDeposit(d.id)
-    await reloadDeposits(d.goalId)
+  }
+
+  async function handleDeleteGoal(id: string) {
+    try {
+      await deleteSavingsGoal(id)
+      setGoals(prev => prev.filter(g => g.id !== id))
+      setConfirmDeleteId(null)
+    } catch {
+      window.alert("Impossible de supprimer l'objectif. Réessaie.")
+    }
   }
 
   if (loading) return <div className="card text-center py-8 text-ink-soft">Chargement...</div>
@@ -2921,7 +2898,7 @@ function EpargneSection() {
             <p className="text-sm text-ink-soft">Cette action est irréversible.</p>
             <div className="flex gap-2 mt-3">
               <button className="btn-ghost flex-1" onClick={() => setConfirmDeleteId(null)}>Annuler</button>
-              <button className="btn-primary flex-1" style={{ backgroundColor: '#DC2626' }} onClick={async () => { await deleteSavingsGoal(confirmDeleteId); setGoals(prev => prev.filter(g => g.id !== confirmDeleteId)); setConfirmDeleteId(null) }}>Supprimer</button>
+              <button className="btn-primary flex-1" style={{ backgroundColor: '#DC2626' }} onClick={() => handleDeleteGoal(confirmDeleteId)}>Supprimer</button>
             </div>
           </div>
         </div>
