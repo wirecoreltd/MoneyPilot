@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { isoDate } from './finance'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -116,11 +117,13 @@ export async function getMonthlyChecklist(month: string): Promise<ChecklistItem[
   const eligibleDebts = debts.filter(d => d.type === 'owe' && d.minimumPayment > 0)
   let checks: { debt_id: string; paid: boolean; amount: number }[] = []
   if (eligibleDebts.length > 0) {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('debt_payment_checks')
       .select('debt_id, paid, amount')
       .in('debt_id', eligibleDebts.map(d => d.id))
       .eq('month', month)
+    // Sans ça, un échec afficherait toutes les dettes comme « non payées »
+    if (error) throw error
     checks = data ?? []
   }
 
@@ -147,9 +150,9 @@ function nextMonthStart(month: string): string {
 }
 
 // Date enregistrée dans l'historique pour un paiement coché dans la checklist du mois :
-// aujourd'hui si c'est le mois en cours, sinon le 1er du mois coché.
+// aujourd'hui (date LOCALE, pas UTC) si c'est le mois en cours, sinon le 1er du mois coché.
 function checklistPaidAt(month: string): string {
-  const today = new Date().toISOString().slice(0, 10)
+  const today = isoDate(new Date())
   return today.startsWith(month) ? today : `${month}-01`
 }
 
@@ -522,11 +525,12 @@ export async function deleteBudget(id: string): Promise<void> {
 export async function getSavings(): Promise<SavingsGoal[]> {
   const userId = await getUserId()
 
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('savings_goals')
     .select('*')
     .eq('user_id', userId)
     .order('created_at', { ascending: true })
+  if (error) throw error
 
   return (data ?? []).map(r => ({
     id:        r.id,
@@ -575,11 +579,12 @@ export async function deleteSavingsGoal(id: string): Promise<void> {
 export async function getDebts(): Promise<Debt[]> {
   const userId = await getUserId()
 
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('debts')
     .select('*')
     .eq('user_id', userId)
     .order('created_at', { ascending: true })
+  if (error) throw error
 
   return (data ?? []).map(r => ({
     id:             r.id,
@@ -660,11 +665,12 @@ export async function deleteDebt(id: string): Promise<void> {
 // ─── Debt Payment History ─────────────────────────────────────────────────────
 
 export async function getDebtPaymentHistory(debtId: string): Promise<DebtPaymentHistory[]> {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('debt_payment_history')
     .select('*')
     .eq('debt_id', debtId)
     .order('paid_at', { ascending: false })
+  if (error) throw error
 
   return (data ?? []).map(r => ({
     id:        r.id,
@@ -685,7 +691,7 @@ export async function addDebtPaymentHistory(
   const { error } = await supabase.from('debt_payment_history').insert({
     debt_id:  debtId,
     amount,
-    paid_at:  paidAt ?? new Date().toISOString().slice(0, 10),
+    paid_at:  paidAt ?? isoDate(new Date()),
     category: category ?? null,
   })
   if (error) throw error
@@ -696,11 +702,12 @@ export async function addDebtPaymentHistory(
 export async function getRecurringPayments(): Promise<RecurringPayment[]> {
   const userId = await getUserId()
 
-  const { data: payments } = await supabase
+  const { data: payments, error } = await supabase
     .from('recurring_payments')
     .select('*, recurring_payment_checks(*)')
     .eq('user_id', userId)
     .order('name', { ascending: true })
+  if (error) throw error
 
   return (payments ?? []).map(r => ({
     id:            r.id,
@@ -804,7 +811,8 @@ export async function getMonthlyIncomes(month?: string): Promise<MonthlyIncome[]
 
   if (month) query = query.eq('month', month)
 
-  const { data } = await query.order('created_at', { ascending: true })
+  const { data, error } = await query.order('created_at', { ascending: true })
+  if (error) throw error
 
   return (data ?? []).map(r => ({
     id:      r.id,
@@ -838,11 +846,12 @@ export async function deleteMonthlyIncome(id: string): Promise<void> {
 export async function getProjects(): Promise<Project[]> {
   const userId = await getUserId()
 
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('projects')
     .select('*')
     .eq('user_id', userId)
     .order('created_at', { ascending: true })
+  if (error) throw error
 
   return (data ?? []).map(r => ({
     id:                  r.id,
@@ -912,7 +921,9 @@ export async function deleteProject(id: string): Promise<void> {
   if (error) throw error
 }
 
-// ─── Health Score ─────────────────────────────────────────────────────────────
+// ─── Health Score (ANCIENNE version) ──────────────────────────────────────────
+// ⚠️ Ne plus utiliser : la source de vérité est computeHealthScore de lib/finance.ts.
+// Conservée uniquement pour les écrans qui l'appellent encore ; à supprimer ensuite.
 
 export function computeHealthScore(
   transactions: Transaction[],
@@ -964,7 +975,8 @@ export function computeHealthScore(
   return { score, label, color, details }
 }
 
-// ─── Coach Plan ───────────────────────────────────────────────────────────────
+// ─── Coach Plan (ANCIENNE version) ────────────────────────────────────────────
+// ⚠️ Ne plus utiliser : la source de vérité est buildCoachPlan de lib/finance.ts.
 
 export interface CoachPlan {
   totalIncome: number
