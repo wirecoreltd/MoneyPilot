@@ -3,7 +3,7 @@ import { useState, useRef, useEffect } from 'react'
 import { Plus, X, MessageCircle, Send, ChevronRight, AlertCircle, Clock, Target } from 'lucide-react'
 import {
   Transaction, TransactionType, EXPENSE_CATEGORIES, INCOME_CATEGORIES,
-  BudgetCategory, addTransaction, getBudgets, formatAmount, UserProfile,
+  BudgetCategory, addTransaction, getBudgets, getUserFast, formatAmount, UserProfile,
 } from '@/lib/storage'
 import { currentYearMonth, isoDate, monthLabel } from '@/lib/finance'
 import { useMonthSummary } from '@/lib/useMonthSummary'
@@ -147,7 +147,7 @@ function usePeriodFlows(from: string, to: string) {
     setFlows(null)
     ;(async () => {
       try {
-        const { data: { user } } = await supabase.auth.getUser()
+        const { data: { user } } = await getUserFast()
         if (!user) throw new Error('Non authentifié')
         const end = nextDay(to)
 
