@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { Plus, X, Trash2, Pencil } from 'lucide-react'
 import {
   Project, getProjects, addProject, updateProject, deleteProject,
@@ -24,23 +24,39 @@ const EMPTY_FORM = {
   targetDate: '', monthlyContribution: '', note: '',
 }
 
+// Les erreurs Supabase sont des objets simples, pas des instances d'Error
+function errMsg(e: unknown): string {
+  if (e instanceof Error && e.message) return e.message
+  const m = (e as { message?: unknown } | null)?.message
+  return typeof m === 'string' && m ? m : 'Erreur de chargement'
+}
+
 export default function ProjectsTab() {
   const [projects,   setProjects]  = useState<Project[]>([])
   const [loading,    setLoading]   = useState(true)
+  const [loadError,  setLoadError] = useState<string | null>(null)
+  const [saving,     setSaving]    = useState(false)
   const [showForm,   setShowForm]  = useState(false)
   const [editingId,  setEditingId] = useState<string | null>(null)
   const [addingTo,   setAddingTo]  = useState<string | null>(null)
   const [addAmount,  setAddAmount] = useState('')
   const [form,       setForm]      = useState(EMPTY_FORM)
 
-  async function reload() {
-    const data = await getProjects()
-    setProjects(data)
-  }
+  // Ne lance jamais d'exception : en cas d'échec, loadError est renseigné
+  const load = useCallback(async () => {
+    setLoadError(null)
+    try {
+      setProjects(await getProjects())
+    } catch (e) {
+      console.error('Chargement des projets échoué :', e)
+      setLoadError(errMsg(e))
+    }
+  }, [])
 
   useEffect(() => {
-    reload().finally(() => setLoading(false))
-  }, [])
+    setLoading(true)
+    load().finally(() => setLoading(false))
+  }, [load])
 
   function openAdd() {
     setForm(EMPTY_FORM)
@@ -64,9 +80,11 @@ export default function ProjectsTab() {
   }
 
   async function handleSubmit() {
-    if (!form.name || !form.targetAmount || !form.targetDate) return
-    if (editingId) {
-      await updateProject(editingId, {
+    if (saving) return
+    if (!form.name || !form.targetDate || !(Number(form.targetAmount) > 0)) return
+    setSaving(true)
+    try {
+      const payload = {
         name:                form.name,
         emoji:               form.emoji,
         type:                form.type,
@@ -75,37 +93,50 @@ export default function ProjectsTab() {
         targetDate:          form.targetDate,
         monthlyContribution: Number(form.monthlyContribution) || 0,
         note:                form.note || undefined,
-      })
-    } else {
-      await addProject({
-        name:                form.name,
-        emoji:               form.emoji,
-        type:                form.type,
-        targetAmount:        Number(form.targetAmount),
-        savedAmount:         Number(form.savedAmount) || 0,
-        targetDate:          form.targetDate,
-        monthlyContribution: Number(form.monthlyContribution) || 0,
-        note:                form.note || undefined,
-      })
+      }
+      if (editingId) await updateProject(editingId, payload)
+      else await addProject(payload)
+    } catch (e) {
+      console.error('Enregistrement du projet échoué :', e)
+      window.alert(editingId
+        ? 'Impossible de modifier le projet. Réessaie.'
+        : 'Impossible de créer le projet. Réessaie.')
+      setSaving(false)
+      return // on garde le formulaire ouvert et rempli
     }
     setForm(EMPTY_FORM)
     setEditingId(null)
     setShowForm(false)
-    reload()
+    setSaving(false)
+    await load()
   }
 
   async function handleDeposit(id: string) {
     const amt = Number(addAmount)
     if (!amt || amt <= 0) return
-    const p = projects.find(x => x.id === id)!
-    await updateProject(id, { savedAmount: p.savedAmount + amt })
+    const p = projects.find(x => x.id === id)
+    if (!p) return
+    try {
+      await updateProject(id, { savedAmount: p.savedAmount + amt })
+    } catch (e) {
+      console.error('Ajout au projet échoué :', e)
+      window.alert("Impossible d'ajouter cet argent. Réessaie.")
+      return // le champ de saisie reste ouvert
+    }
     setAddingTo(null); setAddAmount('')
-    reload()
+    await load()
   }
 
-  async function handleDelete(id: string) {
-    await deleteProject(id)
-    reload()
+  async function handleDelete(p: Project) {
+    if (!window.confirm(`Supprimer « ${p.name} » ?\nCette action est irréversible.`)) return
+    try {
+      await deleteProject(p.id)
+    } catch (e) {
+      console.error('Suppression du projet échouée :', e)
+      window.alert('Impossible de supprimer le projet. Réessaie.')
+      return
+    }
+    await load()
   }
 
   const tip = useMemo(() => {
@@ -124,8 +155,27 @@ export default function ProjectsTab() {
 
   if (loading) return <div className="card text-center py-8 text-ink-soft">Chargement...</div>
 
+  // Échec du premier chargement : on n'affiche PAS « Aucun projet »
+  if (loadError && projects.length === 0) {
+    return (
+      <div className="card text-center py-8 space-y-3">
+        <p className="text-sm text-danger">Impossible de charger tes projets : {loadError}</p>
+        <button className="btn-ghost" onClick={() => { setLoading(true); load().finally(() => setLoading(false)) }}>
+          Réessayer
+        </button>
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-4">
+      {loadError && (
+        <div className="card bg-red-50 border border-red-100 flex items-center justify-between gap-3">
+          <p className="text-xs text-red-700">Impossible d'actualiser tes projets : {loadError}</p>
+          <button onClick={load} className="text-xs font-semibold text-red-700 underline flex-shrink-0">Réessayer</button>
+        </div>
+      )}
+
       <CoachTip message={tip} />
 
       <button onClick={openAdd} className="btn-primary w-full gap-2 text-base py-4">
@@ -148,8 +198,8 @@ export default function ProjectsTab() {
                 {typeEmoji} {typeLabel}
               </p>
               {list.map(p => {
-                const pct      = Math.min(100, (p.savedAmount / p.targetAmount) * 100)
-                const done     = p.savedAmount >= p.targetAmount
+                const pct      = p.targetAmount > 0 ? Math.min(100, (p.savedAmount / p.targetAmount) * 100) : 0
+                const done     = p.targetAmount > 0 && p.savedAmount >= p.targetAmount
                 const months   = monthsUntil(p.targetDate)
                 const needed   = projectMonthlyNeeded(p)
                 const isBehind = needed > p.monthlyContribution && p.monthlyContribution > 0
@@ -173,7 +223,7 @@ export default function ProjectsTab() {
                           className="w-8 h-8 rounded-xl bg-mist hover:bg-accent-light text-ink-soft hover:text-accent flex items-center justify-center">
                           <Pencil size={14}/>
                         </button>
-                        <button onClick={() => handleDelete(p.id)}
+                        <button onClick={() => handleDelete(p)}
                           className="w-8 h-8 rounded-xl bg-mist hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center">
                           <Trash2 size={14}/>
                         </button>
@@ -309,8 +359,8 @@ export default function ProjectsTab() {
                 value={form.note} onChange={e => setForm(f => ({...f, note: e.target.value}))}/>
             </div>
 
-            <button className="btn-primary w-full py-4 text-base" onClick={handleSubmit}>
-              {editingId ? 'Enregistrer les modifications' : 'Créer le projet'}
+            <button className="btn-primary w-full py-4 text-base" onClick={handleSubmit} disabled={saving}>
+              {saving ? 'Enregistrement...' : editingId ? 'Enregistrer les modifications' : 'Créer le projet'}
             </button>
           </div>
         </div>
