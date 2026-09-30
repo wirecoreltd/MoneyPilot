@@ -36,6 +36,8 @@ export interface BudgetCategory {
   color: string
   periodMonths?: number   // 1 | 3 | 6 | 12 | 36 (durée du plafond en mois)
   createdAt?: string      // début du 1er cycle du plafond
+  startDate?: string | null  // plage perso : début (inclus)
+  endDate?: string | null 
 }
 
 export interface SavingsGoal {
@@ -459,6 +461,8 @@ function mapBudget(r: any): BudgetCategory {
     color:        r.color,
     periodMonths: r.period_months ?? 1,
     createdAt:    r.created_at ?? undefined,
+    startDate:    r.start_date ?? null,
+    endDate:      r.end_date ?? null,
   }
 }
 
@@ -495,6 +499,8 @@ export async function addBudget(b: Omit<BudgetCategory, 'id'>): Promise<BudgetCa
       limit:         b.limit,
       color:         b.color,
       period_months: b.periodMonths ?? 1,
+      start_date:    b.startDate ?? null,
+      end_date:      b.endDate ?? null,
     })
     .select()
     .single()
@@ -505,13 +511,18 @@ export async function addBudget(b: Omit<BudgetCategory, 'id'>): Promise<BudgetCa
 
 export async function updateBudget(
   id: string,
-  fields: { name?: string; limit?: number; color?: string; periodMonths?: number },
+  fields: {
+    name?: string; limit?: number; color?: string; periodMonths?: number
+    startDate?: string | null; endDate?: string | null
+  },
 ): Promise<void> {
   const update: Record<string, unknown> = {}
   if (fields.name         !== undefined) update.name          = fields.name
   if (fields.limit        !== undefined) update.limit         = fields.limit
   if (fields.color        !== undefined) update.color         = fields.color
   if (fields.periodMonths !== undefined) update.period_months = fields.periodMonths
+  if (fields.startDate    !== undefined) update.start_date    = fields.startDate
+  if (fields.endDate      !== undefined) update.end_date      = fields.endDate
   const { error } = await supabase.from('budget_categories').update(update).eq('id', id)
   if (error) throw error
 }
