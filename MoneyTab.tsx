@@ -8,7 +8,7 @@ import {
   getBudgets, addBudget, deleteBudget,
   getSavings, addSavingsGoal, updateSavingsGoal, deleteSavingsGoal,
   getDebts, addDebt, updateDebt, deleteDebt,
-  formatAmount, currentYearMonth,
+  formatAmount, currentYearMonth, hasStarted,
 } from '@/lib/storage'
 import CoachTip from './CoachTip'
 import { supabase } from '@/lib/supabase'
@@ -80,6 +80,7 @@ interface RevenuSource {
 
 const COLORS = ['#F59E0B','#3B82F6','#8B5CF6','#EF4444','#10B981','#F97316']
 const EMOJIS = ['🏖️','🚗','🏠','💻','📱','✈️','🎓','💍','💰','🎮','👶']
+const startLabel = (ymd: string) => new Date(ymd).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })
 
 // ─── Catégories unifiées ──────────────────────────────────────────────────────
 // Utilisées par transactions, budget, dettes ET factures
@@ -2099,7 +2100,7 @@ function DettesSection() {
   const [form, setForm] = useState({
     type: 'owe' as 'owe' | 'owed',
     person: '', amount: '', minimumPayment: '', interestRate: '',
-    note: '', dueDate: '', recurring: false, category: 'Autre',
+    note: '', dueDate: '', paymentStartDate: '', recurring: false, category: 'Autre',
   })
 
   // Charge tous les remboursements ; RENVOIE la liste fraîche (l'état React n'est pas encore à jour au retour)
@@ -2149,10 +2150,11 @@ function DettesSection() {
   const totalOwe  = debts.filter(d => d.type === 'owe').reduce((s, d) => s + d.remaining, 0)
   const totalOwed = debts.filter(d => d.type === 'owed').reduce((s, d) => s + d.remaining, 0)
   const oweDebts = debts.filter(d => d.type === 'owe')
-  const totalMonthlyMin = oweDebts.reduce((s, d) => s + (d.minimumPayment || 0), 0)
-  const totalMonthlyPaid = Object.values(monthlyPaid).reduce((s, v) => s + v, 0)
-  const debtsPaidThisMonth = oweDebts.filter(d => (monthlyPaid[d.id] || 0) >= (d.minimumPayment || 0)).length
-  const debtsStillDue = oweDebts.filter(d => (monthlyPaid[d.id] || 0) < (d.minimumPayment || 0)).length
+  const activeOweDebts = oweDebts.filter(d => hasStarted(d.paymentStartDate))
+  const totalMonthlyMin = activeOweDebts.reduce((s, d) => s + (d.minimumPayment || 0), 0)
+  const totalMonthlyPaid = activeOweDebts.reduce((s, d) => s + (monthlyPaid[d.id] || 0), 0)
+  const debtsPaidThisMonth = activeOweDebts.filter(d => (monthlyPaid[d.id] || 0) >= (d.minimumPayment || 0)).length
+  const debtsStillDue = activeOweDebts.filter(d => (monthlyPaid[d.id] || 0) < (d.minimumPayment || 0)).length
 
   const tip = debts.length > 0
     ? `💪 Continue tes remboursements régulièrement, chaque paiement compte !`
@@ -2165,7 +2167,7 @@ function DettesSection() {
   }, {} as Record<string, Debt[]>)
 
   function resetForm() {
-    setForm({ type:'owe', person:'', amount:'', minimumPayment:'', interestRate:'', note:'', dueDate:'', recurring: false, category: 'Autre' })
+    setForm({ type:'owe', person:'', amount:'', minimumPayment:'', interestRate:'', note:'', dueDate:'', paymentStartDate:'', recurring: false, category: 'Autre' })
     setEditingId(null)
   }
   function openEdit(d: Debt) {
@@ -2173,7 +2175,7 @@ function DettesSection() {
       type: d.type, person: d.person, amount: String(d.amount),
       minimumPayment: d.minimumPayment ? String(d.minimumPayment) : '',
       interestRate: d.interestRate !== undefined ? String(d.interestRate) : '',
-      note: d.note || '', dueDate: d.dueDate || '',
+      note: d.note || '', dueDate: d.dueDate || '', paymentStartDate: d.paymentStartDate ?? '',
       recurring: (d as any).recurring ?? false,
       category: (d as any).category ?? 'Autre',
     })
@@ -2244,6 +2246,7 @@ function DettesSection() {
       minimumPayment: Number(form.minimumPayment) || 0,
       interestRate: form.interestRate ? Number(form.interestRate) : undefined,
       note: form.note, dueDate: form.dueDate || undefined,
+      paymentStartDate: form.paymentStartDate,
       recurring: form.recurring, category: form.category,
     } as any
 
@@ -2379,7 +2382,7 @@ function DettesSection() {
         </div>
       </div>
 
-      {oweDebts.length > 0 && (
+     {activeOweDebts.length > 0 && (
         <div className="card border-2 border-blue-200 bg-blue-50 space-y-2">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -2396,7 +2399,7 @@ function DettesSection() {
               <p className="text-xs text-blue-600">remboursés sur {formatAmount(totalMonthlyMin)} prévus</p>
             </div>
             <div className="text-right">
-              <p className="text-sm font-bold text-blue-700">{debtsPaidThisMonth}/{oweDebts.length}</p>
+              <p className="text-sm font-bold text-blue-700">{debtsPaidThisMonth}/{activeOweDebts.length}</p>
               <p className="text-xs text-blue-500">dettes payées</p>
             </div>
           </div>
@@ -2446,6 +2449,7 @@ function DettesSection() {
               const debtHistory  = historyMap[d.id] ?? []
               const paidThisMonth = monthlyPaid[d.id] || 0
               const stillDue = Math.max(0, (d.minimumPayment || 0) - paidThisMonth)
+              const notStarted = !hasStarted(d.paymentStartDate)
 
               let dueBadge: React.ReactNode = null
               if (d.dueDate) {
@@ -2473,15 +2477,20 @@ function DettesSection() {
                             Min. <span className="font-semibold text-ink">{formatAmount(d.minimumPayment)}</span>/mois
                           </span>
                         )}
-                        {end && !isRecurring && (
+                        {end && !isRecurring && !notStarted && (
                           end.neverEnds
                             ? <span className="text-xs text-danger font-semibold">⚠️ Le minimum ne couvre pas les intérêts</span>
                             : <span className="text-xs text-ink-soft">{end.text}</span>
                         )}
                       </div>
-                      {d.type === 'owe' && d.minimumPayment > 0 && (
-                        <div className="mt-1.5">
-                          {paidThisMonth >= d.minimumPayment ? (
+                      {notStarted && d.paymentStartDate && (
+                            <div className="mt-1.5">
+                              <span className="text-xs bg-blue-50 text-accent px-2 py-0.5 rounded-full font-semibold">⏳ Paiements dès {startLabel(d.paymentStartDate)}</span>
+                            </div>
+                          )}
+                          {!notStarted && d.type === 'owe' && d.minimumPayment > 0 && (
+                            <div className="mt-1.5">
+                              {paidThisMonth >= d.minimumPayment ? (
                             <span className="text-xs bg-positive-light text-positive px-2 py-0.5 rounded-full font-semibold">✅ Payé ce mois</span>
                           ) : paidThisMonth > 0 ? (
                             <span className="text-xs bg-warning-light text-warning px-2 py-0.5 rounded-full font-semibold">⚡ {formatAmount(stillDue)} restant ce mois</span>
@@ -2622,6 +2631,9 @@ function DettesSection() {
             <div><label className="label">Taux d'intérêt annuel % (optionnel)</label><input className="input" type="number" placeholder="Ex: 12" value={form.interestRate} onChange={e => setForm(f => ({...f, interestRate: e.target.value}))}/></div>
             <div><label className="label">Note</label><input className="input" placeholder="Ex: Crédit voiture Honda" value={form.note} onChange={e => setForm(f => ({...f, note: e.target.value}))}/></div>
             <div><label className="label">Échéance finale (optionnel)</label><input className="input" type="date" value={form.dueDate} onChange={e => setForm(f => ({...f, dueDate: e.target.value}))}/></div>
+            <div><label className="label">Début des remboursements (optionnel)</label><input className="input" type="date" value={form.paymentStartDate} onChange={e => setForm(f => ({...f, paymentStartDate: e.target.value}))}/>
+              <p className="text-[11px] text-ink-soft mt-1">Ex : crédit pris en septembre, premier paiement en janvier. Avant cette date, la dette n'est pas comptée « à payer ce mois ».</p>
+            </div>
             <div className="flex items-center justify-between p-3 bg-blue-50 rounded-2xl border border-blue-100">
               <div>
                 <p className="text-sm font-bold text-accent">🔄 Paiement récurrent</p>
