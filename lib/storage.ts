@@ -597,7 +597,7 @@ export async function getDebts(): Promise<Debt[]> {
     interestRate:   r.interest_rate ?? undefined,
     note:           r.note ?? '',
     dueDate:        r.due_date ?? undefined,
-    paymentStartDate: r.payment_start_date ?? undefined
+    paymentStartDate: r.payment_start_date ?? undefined,
     recurring:      r.recurring ?? false,
     category:       r.category ?? 'Dette',
     createdAt:      r.created_at,
