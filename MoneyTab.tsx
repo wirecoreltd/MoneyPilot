@@ -1083,14 +1083,25 @@ function RevenusSection() {
           {showForm ? (
             <div className="space-y-2 pt-2 border-t border-mist">
               <div ref={sourceRef} className="relative">
-                <label className="label">Source de revenu</label>
-                <button type="button" onClick={() => setSourceDropdownOpen(o => !o)} className="input flex items-center justify-between text-left w-full">
-                  <span className={form.label ? 'text-ink' : 'text-gray-400'}>{form.label || 'Choisir ou saisir...'}</span>
-                  <ChevronDown size={16} className={`text-ink-soft transition-transform flex-shrink-0 ${sourceDropdownOpen ? 'rotate-180' : ''}`}/>
-                </button>
-                {sourceDropdownOpen && (
-                  <div className="absolute z-50 top-full mt-1 left-0 right-0 bg-white border border-mist-dark rounded-2xl shadow-xl overflow-hidden">
-                    <div className="max-h-72 overflow-y-auto">
+                  <label className="label">Source de revenu</label>
+                  <div className="relative">
+                    <input
+                      className="input pr-10"
+                      placeholder="Choisir ou saisir (ex : Salaire janvier)..."
+                      value={form.label}
+                      onChange={e => { setForm(f => ({ ...f, label: e.target.value })); setSourceDropdownOpen(false) }}
+                      onFocus={() => setSourceDropdownOpen(true)}
+                      onKeyDown={e => e.key === 'Enter' && setSourceDropdownOpen(false)}
+                    />
+                    <button type="button" aria-label="Voir les sources"
+                      onClick={() => setSourceDropdownOpen(o => !o)}
+                      className="absolute right-1 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center">
+                      <ChevronDown size={16} className={`text-ink-soft transition-transform ${sourceDropdownOpen ? 'rotate-180' : ''}`}/>
+                    </button>
+                  </div>
+                  {sourceDropdownOpen && (
+                    <div className="absolute z-50 top-full mt-1 left-0 right-0 bg-white border border-mist-dark rounded-2xl shadow-xl overflow-hidden">
+                      <div className="max-h-72 overflow-y-auto">
                       {customSaved.length > 0 && (
                         <div>
                           <p className="text-[10px] font-bold text-ink-soft uppercase tracking-wider px-3 pt-3 pb-1">⭐ Mes sources</p>
