@@ -74,23 +74,41 @@ export function sumByCategory(lines: SpendingLine[], from: string, to: string): 
 type BudgetLike = {
   id: string; name: string; limit: number; color: string
   periodMonths?: number; createdAt?: string
+  startDate?: string | null; endDate?: string | null
+}
+
+/** Un plafond est « perso » quand il a une date de début ET de fin. */
+export function isCustomBudget(b: Pick<BudgetLike, 'startDate' | 'endDate'>): boolean {
+  return !!(b.startDate && b.endDate)
+}
+
+/**
+ * Cycle d'un plafond : la plage perso si elle est définie (elle ne se renouvelle pas),
+ * sinon le cycle récurrent en mois. Règle unique pour toute l'app.
+ */
+export function budgetCycle(
+  b: Pick<BudgetLike, 'startDate' | 'endDate' | 'createdAt' | 'periodMonths'>,
+  today: Date = new Date(),
+): { from: string; to: string } {
+  if (b.startDate && b.endDate) return { from: b.startDate, to: b.endDate }
+  return currentCycle(b.createdAt, b.periodMonths ?? 1, today)
 }
 
 /** Début du plus ancien cycle : à partir de quand charger les dépenses. null = aucun plafond. */
 export function earliestCycleStart(budgets: BudgetLike[], today: Date = new Date()): string | null {
   if (budgets.length === 0) return null
   return budgets.reduce((min, b) => {
-    const f = currentCycle(b.createdAt, b.periodMonths ?? 1, today).from
+    const f = budgetCycle(b, today).from
     return f < min ? f : min
   }, '9999-12-31')
 }
 
-/** Statut de chaque plafond sur SON cycle courant. */
+/** Statut de chaque plafond sur SON cycle courant (ou sa plage perso). */
 export function computeBudgetStatuses(
   budgets: BudgetLike[], lines: SpendingLine[], today: Date = new Date(),
 ): BudgetStatus[] {
   return budgets.map(b => {
-    const cycle = currentCycle(b.createdAt, b.periodMonths ?? 1, today)
+    const cycle = budgetCycle(b, today)
     const spent = sumCategory(lines, b.name, cycle.from, cycle.to)
     return {
       id: b.id, name: b.name, limit: b.limit, color: b.color,
