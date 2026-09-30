@@ -852,7 +852,7 @@ function RevenusSection() {
   const periodState = usePeriod()
   const { period, range } = periodState
   const [form, setForm] = useState({
-    label: '', amount: '', type: 'fixed' as 'fixed' | 'variable', saveSource: false,
+    source: '', label: '', amount: '', type: 'fixed' as 'fixed' | 'variable', saveSource: false,
     date: new Date().toISOString().slice(0, 10),
   })
   const sourceRef = useRef<HTMLDivElement>(null)
@@ -895,32 +895,37 @@ function RevenusSection() {
   }
 
   function pickSource(name: string, type: 'fixed' | 'variable' = 'fixed') {
-    setForm(f => ({ ...f, label: name, type }))
-    setSourceDropdownOpen(false)
-  }
+  setForm(f => ({
+    ...f, source: name, type,
+    // pré-remplit le libellé seulement s'il est vide ou s'il n'a pas été modifié à la main
+    label: (!f.label.trim() || f.label === f.source) ? name : f.label,
+  }))
+  setSourceDropdownOpen(false)
+}
 
   function resetForm() {
-    setForm({ label: '', amount: '', type: 'fixed', saveSource: false, date: new Date().toISOString().slice(0, 10) })
+    setForm({ source: '', label: '', amount: '', type: 'fixed', saveSource: false, date: new Date().toISOString().slice(0, 10) })
     setEditingId(null)
     setShowForm(false)
   }
 
   function openEdit(r: RevenuSource) {
     setEditingId(r.id)
-    setForm({ label: r.label, amount: String(r.amount), type: r.type, saveSource: false, date: r.date })
+    setForm({ source: '', label: r.label, amount: String(r.amount), type: r.type, saveSource: false, date: r.date })
     setShowForm(true)
     setOpen(true)
   }
 
-  async function handleAdd() {
-    if (!form.label.trim() || !form.amount || Number(form.amount) <= 0 || !form.date) return
+    async function handleAdd() {
+    const finalLabel = form.label.trim() || form.source.trim()
+    if (!finalLabel || !form.amount || Number(form.amount) <= 0 || !form.date) return
     setSaving(true)
 
     try {
       // Mode modification
       if (editingId) {
         const { error } = await supabase.from('monthly_incomes').update({
-          label: form.label.trim(),
+          label: finalLabel,
           amount: Number(form.amount),
           is_fixed: form.type === 'fixed',
           received_at: form.date,
@@ -930,15 +935,15 @@ function RevenusSection() {
 
         // Si c'est un revenu fixe renommé, on renomme aussi les autres occurrences fixes
         const old = revenus.find(r => r.id === editingId)
-        if (old && old.type === 'fixed' && old.label !== form.label.trim()) {
+        if (old && old.type === 'fixed' && old.label !== finalLabel) {
           const { data: { user } } = await supabase.auth.getUser()
-          const { error: renameError } = await supabase.from('monthly_incomes').update({ label: form.label.trim() })
+          const { error: renameError } = await supabase.from('monthly_incomes').update({ label: finalLabel })
             .eq('user_id', user!.id).eq('label', old.label).eq('is_fixed', true)
           if (renameError) throw renameError
-          setRevenus(prev => prev.map(r => r.type === 'fixed' && r.label === old.label ? { ...r, label: form.label.trim() } : r))
+          setRevenus(prev => prev.map(r => r.type === 'fixed' && r.label === old.label ? { ...r, label: finalLabel } : r))
         }
         setRevenus(prev => prev.map(r => r.id === editingId
-          ? { ...r, label: form.label.trim(), amount: Number(form.amount), type: form.type,
+          ? { ...r, label: finalLabel, amount: Number(form.amount), type: form.type,
               date: form.date, month: form.date.slice(0, 7) }
           : r))
         resetForm()
@@ -946,19 +951,21 @@ function RevenusSection() {
         return
       }
 
+      // Mode création
       const { data: { user } } = await supabase.auth.getUser()
-      if (form.saveSource && form.label.trim()) {
-        const alreadySaved = savedSources.some(s => s.name.toLowerCase() === form.label.trim().toLowerCase())
+      const sourceName = (form.source || form.label).trim()
+      if (form.saveSource && sourceName) {
+        const alreadySaved = savedSources.some(s => s.name.toLowerCase() === sourceName.toLowerCase())
         if (!alreadySaved) {
           const { data: newSrc, error: srcError } = await supabase.from('income_sources').insert({
-            user_id: user!.id, name: form.label.trim(), is_fixed: form.type === 'fixed',
+            user_id: user!.id, name: sourceName, is_fixed: form.type === 'fixed',
           }).select().single()
           if (srcError) throw srcError
           if (newSrc) setSavedSources(prev => [...prev, { id: newSrc.id, name: newSrc.name, type: newSrc.is_fixed ? 'fixed' : 'variable' }])
         }
       }
       const { data, error } = await supabase.from('monthly_incomes').insert({
-        user_id: user!.id, label: form.label.trim(),
+        user_id: user!.id, label: finalLabel,
         amount: Number(form.amount), is_fixed: form.type === 'fixed',
         month: form.date.slice(0, 7), received_at: form.date,
       }).select().single()
@@ -1083,32 +1090,21 @@ function RevenusSection() {
           {showForm ? (
             <div className="space-y-2 pt-2 border-t border-mist">
               <div ref={sourceRef} className="relative">
-                  <label className="label">Source de revenu</label>
-                  <div className="relative">
-                    <input
-                      className="input pr-10"
-                      placeholder="Choisir ou saisir (ex : Salaire janvier)..."
-                      value={form.label}
-                      onChange={e => { setForm(f => ({ ...f, label: e.target.value })); setSourceDropdownOpen(false) }}
-                      onFocus={() => setSourceDropdownOpen(true)}
-                      onKeyDown={e => e.key === 'Enter' && setSourceDropdownOpen(false)}
-                    />
-                    <button type="button" aria-label="Voir les sources"
-                      onClick={() => setSourceDropdownOpen(o => !o)}
-                      className="absolute right-1 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center">
-                      <ChevronDown size={16} className={`text-ink-soft transition-transform ${sourceDropdownOpen ? 'rotate-180' : ''}`}/>
-                    </button>
-                  </div>
-                  {sourceDropdownOpen && (
-                    <div className="absolute z-50 top-full mt-1 left-0 right-0 bg-white border border-mist-dark rounded-2xl shadow-xl overflow-hidden">
-                      <div className="max-h-72 overflow-y-auto">
+                <label className="label">Source de revenu</label>
+                <button type="button" onClick={() => setSourceDropdownOpen(o => !o)} className="input flex items-center justify-between text-left w-full">
+                  <span className={form.source ? 'text-ink' : 'text-gray-400'}>{form.source || 'Choisir une source...'}</span>
+                  <ChevronDown size={16} className={`text-ink-soft transition-transform flex-shrink-0 ${sourceDropdownOpen ? 'rotate-180' : ''}`}/>
+                </button>
+                {sourceDropdownOpen && (
+                  <div className="absolute z-50 top-full mt-1 left-0 right-0 bg-white border border-mist-dark rounded-2xl shadow-xl overflow-hidden">
+                    <div className="max-h-72 overflow-y-auto">
                       {customSaved.length > 0 && (
                         <div>
                           <p className="text-[10px] font-bold text-ink-soft uppercase tracking-wider px-3 pt-3 pb-1">⭐ Mes sources</p>
                           {customSaved.map(s => (
                             <div key={s.id} onClick={() => pickSource(s.name, s.type)} className="flex items-center justify-between px-3 py-2.5 cursor-pointer hover:bg-mist transition-colors">
                               <div className="flex items-center gap-2">
-                                {form.label === s.name && <Check size={12} className="text-positive"/>}
+                                {form.source === s.name && <Check size={12} className="text-positive"/>}
                                 <span className="text-sm text-ink">{s.name}</span>
                                 <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${s.type === 'fixed' ? 'bg-blue-50 text-blue-600' : 'bg-orange-50 text-orange-600'}`}>
                                   {s.type === 'fixed' ? 'Fixe' : 'Variable'}
@@ -1124,24 +1120,21 @@ function RevenusSection() {
                         <div key={group.group}>
                           <p className="text-[10px] font-bold text-ink-soft uppercase tracking-wider px-3 pt-2.5 pb-1">{group.group}</p>
                           {group.items.map(item => (
-                            <div key={item} onClick={() => pickSource(item)} className={`flex items-center gap-2 px-3 py-2.5 cursor-pointer hover:bg-mist transition-colors ${form.label === item ? 'bg-green-50' : ''}`}>
-                              {form.label === item && <Check size={12} className="text-positive flex-shrink-0"/>}
+                            <div key={item} onClick={() => pickSource(item)} className={`flex items-center gap-2 px-3 py-2.5 cursor-pointer hover:bg-mist transition-colors ${form.source === item ? 'bg-green-50' : ''}`}>
+                              {form.source === item && <Check size={12} className="text-positive flex-shrink-0"/>}
                               <span className="text-sm text-ink">{item}</span>
                             </div>
                           ))}
                         </div>
                       ))}
-                    </div>
-                    <div className="p-2 border-t border-mist-dark">
-                      <input className="input text-sm py-2" placeholder="✏️ Ou saisir manuellement..." value={form.label} onChange={e => setForm(f => ({ ...f, label: e.target.value }))} onClick={e => e.stopPropagation()} onKeyDown={e => e.key === 'Enter' && setSourceDropdownOpen(false)}/>
-                    </div>
+                    </div>                   
                   </div>
                 )}
               </div>
 
               <div>
-                <label className="label">Libellé <span className="text-ink-soft font-normal">(modifiable)</span></label>
-                <input className="input" placeholder="Ex: Salaire janvier..." value={form.label} onChange={e => setForm(f => ({ ...f, label: e.target.value }))}/>
+                <label className="label">Libellé <span className="text-ink-soft font-normal">(libre)</span></label>
+                <input className="input" placeholder="Ex: Salaire janvier, Prime de Noël..." value={form.label} onChange={e => setForm(f => ({ ...f, label: e.target.value }))}/>
               </div>
               <div>
                 <label className="label">Montant (Rs)</label>
