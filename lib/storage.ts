@@ -67,6 +67,7 @@ export interface Debt {
   interestRate?: number
   note: string
   dueDate?: string
+  paymentStartDate?: string
   recurring: boolean
   category: string
   createdAt: string
@@ -114,7 +115,7 @@ export async function getMonthlyChecklist(month: string): Promise<ChecklistItem[
     }
   })
 
-  const eligibleDebts = debts.filter(d => d.type === 'owe' && d.minimumPayment > 0)
+  const eligibleDebts = debts.filter(d => d.type === 'owe' && d.minimumPayment > 0 && hasStarted(d.paymentStartDate, month))
   let checks: { debt_id: string; paid: boolean; amount: number }[] = []
   if (eligibleDebts.length > 0) {
     const { data, error } = await supabase
@@ -596,6 +597,7 @@ export async function getDebts(): Promise<Debt[]> {
     interestRate:   r.interest_rate ?? undefined,
     note:           r.note ?? '',
     dueDate:        r.due_date ?? undefined,
+    paymentStartDate: r.payment_start_date ?? undefined
     recurring:      r.recurring ?? false,
     category:       r.category ?? 'Dette',
     createdAt:      r.created_at,
@@ -617,6 +619,7 @@ export async function addDebt(d: Omit<Debt, 'id' | 'createdAt'>): Promise<Debt> 
       interest_rate:   d.interestRate,
       note:            d.note,
       due_date:        d.dueDate,
+      payment_start_date: d.paymentStartDate || null,
       recurring:       d.recurring,
       category:        d.category ?? 'Dette',
     })
@@ -635,6 +638,7 @@ export async function addDebt(d: Omit<Debt, 'id' | 'createdAt'>): Promise<Debt> 
     interestRate:   data.interest_rate ?? undefined,
     note:           data.note ?? '',
     dueDate:        data.due_date ?? undefined,
+    paymentStartDate: data.payment_start_date ?? undefined,
     recurring:      data.recurring ?? false,
     category:       data.category ?? 'Dette',
     createdAt:      data.created_at,
@@ -651,6 +655,7 @@ export async function updateDebt(id: string, fields: Partial<Omit<Debt, 'id' | '
   if (fields.interestRate    !== undefined) update.interest_rate    = fields.interestRate
   if (fields.note            !== undefined) update.note             = fields.note
   if (fields.dueDate         !== undefined) update.due_date         = fields.dueDate
+  if (fields.paymentStartDate !== undefined) update.payment_start_date = fields.paymentStartDate || null
   if (fields.recurring       !== undefined) update.recurring        = fields.recurring
   if (fields.category        !== undefined) update.category         = fields.category
   const { error } = await supabase.from('debts').update(update).eq('id', id)
@@ -1007,7 +1012,7 @@ export function computeCoachPlan(
     return s
   }, 0)
 
-  const debtMinimums     = owedDebts.reduce((s, d) => s + d.minimumPayment, 0)
+  const debtMinimums     = owedDebts.filter(d => hasStarted(d.paymentStartDate, month)).reduce((s, d) => s + d.minimumPayment, 0)
   const variableEstimate = totalIncome * 0.15
   const freeMoney        = Math.max(0, totalIncome - fixedCharges - debtMinimums - variableEstimate)
   const debtsByPriority  = [...owedDebts].filter(d => !d.recurring).sort((a, b) => a.remaining - b.remaining)
@@ -1108,6 +1113,11 @@ export function formatAmount(amount: number, currency = 'MUR'): string {
 export function currentYearMonth(): string {
   const now = new Date()
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+}
+
+// Vrai si le mois `ym` est le mois de début des paiements ou un mois après
+export function hasStarted(startDate: string | undefined | null, ym: string = currentYearMonth()): boolean {
+  return !startDate || startDate.slice(0, 7) <= ym
 }
 
 export function getMonthLabel(ym: string): string {
