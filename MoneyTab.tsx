@@ -5,7 +5,7 @@ import {
   Transaction, BudgetCategory, SavingsGoal, Debt,
   EXPENSE_CATEGORIES,
   addTransaction, deleteTransaction,
-  getBudgets, addBudget, deleteBudget,
+  getBudgets, addBudget, updateBudget, deleteBudget,
   getSavings, addSavingsGoal, updateSavingsGoal, deleteSavingsGoal,
   getDebts, addDebt, updateDebt, deleteDebt,
   formatAmount, currentYearMonth, hasStarted,
@@ -13,11 +13,11 @@ import {
 import CoachTip from './CoachTip'
 import { supabase } from '@/lib/supabase'
 import { MoneySubTab } from '@/app/page'
-import { budgetStatus, debtEndLabel } from '@/lib/finance'
+import { budgetStatus, debtEndLabel, isoDate } from '@/lib/finance'
 import { useSpendingLines } from '@/lib/useSpendingLines'
 import {
-  currentCycle, sumByCategory, sumCategory, durationLabel, BUDGET_DURATIONS,
-  computeBudgetStatuses, earliestCycleStart,
+  sumByCategory, sumCategory, durationLabel, BUDGET_DURATIONS,
+  computeBudgetStatuses, earliestCycleStart, budgetCycle, isCustomBudget,
 } from '@/lib/budgetPeriods'
 import PeriodFilter, { usePeriod, PERIOD_LABEL } from './components/money/PeriodFilter'
 
@@ -623,7 +623,7 @@ function TransactionsSection({ transactions, onUpdate }: { transactions: Transac
     })
   }
 
-  function openAdd() {
+      function openAdd() {
     setEditingTx(null)
     setForm({ amount: '', category: EXPENSE_CATEGORIES[0] as any, note: '', date: new Date().toISOString().slice(0, 10) })
     setShowForm(true)
@@ -702,6 +702,7 @@ function TransactionsSection({ transactions, onUpdate }: { transactions: Transac
             const catTotal = txs.reduce((s, t) => s + t.amount, 0)
             const status = getBudgetStatus(cat)
             const bs = statusByCat[cat]
+            const bsCustom = !!bs && budgets.some(b => b.id === bs.id && isCustomBudget(b))
             const isExpanded = expandedCategories.has(cat)
             const showAll = showMoreCategories.has(cat)
             const visibleTxs = showAll ? txs : txs.slice(0, SHOW_MORE_LIMIT)
@@ -733,7 +734,7 @@ function TransactionsSection({ transactions, onUpdate }: { transactions: Transac
                     <span className="text-xs text-ink-soft">{txs.length} dépense{txs.length > 1 ? 's' : ''}</span>
                     {bs && (
                       <span className={`text-[10px] font-mono ${status === 'over' ? 'text-danger' : status === 'near' ? 'text-orange-600' : 'text-ink-soft'}`}>
-                        {formatAmount(bs.spent)} / {formatAmount(bs.limit)} ({durationLabel(bs.periodMonths ?? 1)})
+                        {formatAmount(bs.spent)} / {formatAmount(bs.limit)} ({bsCustom ? 'perso' : durationLabel(bs.periodMonths ?? 1)})
                       </span>
                     )}
                   </div>
@@ -1734,14 +1735,6 @@ function FactureCard({
 }
 
 // ─── Budget ───────────────────────────────────────────────────────────────────
-async function updateBudget(id: string, fields: { name?: string; limit?: number; color?: string; periodMonths?: number }): Promise<void> {
-  const { periodMonths, ...rest } = fields
-  const { error } = await supabase.from('budget_categories')
-    .update({ ...rest, ...(periodMonths !== undefined ? { period_months: periodMonths } : {}) })
-    .eq('id', id)
-  if (error) throw error
-}
-
 const fmtDay = (ymd: string) => new Date(ymd).toLocaleDateString('fr-FR')
 
 function BudgetSection({ transactions }: { transactions: Transaction[] }) {
@@ -1751,7 +1744,11 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
   const [editingBudget, setEditingBudget] = useState<BudgetCategory | null>(null)
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
-  const [form, setForm] = useState({ name: '', limit: '', color: COLORS[0], periodMonths: 1 })
+  const today = isoDate(new Date())
+  const [form, setForm] = useState({
+    name: '', limit: '', color: COLORS[0], periodMonths: 1,
+    custom: false, startDate: today, endDate: '',
+  })
 
   // Filtre de période
   const periodState = usePeriod()
@@ -1764,7 +1761,7 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
   useEffect(() => { loadBudgets() }, [])
 
   // Cycle courant de chaque plafond + plage de données à charger
-  const rows = (budgets ?? []).map(b => ({ b, cycle: currentCycle(b.createdAt, b.periodMonths ?? 1) }))
+  const rows = (budgets ?? []).map(b => ({ b, cycle: budgetCycle(b), isCustom: isCustomBudget(b) }))
   const minFrom = range.from < '2000-01-01' ? '2000-01-01' : range.from
   const fetchFrom = budgets ? rows.reduce((m, r) => (r.cycle.from < m ? r.cycle.from : m), minFrom) : null
   const { lines, loaded, error, reload } = useSpendingLines(fetchFrom, transactions)
@@ -1774,10 +1771,10 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
   const periodByCat = sumByCategory(lines, range.from, range.to)
   const periodTotal = Object.values(periodByCat).reduce((s, v) => s + v, 0)
 
-  const items = rows.map(({ b, cycle }) => {
+    const items = rows.map(({ b, cycle, isCustom }) => {
     const spent = sumCategory(lines, b.name, cycle.from, cycle.to)
     const { pct, status } = budgetStatus(spent, b.limit)
-    return { b, cycle, spent, pct, status, periodSpent: periodByCat[b.name] || 0 }
+    return { b, cycle, isCustom, spent, pct, status, periodSpent: periodByCat[b.name] || 0 }
   })
   const overBudget = items.filter(i => i.status === 'over')
 
@@ -1786,14 +1783,20 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
     : items.length > 0 ? `✅ Tous tes budgets sont respectés. Continue !`
     : `Crée un plafond par catégorie pour mieux contrôler où va ton argent.`
 
-  function openAdd() {
+    function openAdd() {
     setEditingBudget(null); setFormError(null)
-    setForm({ name: '', limit: '', color: COLORS[0], periodMonths: 1 }); setShowForm(true)
+    setForm({ name: '', limit: '', color: COLORS[0], periodMonths: 1, custom: false, startDate: today, endDate: '' })
+    setShowForm(true)
   }
   function openEdit(b: BudgetCategory) {
-    setEditingBudget(b); setFormError(null)
-    setForm({ name: b.name, limit: String(b.limit), color: b.color, periodMonths: b.periodMonths ?? 1 }); setShowForm(true)
-  }
+  const custom = isCustomBudget(b)
+  setEditingBudget(b); setFormError(null)
+  setForm({
+    name: b.name, limit: String(b.limit), color: b.color, periodMonths: b.periodMonths ?? 1,
+    custom, startDate: custom ? b.startDate! : today, endDate: custom ? b.endDate! : '',
+  })
+  setShowForm(true)
+}
   function closeForm() {
     setShowForm(false); setEditingBudget(null); setFormError(null)
   }
@@ -1801,11 +1804,20 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
   async function handleSave() {
     if (saving || !form.name || !form.limit || Number(form.limit) <= 0) return
     const isDuplicate = (budgets ?? []).some(b => b.name === form.name && (!editingBudget || b.id !== editingBudget.id))
-    if (isDuplicate) { setFormError('Un plafond existe déjà pour cette catégorie.'); return }
+        if (isDuplicate) { setFormError('Un plafond existe déjà pour cette catégorie.'); return }
+    if (form.custom) {
+      if (!form.startDate || !form.endDate) { setFormError('Choisis une date de début et une date de fin.'); return }
+      if (form.endDate < form.startDate) { setFormError('La date de fin doit être après la date de début.'); return }
+    }
 
     setSaving(true); setFormError(null)
     try {
-      const payload = { name: form.name, limit: Number(form.limit), color: form.color, periodMonths: form.periodMonths }
+      const payload = {
+        name: form.name, limit: Number(form.limit), color: form.color,
+        periodMonths: form.custom ? 1 : form.periodMonths,
+        startDate: form.custom ? form.startDate : null,
+        endDate: form.custom ? form.endDate : null,
+      }
       if (editingBudget) await updateBudget(editingBudget.id, payload)
       else await addBudget(payload)
       await loadBudgets()
@@ -1848,7 +1860,7 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
         <span className="text-lg">💡</span>
         <div className="text-xs text-orange-700 leading-relaxed space-y-1.5">
           <p>
-            <strong>Un plafond = ta limite de dépenses pour une catégorie</strong>, sur la durée que tu choisis (1 mois à 3 ans). Il démarre le jour où tu le crées, puis repart à zéro à la fin de chaque durée.
+            <strong>Un plafond = ta limite de dépenses pour une catégorie</strong>, sur une durée (1 mois à 3 ans, renouvelée automatiquement) ou sur <strong>une plage de dates perso</strong> (début et fin choisis par toi).
           </p>
           <p>
             <strong>Les boutons 1J, 5J, 1 mois…</strong> servent uniquement à consulter tes dépenses sur une période. Ils ne changent pas tes plafonds.
@@ -1870,18 +1882,23 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
 
       {items.length === 0 ? (
         <div className="card text-center py-10"><p className="text-3xl mb-2">🎯</p><p className="font-semibold text-ink">Aucun budget défini</p></div>
-      ) : items.map(({ b, cycle, spent, pct: rawPct, status, periodSpent }) => {
+      ) : items.map(({ b, cycle, isCustom, spent, pct: rawPct, status, periodSpent }) => {
         const pct  = Math.min(100, rawPct)
         const over = status === 'over'
         const near = status === 'near'
+        const ended = isCustom && cycle.to < today
+        const notStarted = isCustom && cycle.from > today
 
         return (
           <div key={b.id} className="card space-y-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2 flex-wrap">
                 <div className="w-3 h-3 rounded-full" style={{ backgroundColor: b.color }}/>
-                <span className="font-semibold text-sm text-ink">{b.name}</span>
-                {over && <span className="text-xs bg-danger-light text-danger px-2 py-0.5 rounded-full font-bold">⚠️ Dépassé</span>}
+                 <span className="font-semibold text-sm text-ink">{b.name}</span>
+                {isCustom && <span className="text-[10px] bg-orange-50 text-orange-700 border border-orange-200 px-1.5 py-0.5 rounded-full font-bold">📅 Perso</span>}
+                {ended && <span className="text-[10px] bg-mist text-ink-soft px-1.5 py-0.5 rounded-full font-bold">Terminé</span>}
+                {notStarted && <span className="text-[10px] bg-blue-50 text-accent px-1.5 py-0.5 rounded-full font-bold">⏳ À venir</span>}
+                 {over && <span className="text-xs bg-danger-light text-danger px-2 py-0.5 rounded-full font-bold">⚠️ Dépassé</span>}
                 {near && <span className="text-xs bg-warning-light text-warning px-2 py-0.5 rounded-full font-bold">Attention</span>}
               </div>
               <div className="flex gap-1">
@@ -1889,7 +1906,9 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
                 <button className="w-8 h-8 rounded-xl bg-mist hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center" onClick={() => handleDelete(b.id)}><Trash2 size={14}/></button>
               </div>
             </div>
-            <p className="text-[11px] text-ink-soft">🗓️ Plafond sur {durationLabel(b.periodMonths ?? 1)} · du {fmtDay(cycle.from)} au {fmtDay(cycle.to)}</p>
+                        <p className="text-[11px] text-ink-soft">
+              🗓️ {isCustom ? 'Plafond perso' : `Plafond sur ${durationLabel(b.periodMonths ?? 1)}`} · du {fmtDay(cycle.from)} au {fmtDay(cycle.to)}
+            </p>
             <div className="w-full h-2.5 bg-mist-dark rounded-full overflow-hidden">
               <div className="h-full rounded-full transition-all duration-500" style={{ width: `${pct}%`, backgroundColor: over ? '#DC2626' : near ? '#D97706' : b.color }}/>
             </div>
@@ -1920,16 +1939,43 @@ function BudgetSection({ transactions }: { transactions: Transaction[] }) {
               <label className="label">Durée du plafond</label>
               <div className="grid grid-cols-5 gap-1.5">
                 {BUDGET_DURATIONS.map(d => (
-                  <button key={d.months} type="button" onClick={() => setForm(f => ({...f, periodMonths: d.months}))}
+                  <button key={d.months} type="button"
+                    onClick={() => setForm(f => ({...f, periodMonths: d.months, custom: false}))}
                     className={`py-2 rounded-xl text-[11px] font-bold border-2 transition-colors ${
-                      form.periodMonths === d.months ? 'bg-orange-500 text-white border-transparent' : 'bg-white text-ink-soft border-mist-dark'}`}>
+                      !form.custom && form.periodMonths === d.months ? 'bg-orange-500 text-white border-transparent' : 'bg-white text-ink-soft border-mist-dark'}`}>
                     {d.label}
                   </button>
                 ))}
               </div>
-              <p className="text-[11px] text-ink-soft mt-1.5">Démarre à la création et se renouvelle à la fin de chaque durée.</p>
+              <button type="button" onClick={() => setForm(f => ({...f, custom: true}))}
+                className={`mt-1.5 w-full py-2 rounded-xl text-xs font-bold border-2 transition-colors ${
+                  form.custom ? 'bg-orange-500 text-white border-transparent' : 'bg-white text-ink-soft border-mist-dark'}`}>
+                📅 Plage de dates perso
+              </button>
+              {form.custom ? (
+                <>
+                  <div className="grid grid-cols-2 gap-2 mt-2">
+                    <div>
+                      <label className="label">Du</label>
+                      <input className="input" type="date" value={form.startDate}
+                        onChange={e => setForm(f => ({...f, startDate: e.target.value}))}/>
+                    </div>
+                    <div>
+                      <label className="label">Au</label>
+                      <input className="input" type="date" value={form.endDate} min={form.startDate || undefined}
+                        onChange={e => setForm(f => ({...f, endDate: e.target.value}))}/>
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-ink-soft mt-1.5">Les dates sont incluses. Le plafond ne se renouvelle pas à la fin de la plage.</p>
+                </>
+              ) : (
+                <p className="text-[11px] text-ink-soft mt-1.5">Démarre à la création et se renouvelle à la fin de chaque durée.</p>
+              )}
             </div>
-            <div><label className="label">Plafond sur {durationLabel(form.periodMonths)} (Rs)</label><input className="input" type="number" placeholder="Ex: 15000" value={form.limit} onChange={e => setForm(f => ({...f, limit: e.target.value}))}/></div>
+            <div>
+              <label className="label">Plafond {form.custom ? 'sur cette plage' : `sur ${durationLabel(form.periodMonths)}`} (Rs)</label>
+              <input className="input" type="number" placeholder="Ex: 15000" value={form.limit} onChange={e => setForm(f => ({...f, limit: e.target.value}))}/>
+            </div>
             <div>
               <label className="label">Couleur</label>
               <div className="flex gap-3 flex-wrap">
