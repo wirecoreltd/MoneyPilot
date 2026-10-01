@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef, Fragment } from 'react'
 import Onboarding from '../Onboarding'
 import BottomNav, { Tab } from '../BottomNav'
 import HomeTab from '../HomeTab'
@@ -12,12 +12,13 @@ import { ensureRecurring } from '@/lib/recurring'
 import { getTransactions, Transaction, getUserProfile, UserProfile } from '@/lib/storage'
 import { supabase } from '@/lib/supabase'
 import { LogOut } from 'lucide-react'
-import { SpaceProvider } from '@/components/SpaceContext'
+import { SpaceProvider, useSpaces } from '@/components/SpaceContext'
 import SpaceSwitcher from '@/components/SpaceSwitcher'
 
 export type MoneySubTab = 'transactions' | 'budget' | 'dettes' | 'epargne' | 'factures' | 'revenus'
 
 function PageContent() {
+  const { activeId } = useSpaces()
   const [profile,      setProfile]      = useState<UserProfile | null>(null)
   const [tab,          setTab]          = useState<Tab>('home') // identique côté serveur ET premier rendu client
   const [moneySubTab,  setMoneySubTab]  = useState<MoneySubTab>('transactions')
@@ -76,6 +77,20 @@ function PageContent() {
   }, [])
 
   useEffect(() => { init() }, [init])
+
+  // Changement d'espace : on ne recharge QUE les transactions (le profil, la session
+  // et les récurrents ne dépendent pas de l'espace). Pas d'écran de chargement global.
+  const loadedSpace = useRef(activeId)
+  useEffect(() => {
+    if (loadedSpace.current === activeId) return // 1er rendu : init() s'en charge déjà
+    loadedSpace.current = activeId
+    let cancelled = false
+    setTransactions([]) // évite d'afficher les chiffres de l'ancien espace
+    getTransactions()
+      .then(txs => { if (!cancelled) setTransactions(txs) })
+      .catch(e => console.error('Transactions non chargées :', e))
+    return () => { cancelled = true }
+  }, [activeId])
 
   function handleOnboardingComplete(p: UserProfile) {
     setProfile(p)
@@ -183,29 +198,32 @@ function PageContent() {
           <SpaceSwitcher />
         </div>
 
-        {tab === 'home' && (
-          <HomeTab
-            transactions={transactions}
-            onUpdate={refresh}
-            profile={profile}
-            onGoToMoney={goToMoney}
-            onGoToProjects={goToProjects}
-          />
-        )}
+        {/* key={activeId} : seul le contenu des onglets se remonte et recharge ses données */}
+        <Fragment key={activeId}>
+          {tab === 'home' && (
+            <HomeTab
+              transactions={transactions}
+              onUpdate={refresh}
+              profile={profile}
+              onGoToMoney={goToMoney}
+              onGoToProjects={goToProjects}
+            />
+          )}
 
-        {tab === 'money' && (
-          <MoneyTab
-            transactions={transactions}
-            onUpdate={refresh}
-            initialSubTab={moneySubTab}
-            onSubTabChange={handleSubTabChange}
-          />
-        )}
+          {tab === 'money' && (
+            <MoneyTab
+              transactions={transactions}
+              onUpdate={refresh}
+              initialSubTab={moneySubTab}
+              onSubTabChange={handleSubTabChange}
+            />
+          )}
 
-        {tab === 'historique' && <HistoriqueTab />}
-        {tab === 'bilan'      && <BilanTab transactions={transactions} />}
-        {tab === 'projets'    && <ProjectsTab />}
-        {tab === 'coach'      && <CoachTab />}
+          {tab === 'historique' && <HistoriqueTab />}
+          {tab === 'bilan'      && <BilanTab transactions={transactions} />}
+          {tab === 'projets'    && <ProjectsTab />}
+          {tab === 'coach'      && <CoachTab />}
+        </Fragment>
 
       </main>
     </div>
@@ -219,4 +237,3 @@ export default function Page() {
     </SpaceProvider>
   )
 }
-
