@@ -1,5 +1,6 @@
 import { supabase } from './supabase'
 import { isoDate } from './finance'
+import { getActiveSpaceId, requireWritableSpaceId, OVERVIEW } from './activeSpace'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -338,6 +339,13 @@ async function getUserId(): Promise<string> {
   return user.id
 }
 
+
+// Espace à filtrer en lecture. null = pas de filtre (vue d'ensemble ou espace pas encore connu).
+function readSpaceId(): string | null {
+  const id = getActiveSpaceId()
+  return id && id !== OVERVIEW ? id : null
+}
+
 // ─── Profile ──────────────────────────────────────────────────────────────────
 
 // Renvoie null UNIQUEMENT si aucun profil n'existe (→ onboarding).
@@ -392,11 +400,15 @@ export async function saveUserProfile(profile: UserProfile): Promise<void> {
 export async function getTransactions(): Promise<Transaction[]> {
   const userId = await getUserId()
 
-  const { data, error } = await supabase
+  let query = supabase
     .from('transactions')
     .select('*')
     .eq('user_id', userId)
-    .order('date', { ascending: false })
+
+  const spaceId = readSpaceId()
+  if (spaceId) query = query.eq('space_id', spaceId)
+
+  const { data, error } = await query.order('date', { ascending: false })
   if (error) throw error
 
   return (data ?? []).map(r => ({
@@ -412,11 +424,13 @@ export async function getTransactions(): Promise<Transaction[]> {
 
 export async function addTransaction(tx: Omit<Transaction, 'id' | 'createdAt'>): Promise<Transaction> {
   const userId = await getUserId()
+  const spaceId = requireWritableSpaceId()
 
   const { data, error } = await supabase
     .from('transactions')
     .insert({
       user_id:  userId,
+      space_id: spaceId,
       type:     tx.type,
       amount:   tx.amount,
       category: tx.category,
