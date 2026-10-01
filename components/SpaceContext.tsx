@@ -1,5 +1,5 @@
 'use client'
-import { createContext, useCallback, useContext, useEffect, useState, Fragment, ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useState, ReactNode } from 'react'
 import { Space, fetchSpaces, createSpace } from '@/lib/spaces'
 import { OVERVIEW, getActiveSpaceId, setActiveSpaceId } from '@/lib/activeSpace'
 
@@ -69,11 +69,8 @@ export function SpaceProvider({ children }: { children: ReactNode }) {
     select, reload: load,
   }
 
-  // key={activeId} : changer d'espace remonte toute l'appli, donc tout se recharge
-  // depuis le bon espace, sans que je doive gérer chaque section à la main.
-  return (
-    <Ctx.Provider value={value}>
-      <Fragment key={activeId}>{children}</Fragment>
-    </Ctx.Provider>
-  )
+  // Pas de key={activeId} ici : remonter toute l'appli à chaque changement d'espace
+  // relançait l'écran de chargement + getSession + ensureRecurring + profil.
+  // C'est maintenant page.tsx qui remonte uniquement le contenu des onglets.
+  return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }
