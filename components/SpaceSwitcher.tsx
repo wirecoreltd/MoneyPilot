@@ -42,7 +42,7 @@ export default function SpaceSwitcher() {
   return (
     <div ref={ref} className="relative">
       <button type="button" onClick={() => setOpen(o => !o)}
-        className="cursor-pointer flex items-center gap-2 px-3 py-2 rounded-2xl bg-white border border-mist-dark text-sm font-bold text-ink">
+        className="cursor-pointer flex items-center gap-2 px-3 py-2 rounded-2xl bg-white border border-mist-dark text-sm font-bold text-ink transition-colors hover:bg-mist">
         <span>{isOverview ? '📊' : active?.emoji}</span>
         <span>{isOverview ? "Vue d'ensemble" : active?.name}</span>
         <ChevronDown size={16} className={`text-ink-soft transition-transform ${open ? 'rotate-180' : ''}`}/>
@@ -51,22 +51,22 @@ export default function SpaceSwitcher() {
       {open && (
         <div className="absolute z-50 top-full mt-1 left-0 min-w-[240px] bg-white border border-mist-dark rounded-2xl shadow-xl overflow-hidden">
           {spaces.map(s => (
-            <div key={s.id} onClick={() => { select(s.id); setOpen(false) }}
-              className={`flex items-center gap-2 px-4 py-3 cursor-pointer hover:bg-mist ${activeId === s.id ? 'bg-accent-light' : ''}`}>
+            <button type="button" key={s.id} onClick={() => { select(s.id); setOpen(false) }}
+              className={`w-full text-left cursor-pointer flex items-center gap-2 px-4 py-3 transition-colors hover:bg-mist-dark ${activeId === s.id ? 'bg-accent-light' : ''}`}>
               {activeId === s.id && <Check size={14} className="text-accent"/>}
               <span>{s.emoji}</span>
               <span className="text-sm text-ink flex-1">{s.name}</span>
               <span className="text-[10px] text-ink-soft uppercase">{s.kind}</span>
-            </div>
+            </button>
           ))}
 
           {spaces.length > 1 && (
-            <div onClick={() => { select(OVERVIEW); setOpen(false) }}
-              className={`flex items-center gap-2 px-4 py-3 cursor-pointer hover:bg-mist border-t border-mist-dark ${isOverview ? 'bg-accent-light' : ''}`}>
+            <button type="button" onClick={() => { select(OVERVIEW); setOpen(false) }}
+              className={`w-full text-left cursor-pointer flex items-center gap-2 px-4 py-3 transition-colors hover:bg-mist-dark border-t border-mist-dark ${isOverview ? 'bg-accent-light' : ''}`}>
               {isOverview && <Check size={14} className="text-accent"/>}
               <span>📊</span>
               <span className="text-sm text-ink font-semibold">Vue d'ensemble</span>
-            </div>
+            </button>
           )}
 
           {creating ? (
@@ -92,10 +92,10 @@ export default function SpaceSwitcher() {
               </div>
             </div>
           ) : (
-            <div onClick={() => setCreating(true)}
-              className="flex items-center gap-2 px-4 py-3 cursor-pointer hover:bg-mist border-t border-mist-dark text-accent">
+            <button type="button" onClick={() => setCreating(true)}
+              className="w-full text-left cursor-pointer flex items-center gap-2 px-4 py-3 transition-colors hover:bg-accent-light border-t border-mist-dark text-accent">
               <Plus size={14}/><span className="text-sm font-semibold">Nouvel espace</span>
-            </div>
+            </button>
           )}
         </div>
       )}
