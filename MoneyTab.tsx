@@ -20,6 +20,7 @@ import {
   computeBudgetStatuses, earliestCycleStart, budgetCycle, isCustomBudget,
 } from '@/lib/budgetPeriods'
 import PeriodFilter, { usePeriod, PERIOD_LABEL } from './components/money/PeriodFilter'
+import { DEFAULT_CATEGORIES, useCustomCategories, CategoryManager } from './components/money/categories'
 
 type SubTab = MoneySubTab
 
