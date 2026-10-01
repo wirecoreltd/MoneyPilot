@@ -24,6 +24,7 @@ import { DEFAULT_CATEGORIES, useCustomCategories, CategoryManager } from './comp
 import { TransactionsSection } from './components/money/TransactionsSection'
 import { RevenusSection } from './components/money/RevenusSection'
 import { FacturesSection } from './components/money/FacturesSection'
+import { BudgetSection } from './components/money/BudgetSection'
 
 type SubTab = MoneySubTab
 
@@ -52,7 +53,6 @@ interface SavingsDeposit {
   depositedAt: string
 }
 
-const COLORS = ['#F59E0B','#3B82F6','#8B5CF6','#EF4444','#10B981','#F97316']
 const EMOJIS = ['🏖️','🚗','🏠','💻','📱','✈️','🎓','💍','💰','🎮','👶']
 const startLabel = (ymd: string) => new Date(ymd).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })
 
