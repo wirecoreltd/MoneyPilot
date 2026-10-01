@@ -1701,8 +1701,10 @@ function FactureCard({
   onDeletePayment: (p: FacturePayment) => void
 }) {
   const isDue = f.dueDate ? new Date(f.dueDate) < new Date() && !f.paid : false
-  const totalPaid = payments.reduce((s, p) => s + p.amount, 0)
-  const remaining = Math.max(0, f.amount - totalPaid)
+    const totalPaid = payments.reduce((s, p) => s + p.amount, 0)
+  const unknown = f.amount === null
+  const amt = f.amount ?? 0
+  const remaining = unknown ? (f.estimate ?? 0) : Math.max(0, amt - totalPaid)
   const isPaying = payingId === f.id
 
   return (
@@ -1712,6 +1714,7 @@ function FactureCard({
           <div className="flex items-center gap-1.5 flex-wrap mb-1">
             {f.isRecurring && <span className="text-[10px] bg-yellow-50 text-yellow-700 border border-yellow-200 px-1.5 py-0.5 rounded-full font-medium">🔄 Récurrente</span>}
             <span className="text-[10px] bg-yellow-50 text-yellow-700 border border-yellow-200 px-1.5 py-0.5 rounded-full font-medium">{f.category}</span>
+            {unknown && <span className="text-[10px] bg-orange-50 text-orange-700 border border-orange-200 px-1.5 py-0.5 rounded-full font-bold">Montant à saisir</span>}
             {isDue && !f.paid && <span className="text-[10px] bg-danger text-white px-1.5 py-0.5 rounded-full font-bold">En retard</span>}
             {f.paid && <span className="text-[10px] bg-positive-light text-positive px-1.5 py-0.5 rounded-full font-bold">✓ Payée</span>}
           </div>
@@ -1722,7 +1725,12 @@ function FactureCard({
           </div>
         </div>
         <div className="flex flex-col items-end gap-1 flex-shrink-0">
-          <p className="font-mono font-bold text-base text-ink">{formatAmount(f.amount)}</p>
+          {unknown ? (
+            <p className="font-mono font-bold text-base text-ink-soft">{(f.estimate ?? 0) > 0 ? `~${formatAmount(f.estimate ?? 0)}` : '—'}</p>
+          ) : (
+            <p className="font-mono font-bold text-base text-ink">{formatAmount(amt)}</p>
+          )}
+          {unknown && (f.estimate ?? 0) > 0 && <p className="text-[10px] text-ink-soft">estimé</p>}
           {totalPaid > 0 && !f.paid && <p className="text-xs font-mono text-positive">+{formatAmount(totalPaid)} payé</p>}
           <div className="flex gap-1 mt-0.5">
             <button className={`w-8 h-8 rounded-xl flex items-center justify-center transition-colors ${showHistory ? 'bg-yellow-500 text-white' : 'bg-mist hover:bg-yellow-50 text-ink-soft hover:text-yellow-600'}`} onClick={onToggleHistory}><History size={14}/></button>
@@ -1735,7 +1743,7 @@ function FactureCard({
       {totalPaid > 0 && (
         <div className="space-y-1">
           <div className="w-full h-2 bg-mist-dark rounded-full overflow-hidden">
-            <div className="h-full bg-positive rounded-full transition-all duration-500" style={{ width: `${Math.min(100, (totalPaid / f.amount) * 100)}%` }}/>
+            <div className="h-full bg-positive rounded-full transition-all duration-500" style={{ width: `${amt > 0 ? Math.min(100, (totalPaid / amt) * 100) : 0}%` }}/>
           </div>
           <div className="flex justify-between text-xs text-ink-soft">
             <span className="font-mono">{formatAmount(totalPaid)} payés</span>
@@ -1773,8 +1781,9 @@ function FactureCard({
       {isPaying ? (
         <div className="space-y-2 p-3 bg-yellow-50 rounded-2xl border border-yellow-200">
           <p className="text-xs font-bold text-yellow-800 uppercase tracking-wide">Enregistrer un paiement</p>
-          {remaining < f.amount && <p className="text-xs text-yellow-700">Restant à payer : <strong>{formatAmount(remaining)}</strong></p>}
-          <input className="input bg-white" type="number" placeholder="Montant (Rs)" value={payAmount} onChange={e => onPayAmountChange(e.target.value)} autoFocus/>
+          {!unknown && remaining < amt && <p className="text-xs text-yellow-700">Restant à payer : <strong>{formatAmount(remaining)}</strong></p>}
+          {unknown && <p className="text-xs text-yellow-700">Saisis le <strong>montant réel</strong> de la facture : il remplace l'estimation.</p>}
+          <input className="input bg-white" type="number" placeholder={unknown ? `Montant réel (Rs)${(f.estimate ?? 0) > 0 ? ` — estimé ~${Math.round(f.estimate ?? 0)}` : ''}` : 'Montant (Rs)'} value={payAmount} onChange={e => onPayAmountChange(e.target.value)} autoFocus/>
           <input className="input bg-white" type="date" value={payDate} onChange={e => onPayDateChange(e.target.value)}/>
           <input className="input bg-white" placeholder="📝 Note (optionnel)" value={payNote} onChange={e => onPayNoteChange(e.target.value)}/>
           <div className="flex gap-2">
@@ -1785,7 +1794,7 @@ function FactureCard({
       ) : (
         !f.paid && (
           <button className="w-full py-2.5 text-sm font-bold text-yellow-800 bg-yellow-50 hover:bg-yellow-100 border border-yellow-200 rounded-2xl active:scale-95 transition-all flex items-center justify-center gap-2" onClick={() => onSetPayingId(f.id)}>
-            <Plus size={15}/> Enregistrer un paiement
+            <Plus size={15}/> {unknown ? 'Saisir le montant et payer' : 'Enregistrer un paiement'}
           </button>
         )
       )}
