@@ -1476,9 +1476,12 @@ function FacturesSection() {
   })
 
   const paidCount = visible.filter(f => f.paid).length
-  const totalAmount = visible.reduce((s, f) => s + f.amount, 0)
-  const paidAmount = visible.filter(f => f.paid).reduce((s, f) => s + f.amount, 0)
+    const effective = (f: Facture) => f.amount ?? f.estimate ?? 0
+  const totalAmount = visible.reduce((s, f) => s + effective(f), 0)
+  const paidAmount = visible.filter(f => f.paid).reduce((s, f) => s + effective(f), 0)
   const unpaidAmount = totalAmount - paidAmount
+  const awaiting = visible.filter(f => f.amount === null)
+  const estimatedAmount = awaiting.reduce((s, f) => s + (f.estimate ?? 0), 0)
   const recurringFactures = sortFactures(visible.filter(f => f.isRecurring))
   const ponctuellesFactures = sortFactures(visible.filter(f => !f.isRecurring))
 
@@ -1486,7 +1489,7 @@ function FacturesSection() {
     ? `Ajoute tes factures (eau, élec, internet...) pour ne rien oublier.`
     : paidCount === visible.length
     ? `✅ Toutes tes factures sont payées sur ${PERIOD_LABEL[period]} ! Bien joué.`
-    : `⏳ ${visible.length - paidCount} facture${visible.length - paidCount > 1 ? 's' : ''} en attente · ${formatAmount(unpaidAmount)} à payer`
+        : `⏳ ${visible.length - paidCount} facture${visible.length - paidCount > 1 ? 's' : ''} en attente · ${awaiting.length > 0 ? '~' : ''}${formatAmount(unpaidAmount)} à payer${awaiting.length > 0 ? ` (dont ${awaiting.length} montant${awaiting.length > 1 ? 's' : ''} à saisir)` : ''}`
 
   if (loading) return <div className="card text-center py-8 text-ink-soft">Chargement...</div>
   if (loadError) {
@@ -1540,6 +1543,13 @@ function FacturesSection() {
             <p className="text-[10px] text-danger uppercase font-bold mt-0.5">Restant</p>
           </div>
         </div>
+      )}
+
+            {awaiting.length > 0 && (
+        <p className="text-xs text-yellow-800 bg-yellow-50 border border-yellow-200 rounded-2xl px-3 py-2">
+          ⏳ {awaiting.length} facture{awaiting.length > 1 ? 's' : ''} au montant pas encore connu
+          {estimatedAmount > 0 ? <> · <strong>~{formatAmount(estimatedAmount)}</strong> estimés dans le total</> : " · pas encore d'historique pour estimer"}
+        </p>
       )}
 
       {visible.length > 0 && (
@@ -1602,9 +1612,24 @@ function FacturesSection() {
               <label className="label">Nom de la facture</label>
               <input className="input" placeholder="Ex: Facture CEB, Abonnement Netflix..." value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))}/>
             </div>
+                        {form.isRecurring && (
+              <div className="flex items-center justify-between p-3 bg-mist rounded-2xl border border-mist-dark">
+                <div className="pr-3">
+                  <p className="text-sm font-bold text-ink">📈 Montant variable</p>
+                  <p className="text-xs text-ink-soft mt-0.5">Change chaque mois (eau, élec...). Le montant n'est pas recopié : tu le saisis quand la facture arrive.</p>
+                </div>
+                <button onClick={() => setForm(f => ({ ...f, amountVariable: !f.amountVariable }))}
+                  className={`relative w-12 h-6 rounded-full transition-colors flex-shrink-0 ${form.amountVariable ? 'bg-yellow-500' : 'bg-mist-dark'}`}>
+                  <span className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-all ${form.amountVariable ? 'left-7' : 'left-1'}`}/>
+                </button>
+              </div>
+            )}
             <div>
-              <label className="label">Montant (Rs)</label>
-              <input className="input" type="number" placeholder="0" value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))}/>
+              <label className="label">{form.isRecurring ? 'Montant (Rs) — optionnel' : 'Montant (Rs)'}</label>
+              <input className="input" type="number" placeholder={form.isRecurring ? 'Laisse vide si tu ne le connais pas' : '0'} value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))}/>
+              {form.isRecurring && !form.amount && (
+                <p className="text-xs text-ink-soft mt-1">Sans montant, la facture est estimée d'après tes derniers paiements, puis tu saisis le vrai montant quand tu la paies.</p>
+              )}
             </div>
             <div>
               <label className="label">Catégorie</label>
