@@ -568,11 +568,15 @@ export async function deleteBudget(id: string): Promise<void> {
 export async function getSavings(): Promise<SavingsGoal[]> {
   const userId = await getUserId()
 
-  const { data, error } = await supabase
+  let query = supabase
     .from('savings_goals')
     .select('*')
     .eq('user_id', userId)
-    .order('created_at', { ascending: true })
+
+  const spaceId = readSpaceId()
+  if (spaceId) query = query.eq('space_id', spaceId)
+
+  const { data, error } = await query.order('created_at', { ascending: true })
   if (error) throw error
 
   return (data ?? []).map(r => ({
@@ -588,10 +592,11 @@ export async function getSavings(): Promise<SavingsGoal[]> {
 
 export async function addSavingsGoal(g: Omit<SavingsGoal, 'id' | 'createdAt'>): Promise<SavingsGoal> {
   const userId = await getUserId()
+  const spaceId = requireWritableSpaceId()
 
   const { data, error } = await supabase
     .from('savings_goals')
-    .insert({ user_id: userId, name: g.name, target: g.target, saved: g.saved, emoji: g.emoji, category: g.category ?? 'Épargne' })
+    .insert({ user_id: userId, space_id: spaceId, name: g.name, target: g.target, saved: g.saved, emoji: g.emoji, category: g.category ?? 'Épargne' })
     .select()
     .single()
 
