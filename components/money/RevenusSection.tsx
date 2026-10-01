@@ -32,7 +32,7 @@ const REVENU_PRESETS = [
 
 interface SavedSource { id: string; name: string; type: 'fixed' | 'variable' }
 
-function RevenusSection() {
+export function RevenusSection() {
   const [revenus, setRevenus] = useState<RevenuSource[]>([])
   const [savedSources, setSavedSources] = useState<SavedSource[]>([])
   const [loading, setLoading] = useState(true)
