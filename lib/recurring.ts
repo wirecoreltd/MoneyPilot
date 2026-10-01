@@ -21,7 +21,7 @@ function latestMonthRows<T extends { month: string }>(rows: T[], ym: string): T[
 
 async function ensureFactures(c: SupabaseClient, userId: string, ym: string) {
   const { data, error } = await c.from('factures')
-    .select('name,amount,category,due_date,note,month')
+        .select('name,amount,category,due_date,note,month,amount_variable')
     .eq('user_id', userId).eq('is_recurring', true)
   if (error) throw new Error(`factures: ${error.message}`)
   const rows = data ?? []
@@ -29,8 +29,10 @@ async function ensureFactures(c: SupabaseClient, userId: string, ym: string) {
   const have = new Set(rows.filter(r => r.month === ym).map(r => key(r.name)))
   const toAdd = latestMonthRows(rows, ym)
     .filter(r => !have.has(key(r.name)))
-    .map(r => ({
-      user_id: userId, name: r.name, amount: r.amount, category: r.category,
+     .map(r => ({
+      user_id: userId, name: r.name,
+      // montant variable (eau, élec…) : on ne recopie PAS le montant du mois dernier
+      amount: r.amount_variable ? null : r.amount, amount_variable: !!r.amount_variable, category: r.category,
       due_date: sameDayIn(ym, r.due_date), is_recurring: true, paid: false,
       note: r.note, month: ym, created_at: `${ym}-01T00:00:00`,
     }))
@@ -50,7 +52,7 @@ async function ensureIncomes(c: SupabaseClient, userId: string, ym: string) {
   const have = new Set(rows.filter(r => r.month === ym).map(r => key(r.label)))
   const toAdd = latestMonthRows(rows, ym)
     .filter(r => !have.has(key(r.label)))
-    .map(r => ({
+    
       user_id: userId, label: r.label, amount: r.amount, is_fixed: true,
       month: ym, received_at: sameDayIn(ym, r.received_at) ?? `${ym}-01`,
     }))
