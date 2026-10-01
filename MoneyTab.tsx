@@ -1244,9 +1244,9 @@ function FacturesSection() {
   // ← Catégories partagées (Supabase, table custom_categories)
   const { customCategories, addCustom, removeCustom, renameCustom } = useCustomCategories(() => { loadFactures() })
 
-  const [form, setForm] = useState({
+    const [form, setForm] = useState({
     name: '', amount: '', category: DEFAULT_CATEGORIES[0],
-    dueDate: '', dueDayOfMonth: '', isRecurring: false, note: '',
+    dueDate: '', dueDayOfMonth: '', isRecurring: false, amountVariable: false, note: '',
   })
   const ym = currentYearMonth()
 
