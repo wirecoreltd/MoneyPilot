@@ -35,15 +35,6 @@ interface Props {
   onSubTabChange?: (sub: SubTab) => void
 }
 
-interface DebtPaymentHistory {
-  id: string
-  debtId: string
-  amount: number
-  paidAt: string
-  note?: string
-  category?: string
-}
-
 interface SavingsDeposit {
   id: string
   goalId: string
