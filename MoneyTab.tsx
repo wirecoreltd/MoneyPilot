@@ -22,6 +22,7 @@ import {
 import PeriodFilter, { usePeriod, PERIOD_LABEL } from './components/money/PeriodFilter'
 import { DEFAULT_CATEGORIES, useCustomCategories, CategoryManager } from './components/money/categories'
 import { TransactionsSection } from './components/money/TransactionsSection'
+import { RevenusSection } from './components/money/RevenusSection'
 
 type SubTab = MoneySubTab
 
