@@ -23,6 +23,7 @@ interface Facture {
   note?: string
   createdAt?: string
   spaceId: string
+  rangePaid?: number   // montant payé dans la période (utile quand le montant de la facture est inconnu)
 }
 
 interface FacturePayment {
@@ -339,11 +340,14 @@ export function FacturesSection() {
     return factureInRange(f, range.from, range.to, paymentsMap[f.id] ?? [])
   }).map(f => f.amount === null
     // Montant variable : "payée" seulement si un paiement est daté dans la période choisie
-    ? { ...f, paid: (paymentsMap[f.id] ?? []).some(p => String(p.paidAt).slice(0, 10) >= range.from && String(p.paidAt).slice(0, 10) <= range.to) }
+    ? (() => {
+        const inP = (paymentsMap[f.id] ?? []).filter(p => String(p.paidAt).slice(0, 10) >= range.from && String(p.paidAt).slice(0, 10) <= range.to)
+        return { ...f, paid: inP.length > 0, rangePaid: inP.reduce((s, p) => s + p.amount, 0) }
+      })()
     : f)
 
   const paidCount = visible.filter(f => f.paid).length
-  const effective = (f: Facture) => f.amount ?? f.estimate ?? 0
+  const effective = (f: Facture) => f.amount ?? ((f.rangePaid ?? 0) > 0 ? f.rangePaid! : (f.estimate ?? 0))
   const totalAmount = visible.reduce((s, f) => s + effective(f), 0)
   const paidAmount = visible.filter(f => f.paid).reduce((s, f) => s + effective(f), 0)
   const unpaidAmount = totalAmount - paidAmount
@@ -567,6 +571,7 @@ function FactureCard({
   onPay: () => void; onEditPayment: (p: FacturePayment) => void
   onDeletePayment: (p: FacturePayment) => void
 }) {
+  const [showAllHistory, setShowAllHistory] = useState(false)
   const isDue = f.dueDate ? new Date(f.dueDate) < new Date() && !f.paid : false
   const totalPaid = payments.reduce((s, p) => s + p.amount, 0)
   const unknown = f.amount === null
@@ -579,6 +584,8 @@ function FactureCard({
   const outRange = payments.filter(p => !(String(p.paidAt).slice(0, 10) >= range.from && String(p.paidAt).slice(0, 10) <= range.to))
   const totalRange = inRange.reduce((s, p) => s + p.amount, 0)
   const lastPay = inRange[0] // trié du plus récent au plus ancien
+  const shownPayments = showAllHistory ? payments : inRange
+  const isInRange = (p: FacturePayment) => String(p.paidAt).slice(0, 10) >= range.from && String(p.paidAt).slice(0, 10) <= range.to
   const shortDate = (d: string) => new Date(d).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })
 
   return (
@@ -633,17 +640,17 @@ function FactureCard({
         <div className="bg-mist rounded-2xl overflow-hidden">
           <div className="px-3 py-2.5 border-b border-mist-dark flex items-center justify-between">
             <p className="text-xs font-bold text-ink-soft uppercase tracking-wide">Historique</p>
-            {payments.length > 0 && <span className="text-xs font-mono font-bold text-positive">Total : {formatAmount(payments.reduce((s, p) => s + p.amount, 0))}</span>}
+            {shownPayments.length > 0 && <span className="text-xs font-mono font-bold text-positive">Total : {formatAmount(shownPayments.reduce((s, p) => s + p.amount, 0))}</span>}
           </div>
           {historyLoading ? (
             <p className="text-xs text-ink-soft text-center py-4">Chargement...</p>
-          ) : payments.length === 0 ? (
-            <p className="text-xs text-ink-soft text-center italic py-4">Aucun paiement enregistré</p>
-          ) : payments.map(p => (
+          ) : shownPayments.length === 0 ? (
+            <p className="text-xs text-ink-soft text-center italic py-4">{payments.length === 0 ? 'Aucun paiement enregistré' : 'Aucun paiement sur cette période'}</p>
+          ) : shownPayments.map(p => (
             <div key={p.id} className="flex items-center justify-between px-3 py-2.5 border-b border-mist-dark last:border-0 hover:bg-white transition-colors">
               <div className="flex-1 min-w-0">
                 <p className="text-xs font-mono font-bold text-positive">+{formatAmount(p.amount)}</p>
-                <p className="text-xs text-ink-soft">{new Date(p.paidAt).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })}</p>
+                <p className="text-xs text-ink-soft">{new Date(p.paidAt).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })}{!isInRange(p) && <span className="ml-1.5 text-[10px] text-orange-700">🕓 hors période</span>}</p>
                 {p.note && <p className="text-xs text-ink-soft italic truncate">{p.note}</p>}
               </div>
               <div className="flex gap-1 ml-2 flex-shrink-0">
@@ -652,6 +659,11 @@ function FactureCard({
               </div>
             </div>
           ))}
+          {outRange.length > 0 && (
+            <button className="w-full py-2 text-xs font-bold text-ink-soft hover:text-ink border-t border-mist-dark" onClick={() => setShowAllHistory(v => !v)}>
+              {showAllHistory ? 'Masquer les paiements hors période' : `Voir les ${outRange.length} paiement${outRange.length > 1 ? 's' : ''} hors période`}
+            </button>
+          )}
         </div>
       )}
 
