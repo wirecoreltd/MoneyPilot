@@ -36,15 +36,6 @@ interface Props {
   onSubTabChange?: (sub: SubTab) => void
 }
 
-interface SavingsDeposit {
-  id: string
-  goalId: string
-  amount: number
-  isWithdrawal: boolean
-  note?: string
-  depositedAt: string
-}
-
 const EMOJIS = ['🏖️','🚗','🏠','💻','📱','✈️','🎓','💍','💰','🎮','👶']
 
 const SUBTAB_KEY = 'moneyapp_subtab'
