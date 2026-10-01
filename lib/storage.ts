@@ -867,7 +867,10 @@ export async function getMonthlyIncomes(month?: string): Promise<MonthlyIncome[]
     .select('*')
     .eq('user_id', userId)
 
-  if (month) query = query.eq('month', month)
+    if (month) query = query.eq('month', month)
+
+  const spaceId = readSpaceId()
+  if (spaceId) query = query.eq('space_id', spaceId)
 
   const { data, error } = await query.order('created_at', { ascending: true })
   if (error) throw error
@@ -882,11 +885,12 @@ export async function getMonthlyIncomes(month?: string): Promise<MonthlyIncome[]
 }
 
 export async function addMonthlyIncome(i: Omit<MonthlyIncome, 'id'>): Promise<MonthlyIncome> {
-  const userId = await getUserId()
+    const userId = await getUserId()
+  const spaceId = requireWritableSpaceId()
 
   const { data, error } = await supabase
     .from('monthly_incomes')
-    .insert({ user_id: userId, label: i.label, amount: i.amount, is_fixed: i.isFixed, month: i.month })
+    .insert({ user_id: userId, space_id: spaceId, label: i.label, amount: i.amount, is_fixed: i.isFixed, month: i.month })
     .select()
     .single()
 
