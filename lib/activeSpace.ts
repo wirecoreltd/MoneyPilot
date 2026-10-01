@@ -22,3 +22,9 @@ export function requireWritableSpaceId(): string {
   if (!id || id === OVERVIEW) throw new Error('Choisis un espace pour enregistrer.')
   return id
 }
+
+// Pour toute lecture : null = pas de filtre (vue d'ensemble ou espace inconnu).
+export function readSpaceId(): string | null {
+  const id = getActiveSpaceId()
+  return id && id !== OVERVIEW ? id : null
+}
