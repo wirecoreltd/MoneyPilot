@@ -9,7 +9,7 @@ export function buildChatContext(p: ProfileLite, m: MonthSummary, h: HealthScore
   const f = (n: number) => formatAmount(n, p.currency || 'MUR')
   return [
     `Profil : ${p.firstName}, ${p.situation}, ${p.children} enfant(s), revenu déclaré ${f(p.monthlyIncome)} (${p.incomeType}), objectif : ${p.mainGoal}.`,
-    `Ce mois : revenus ${f(m.income)}, dépenses ${f(m.expenses)}, factures payées ${f(m.billsPaid)} sur ${f(m.billsPlanned)}, mensualités de dettes payées ${f(m.debtPaid)} sur ${f(m.debtDue)}, épargne du mois ${f(m.savedNet)}.`,
+        `Ce mois : revenus ${f(m.income)}, dépenses ${f(m.expenses)}, factures payées ${f(m.billsPaid)} sur ${f(m.billsPlanned)}${m.billsAwaitingAmount > 0 ? ` (dont ${f(m.billsEstimated)} estimés pour ${m.billsAwaitingAmount} facture(s) au montant encore inconnu)` : ''}, mensualités de dettes payées ${f(m.debtPaid)} sur ${f(m.debtDue)}, épargne du mois ${f(m.savedNet)}.`,
     `Reste à vivre : ${f(m.remainingToLive)}. Épargne totale : ${f(m.totalSavings)}. Capital de dettes restant : ${f(m.totalDebtOwed)} (contexte, pas une charge mensuelle).`,
     `Score santé : ${h.score}/100 (${h.label}). Marge du mois selon le plan : ${f(plan.freeMoney)}.`,
   ].join('\n')
@@ -37,7 +37,7 @@ export function buildCoachContext(
   const thisMonth = [
     `Revenus du mois : ${f(m.income)}`,
     `Dépenses ponctuelles : ${f(m.expenses)}`,
-    `Factures : ${f(m.billsPaid)} payées sur ${f(m.billsPlanned)} (reste ${f(m.billsRemaining)})`,
+    `Factures : ${f(m.billsPaid)} payées sur ${f(m.billsPlanned)} (reste ${f(m.billsRemaining)})${m.billsAwaitingAmount > 0 ? ` — dont ${f(m.billsEstimated)} ESTIMÉS (${m.billsAwaitingAmount} facture(s) au montant pas encore connu)` : ''}`,
     `Mensualités de dettes : ${f(m.debtPaid)} payées sur ${f(m.debtDue)} (reste ${f(m.debtRemaining)})`,
     `Épargne nette du mois : ${f(m.savedNet)}`,
     `💰 Reste à vivre réel (après factures et mensualités restantes) : ${f(m.remainingToLive)}`,
