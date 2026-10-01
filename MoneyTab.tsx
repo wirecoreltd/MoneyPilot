@@ -26,6 +26,7 @@ import { RevenusSection } from './components/money/RevenusSection'
 import { FacturesSection } from './components/money/FacturesSection'
 import { BudgetSection } from './components/money/BudgetSection'
 import { DettesSection } from './components/money/DettesSection'
+import { EpargneSection } from './components/money/EpargneSection'
 
 type SubTab = MoneySubTab
 
@@ -35,8 +36,6 @@ interface Props {
   initialSubTab?: SubTab
   onSubTabChange?: (sub: SubTab) => void
 }
-
-const EMOJIS = ['🏖️','🚗','🏠','💻','📱','✈️','🎓','💍','💰','🎮','👶']
 
 const SUBTAB_KEY = 'moneyapp_subtab'
 function loadSubTab(): SubTab {
