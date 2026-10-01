@@ -7,7 +7,7 @@
 
 export interface SnapTransaction { id: string; type: 'income' | 'expense'; amount: number; category: string; note: string; date: string }
 export interface SnapIncome { id: string; label: string; amount: number; isFixed: boolean; month: string }
-export interface SnapFacture { id: string; name: string; amount: number; category: string; dueDate?: string; isRecurring: boolean }
+export interface SnapFacture { id: string; name: string; amount: number | null; estimate: number; amountVariable: boolean; category: string; dueDate?: string; isRecurring: boolean }
 export interface SnapFacturePayment { id: string; factureId: string; amount: number; paidAt: string; category: string }
 export interface SnapDebt {
   id: string; type: 'owe' | 'owed'; person: string
@@ -50,6 +50,27 @@ export interface MonthSnapshot {
   budgets: SnapBudget[]
   recurring: SnapRecurring[]
   projects: SnapProject[]
+}
+
+// ─── Factures à montant variable ──────────────────────────────────────────────
+
+// Montant effectif d'une facture : le vrai montant s'il est connu, sinon l'estimation.
+export const factureEffective = (f: { amount: number | null; estimate: number }): number => f.amount ?? f.estimate
+
+// Estimation = moyenne des 3 derniers montants réels (> 0) de la même facture (même nom), avant `beforeMonth`.
+export function estimateVariableAmount(
+  history: { name: string; amount: number | null; month: string }[],
+  name: string,
+  beforeMonth: string,
+  last = 3,
+): number {
+  const key = name.trim().toLowerCase()
+  const amounts = history
+    .filter(h => h.name.trim().toLowerCase() === key && h.month < beforeMonth && h.amount != null && h.amount > 0)
+    .sort((a, b) => b.month.localeCompare(a.month))
+    .slice(0, last)
+    .map(h => h.amount as number)
+  return amounts.length ? Math.round(amounts.reduce((a, b) => a + b, 0) / amounts.length) : 0
 }
 
 // ─── Helpers de date / format ─────────────────────────────────────────────────
@@ -141,7 +162,9 @@ export interface MonthSummary {
   expenses: number        // dépenses ponctuelles (transactions)
   billsPlanned: number    // factures du mois (montants)
   billsPaid: number       // paiements faits sur les factures du mois
-  billsRemaining: number  // reste à payer sur les factures du mois
+  billsRemaining: number  // reste à payer sur les factures du mois (montants inconnus = estimation)
+  billsEstimated: number  // part de billsRemaining qui n'est qu'une ESTIMATION (factures au montant pas encore connu)
+  billsAwaitingAmount: number // nombre de factures dont le montant réel n'est pas encore connu
   debtDue: number         // somme des mensualités dues (dettes "je dois" actives)
   debtPaid: number        // remboursements de dettes payés ce mois
   debtRemaining: number   // mensualités encore à payer ce mois
@@ -182,9 +205,12 @@ export function computeMonthSummary(s: MonthSnapshot): MonthSummary {
     }
   }
   const monthFacturePayments = s.facturePayments.filter(p => inMonth(p.paidAt, m))
-const billsPlanned = sum(s.factures.map(f => f.amount))
-const billsPaid = sum(monthFacturePayments.map(p => p.amount))          // ← par date de paiement
-const billsRemaining = sum(s.factures.map(f => Math.max(0, f.amount - (paidByFacture[f.id] || 0))))
+  const billsPlanned = sum(s.factures.map(f => factureEffective(f)))
+  const billsPaid = sum(monthFacturePayments.map(p => p.amount))          // ← par date de paiement
+  const billsRemaining = sum(s.factures.map(f => Math.max(0, factureEffective(f) - (paidByFacture[f.id] || 0))))
+  const unknownBills = s.factures.filter(f => f.amount === null)
+  const billsEstimated = sum(unknownBills.map(f => f.estimate))
+  const billsAwaitingAmount = unknownBills.length
 
   // Dettes : les paiements sont datés ; "on me doit" = argent reçu, pas dépensé
   const debtById = new Map(s.debts.map(d => [d.id, d]))
@@ -241,7 +267,7 @@ const billsRemaining = sum(s.factures.map(f => Math.max(0, f.amount - (paidByFac
   return {
     month: m,
     income, incomeDeclared, incomeOther, debtReceived,
-    expenses, billsPlanned, billsPaid, billsRemaining,
+    expenses, billsPlanned, billsPaid, billsRemaining, billsEstimated, billsAwaitingAmount,
     debtDue, debtPaid, debtRemaining, recurringPaid, savedNet, totalOut,
     balance, remainingToLive,
     totalSavings, totalDebtOwed, totalOwedToMe, monthlyCost, safetyMonths,
