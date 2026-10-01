@@ -189,11 +189,12 @@ export function FacturesSection() {
       if (editingFacture) {
         const editing = editingFacture
         const newName = form.name.trim()
+        const hasPayments = (paymentsMap[editing.id]?.length ?? 0) > 0
 
         const { error } = await supabase.from('factures').update({
           name: newName, amount: amountValue, amount_variable: amountVariable, category: form.category,
           due_date: dueDate, is_recurring: form.isRecurring, note: form.note || null,
-          ...(amountValue === null ? { paid: false } : {}),
+          ...(amountValue === null ? { paid: hasPayments } : {}),
         }).eq('id', editing.id)
         if (error) throw error
 
@@ -210,7 +211,7 @@ export function FacturesSection() {
         setFactures(prev => prev.map(f => f.id === editing.id ? {
           ...f, name: newName, amount: amountValue, amountVariable, category: form.category,
           estimate: amountValue === null ? (f.estimate ?? 0) : undefined,
-          paid: amountValue === null ? false : f.paid,
+          paid: amountValue === null ? hasPayments : f.paid,
           dueDate: dueDate ?? undefined, isRecurring: form.isRecurring, note: form.note || undefined,
         } : f))
       } else {
@@ -284,9 +285,10 @@ export function FacturesSection() {
     const payments = await fetchFacturePayments(factureId)
     setPaymentsMap(prev => ({ ...prev, [factureId]: payments }))
     const facture = factures.find(f => f.id === factureId)
-    if (!facture || facture.amount === null) return   // montant inconnu : rien à comparer
+    if (!facture) return
     const totalPaid = payments.reduce((s, p) => s + p.amount, 0)
-    const nowPaid = totalPaid >= facture.amount
+    // Montant inconnu : payée dès qu'un paiement existe ; sinon comparaison au montant
+    const nowPaid = facture.amount === null ? payments.length > 0 : totalPaid >= facture.amount
     if (nowPaid !== facture.paid) {
       const { error } = await supabase.from('factures').update({ paid: nowPaid }).eq('id', factureId)
       if (error) throw error
@@ -299,17 +301,8 @@ export function FacturesSection() {
     if (!amt || amt <= 0) return
     try {
      await addFacturePayment(factureId, amt, payDate, payNote)
-      const facture = factures.find(f => f.id === factureId)
-      if (facture && facture.amount === null) {
-        // Montant inconnu jusque-là : ce premier paiement fixe le montant réel de la facture
-        const { error } = await supabase.from('factures').update({ amount: amt, paid: true }).eq('id', factureId)
-        if (error) throw error
-        setFactures(prev => prev.map(f => f.id === factureId ? { ...f, amount: amt, estimate: undefined, paid: true } : f))
-        const payments = await fetchFacturePayments(factureId)
-        setPaymentsMap(prev => ({ ...prev, [factureId]: payments }))
-      } else {
-        await syncPaidStatus(factureId)
-      }
+      // Le paiement est enregistré à part : il ne modifie jamais le montant de la facture
+      await syncPaidStatus(factureId)
       setPayingId(null); setPayAmount(''); 
       
       setPayDate(isoDate(new Date())); setPayNote('')
@@ -347,11 +340,12 @@ export function FacturesSection() {
   })
 
   const paidCount = visible.filter(f => f.paid).length
-    const effective = (f: Facture) => f.amount ?? f.estimate ?? 0
+    const paidOf = (f: Facture) => (paymentsMap[f.id] ?? []).reduce((s, p) => s + p.amount, 0)
+  const effective = (f: Facture) => f.amount ?? (paidOf(f) > 0 ? paidOf(f) : (f.estimate ?? 0))
   const totalAmount = visible.reduce((s, f) => s + effective(f), 0)
   const paidAmount = visible.filter(f => f.paid).reduce((s, f) => s + effective(f), 0)
   const unpaidAmount = totalAmount - paidAmount
-  const awaiting = visible.filter(f => f.amount === null)
+  const awaiting = visible.filter(f => f.amount === null && !f.paid)
   const estimatedAmount = awaiting.reduce((s, f) => s + (f.estimate ?? 0), 0)
   const recurringFactures = sortFactures(visible.filter(f => f.isRecurring))
   const ponctuellesFactures = sortFactures(visible.filter(f => !f.isRecurring))
@@ -360,7 +354,7 @@ export function FacturesSection() {
     ? `Ajoute tes factures (eau, élec, internet...) pour ne rien oublier.`
     : paidCount === visible.length
     ? `✅ Toutes tes factures sont payées sur ${PERIOD_LABEL[period]} ! Bien joué.`
-        : `⏳ ${visible.length - paidCount} facture${visible.length - paidCount > 1 ? 's' : ''} en attente · ${awaiting.length > 0 ? '~' : ''}${formatAmount(unpaidAmount)} à payer${awaiting.length > 0 ? ` (dont ${awaiting.length} montant${awaiting.length > 1 ? 's' : ''} à saisir)` : ''}`
+        : `⏳ ${visible.length - paidCount} facture${visible.length - paidCount > 1 ? 's' : ''} en attente · ${awaiting.length > 0 ? '~' : ''}${formatAmount(unpaidAmount)} à payer`
 
   if (loading) return <div className="card text-center py-8 text-ink-soft">Chargement...</div>
   if (loadError) {
@@ -574,8 +568,9 @@ function FactureCard({
   const isDue = f.dueDate ? new Date(f.dueDate) < new Date() && !f.paid : false
     const totalPaid = payments.reduce((s, p) => s + p.amount, 0)
   const unknown = f.amount === null
-  const amt = f.amount ?? 0
-  const remaining = unknown ? (f.estimate ?? 0) : Math.max(0, amt - totalPaid)
+  const amt = f.amount ?? totalPaid   // montant inconnu : on affiche ce qui a été payé, sans toucher à la facture
+  const pending = unknown && totalPaid === 0
+  const remaining = pending ? (f.estimate ?? 0) : Math.max(0, amt - totalPaid)
   const isPaying = payingId === f.id
   const overpaid = !unknown && totalPaid > amt ? totalPaid - amt : 0
   // Distinction : paiements datés dans le mois de la facture vs. hors de ce mois
@@ -591,7 +586,6 @@ function FactureCard({
           <div className="flex items-center gap-1.5 flex-wrap mb-1">
             {f.isRecurring && <span className="text-[10px] bg-yellow-50 text-yellow-700 border border-yellow-200 px-1.5 py-0.5 rounded-full font-medium">🔄 Récurrente</span>}
             <span className="text-[10px] bg-yellow-50 text-yellow-700 border border-yellow-200 px-1.5 py-0.5 rounded-full font-medium">{f.category}</span>
-            {unknown && <span className="text-[10px] bg-orange-50 text-orange-700 border border-orange-200 px-1.5 py-0.5 rounded-full font-bold">Montant à saisir</span>}
             {isDue && !f.paid && <span className="text-[10px] bg-danger text-white px-1.5 py-0.5 rounded-full font-bold">En retard</span>}
             {f.paid && <span className="text-[10px] bg-positive-light text-positive px-1.5 py-0.5 rounded-full font-bold">✓ Payée</span>}
             {inMonth.length > 0 && <span className="text-[10px] bg-blue-50 text-accent border border-blue-200 px-1.5 py-0.5 rounded-full font-bold">💸 Payé en {monthLabel(f.month)}{inMonth.length > 1 ? ` · ${inMonth.length}×` : ''}</span>}
@@ -605,12 +599,12 @@ function FactureCard({
           </div>
         </div>
         <div className="flex flex-col items-end gap-1 flex-shrink-0">
-          {unknown ? (
+          {pending ? (
             <p className="font-mono font-bold text-base text-ink-soft">{(f.estimate ?? 0) > 0 ? `~${formatAmount(f.estimate ?? 0)}` : '—'}</p>
           ) : (
             <p className="font-mono font-bold text-base text-ink">{formatAmount(amt)}</p>
           )}
-          {unknown && (f.estimate ?? 0) > 0 && <p className="text-[10px] text-ink-soft">estimé</p>}
+          {pending && (f.estimate ?? 0) > 0 && <p className="text-[10px] text-ink-soft">estimé</p>}
           {totalPaid > 0 && !f.paid && <p className="text-xs font-mono text-positive">+{formatAmount(totalPaid)} payé</p>}
           <div className="flex gap-1 mt-0.5">
             <button className={`w-8 h-8 rounded-xl flex items-center justify-center transition-colors ${showHistory ? 'bg-yellow-500 text-white' : 'bg-mist hover:bg-yellow-50 text-ink-soft hover:text-yellow-600'}`} onClick={onToggleHistory}><History size={14}/></button>
@@ -661,10 +655,9 @@ function FactureCard({
       {isPaying ? (
         <div className="space-y-2 p-3 bg-yellow-50 rounded-2xl border border-yellow-200">
           <p className="text-xs font-bold text-yellow-800 uppercase tracking-wide">Enregistrer un paiement</p>
-          {!unknown && remaining > 0 && remaining < amt && <p className="text-xs text-yellow-700">Restant à payer : <strong>{formatAmount(remaining)}</strong></p>}
-          {!unknown && remaining === 0 && <p className="text-xs text-yellow-700">Cette facture est déjà soldée : ce paiement s'ajoutera <strong>en plus</strong>.</p>}
-          {unknown && <p className="text-xs text-yellow-700">Saisis le <strong>montant réel</strong> de la facture : il remplace l'estimation.</p>}
-          <input className="input bg-white" type="number" placeholder={unknown ? `Montant réel (Rs)${(f.estimate ?? 0) > 0 ? ` — estimé ~${Math.round(f.estimate ?? 0)}` : ''}` : 'Montant (Rs)'} value={payAmount} onChange={e => onPayAmountChange(e.target.value)} autoFocus/>
+          {!pending && remaining > 0 && remaining < amt && <p className="text-xs text-yellow-700">Restant à payer : <strong>{formatAmount(remaining)}</strong></p>}
+          {!pending && remaining === 0 && <p className="text-xs text-yellow-700">Cette facture est déjà soldée : ce paiement s'ajoutera <strong>en plus</strong>.</p>}
+          <input className="input bg-white" type="number" placeholder="Montant payé (Rs)" value={payAmount} onChange={e => onPayAmountChange(e.target.value)} autoFocus/>
           <input className="input bg-white" type="date" value={payDate} onChange={e => onPayDateChange(e.target.value)}/>
           <input className="input bg-white" placeholder="📝 Note (optionnel)" value={payNote} onChange={e => onPayNoteChange(e.target.value)}/>
           <div className="flex gap-2">
@@ -680,7 +673,7 @@ function FactureCard({
               : 'text-yellow-800 bg-yellow-50 hover:bg-yellow-100 border-yellow-200'
           }`}
           onClick={() => onSetPayingId(f.id)}>
-          <Plus size={15}/> {unknown ? 'Saisir le montant et payer' : f.paid ? 'Ajouter un autre paiement' : 'Enregistrer un paiement'}
+          <Plus size={15}/> {f.paid ? 'Ajouter un autre paiement' : 'Enregistrer un paiement'}
         </button>
       )}
     </div>
