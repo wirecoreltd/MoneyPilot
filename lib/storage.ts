@@ -482,33 +482,51 @@ function mapBudget(r: any): BudgetCategory {
 
 export async function getBudgets(): Promise<BudgetCategory[]> {
   const userId = await getUserId()
+  const spaceId = readSpaceId()
 
-  const { data, error } = await supabase
+  let query = supabase
     .from('budget_categories')
     .select('*')
     .eq('user_id', userId)
+  if (spaceId) query = query.eq('space_id', spaceId)
+
+  const { data, error } = await query
   if (error) throw error   // sinon une erreur réseau recréerait les budgets par défaut en double
 
-  if (!data || data.length === 0) {
-    const toInsert = DEFAULT_BUDGETS.map(b => ({ ...b, user_id: userId }))
-    const { data: inserted, error: insertError } = await supabase
-      .from('budget_categories')
-      .insert(toInsert)
-      .select()
-    if (insertError) throw insertError
-    return (inserted ?? []).map(mapBudget)
-  }
+  if (data && data.length > 0) return data.map(mapBudget)
+
+  // Liste vide. En vue d'ensemble, il n'y a rien à créer.
+  if (!spaceId) return []
+
+  // Budgets par défaut : uniquement si le compte n'a AUCUN budget, tous espaces confondus.
+  const { count, error: countError } = await supabase
+    .from('budget_categories')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', userId)
+  if (countError) throw countError
+  if ((count ?? 0) > 0) return []   // un autre espace a déjà des budgets : celui-ci reste vide
+
+  const toInsert = DEFAULT_BUDGETS.map(b => ({ ...b, user_id: userId, space_id: spaceId }))
+  const { data: inserted, error: insertError } = await supabase
+    .from('budget_categories')
+    .insert(toInsert)
+    .select()
+  if (insertError) throw insertError
+  return (inserted ?? []).map(mapBudget)
+}
 
   return data.map(mapBudget)
 }
 
 export async function addBudget(b: Omit<BudgetCategory, 'id'>): Promise<BudgetCategory> {
   const userId = await getUserId()
+  const spaceId = requireWritableSpaceId()
 
   const { data, error } = await supabase
     .from('budget_categories')
     .insert({
       user_id:       userId,
+      space_id:      spaceId,
       name:          b.name,
       limit:         b.limit,
       color:         b.color,
