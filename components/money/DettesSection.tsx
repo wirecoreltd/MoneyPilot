@@ -13,3 +13,12 @@ import PeriodFilter, { usePeriod, PERIOD_LABEL } from './PeriodFilter'
 import { useCustomCategories, CategoryManager } from './categories'
 
 const startLabel = (ymd: string) => new Date(ymd).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })
+
+interface DebtPaymentHistory {
+  id: string
+  debtId: string
+  amount: number
+  paidAt: string
+  note?: string
+  category?: string
+}
