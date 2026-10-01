@@ -25,6 +25,7 @@ import { TransactionsSection } from './components/money/TransactionsSection'
 import { RevenusSection } from './components/money/RevenusSection'
 import { FacturesSection } from './components/money/FacturesSection'
 import { BudgetSection } from './components/money/BudgetSection'
+import { DettesSection } from './components/money/DettesSection'
 
 type SubTab = MoneySubTab
 
@@ -45,7 +46,6 @@ interface SavingsDeposit {
 }
 
 const EMOJIS = ['🏖️','🚗','🏠','💻','📱','✈️','🎓','💍','💰','🎮','👶']
-const startLabel = (ymd: string) => new Date(ymd).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })
 
 const SUBTAB_KEY = 'moneyapp_subtab'
 function loadSubTab(): SubTab {
