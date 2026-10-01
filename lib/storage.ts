@@ -512,13 +512,12 @@ export async function getBudgets(): Promise<BudgetCategory[]> {
     .insert(toInsert)
     .select()
   if (insertError) throw insertError
-  return (inserted ?? []).map(mapBudget)
+    return (inserted ?? []).map(mapBudget)
 }
 
-  return data.map(mapBudget)
-}
-
-export async function addBudget(b: Omit<BudgetCategory, 'id'>): Promise<BudgetCategory> {
+export async function addBudget(
+  
+  b: Omit<BudgetCategory, 'id'>): Promise<BudgetCategory> {
   const userId = await getUserId()
   const spaceId = requireWritableSpaceId()
 
