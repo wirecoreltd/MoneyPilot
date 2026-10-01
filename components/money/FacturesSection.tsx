@@ -5,7 +5,7 @@ import { formatAmount, currentYearMonth } from '@/lib/storage'
 import CoachTip from '../../CoachTip'
 import { supabase } from '@/lib/supabase'
 import { readSpaceId, requireWritableSpaceId } from '@/lib/activeSpace'
-import { estimateVariableAmount, isoDate, monthLabel } from '@/lib/finance'
+import { estimateVariableAmount, isoDate } from '@/lib/finance'
 import PeriodFilter, { usePeriod, PERIOD_LABEL } from './PeriodFilter'
 import { DEFAULT_CATEGORIES, useCustomCategories, CategoryManager } from './categories'
 
@@ -339,8 +339,8 @@ export function FacturesSection() {
   const visible = factures.filter(f => {
     return factureInRange(f, range.from, range.to, paymentsMap[f.id] ?? [])
   }).map(f => f.amount === null
-    // Montant variable : "payée" seulement si un paiement est daté dans le mois de la facture
-    ? { ...f, paid: (paymentsMap[f.id] ?? []).some(p => String(p.paidAt).slice(0, 7) === f.month) }
+    // Montant variable : "payée" seulement si un paiement est daté dans la période choisie
+    ? { ...f, paid: (paymentsMap[f.id] ?? []).some(p => String(p.paidAt).slice(0, 10) >= range.from && String(p.paidAt).slice(0, 10) <= range.to) }
     : f)
 
   const paidCount = visible.filter(f => f.paid).length
@@ -372,7 +372,7 @@ export function FacturesSection() {
   function renderCard(f: Facture) {
     return (
       <FactureCard key={f.id} facture={f} onEdit={openEdit} onDelete={handleDelete}
-        payments={paymentsMap[f.id] ?? []} showHistory={openHistoryId === f.id}
+        payments={paymentsMap[f.id] ?? []} range={range} showHistory={openHistoryId === f.id}
         historyLoading={historyLoading && openHistoryId === f.id && !paymentsMap[f.id]}
         onToggleHistory={() => toggleHistory(f.id)} payingId={payingId}
         payAmount={payAmount} payDate={payDate} payNote={payNote}
@@ -560,7 +560,7 @@ function FactureCard({
   onPay, onEditPayment, onDeletePayment,
 }: {
   facture: Facture; onEdit: (f: Facture) => void; onDelete: (id: string) => void
-  payments: FacturePayment[]; showHistory: boolean; historyLoading: boolean
+  payments: FacturePayment[]; range: { from: string; to: string }; showHistory: boolean; historyLoading: boolean
   onToggleHistory: () => void; payingId: string | null
   payAmount: string; payDate: string; payNote: string
   onSetPayingId: (id: string) => void; onPayAmountChange: (v: string) => void
@@ -576,9 +576,10 @@ function FactureCard({
   const isPaying = payingId === f.id
   const overpaid = !unknown && totalPaid > amt ? totalPaid - amt : 0
   // Distinction : paiements datés dans le mois de la facture vs. hors de ce mois
-  const inMonth = payments.filter(p => String(p.paidAt).slice(0, 7) === f.month)
-  const outMonth = payments.filter(p => String(p.paidAt).slice(0, 7) !== f.month)
-  const lastPay = payments[0] // trié du plus récent au plus ancien
+  const inRange = payments.filter(p => String(p.paidAt).slice(0, 10) >= range.from && String(p.paidAt).slice(0, 10) <= range.to)
+  const outRange = payments.filter(p => !(String(p.paidAt).slice(0, 10) >= range.from && String(p.paidAt).slice(0, 10) <= range.to))
+  const totalRange = inRange.reduce((s, p) => s + p.amount, 0)
+  const lastPay = inRange[0] // trié du plus récent au plus ancien
   const shortDate = (d: string) => new Date(d).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })
 
   return (
@@ -590,11 +591,11 @@ function FactureCard({
             {!unknown && <span className="text-[10px] bg-yellow-50 text-yellow-700 border border-yellow-200 px-1.5 py-0.5 rounded-full font-medium">{f.category}</span>}
             {isDue && !f.paid && <span className="text-[10px] bg-danger text-white px-1.5 py-0.5 rounded-full font-bold">En retard</span>}
             {f.paid && !unknown && <span className="text-[10px] bg-positive-light text-positive px-1.5 py-0.5 rounded-full font-bold">✓ Payée</span>}
-            {inMonth.length > 0 && <span className="text-[10px] bg-blue-50 text-accent border border-blue-200 px-1.5 py-0.5 rounded-full font-bold">💸 Payé en {monthLabel(f.month)}{inMonth.length > 1 ? ` · ${inMonth.length}×` : ''}</span>}
-            {outMonth.length > 0 && <span className="text-[10px] bg-orange-50 text-orange-700 border border-orange-200 px-1.5 py-0.5 rounded-full font-bold">🕓 {outMonth.length} paiement{outMonth.length > 1 ? 's' : ''} hors {monthLabel(f.month).split(' ')[0]}</span>}
+            {inRange.length > 0 && <span className="text-[10px] bg-blue-50 text-accent border border-blue-200 px-1.5 py-0.5 rounded-full font-bold">💸 Payé sur la période{inRange.length > 1 ? ` · ${inRange.length}×` : ''}</span>}
+            {outRange.length > 0 && <span className="text-[10px] bg-orange-50 text-orange-700 border border-orange-200 px-1.5 py-0.5 rounded-full font-bold">🕓 {outRange.length} paiement{outRange.length > 1 ? 's' : ''} hors période</span>}
           </div>
           <p className={`text-sm font-semibold ${f.paid ? 'line-through text-ink-soft' : 'text-ink'}`}>{f.name}</p>
-          {totalPaid > 0 && <p className="text-sm font-mono font-bold text-positive mt-1">Total payé : {formatAmount(totalPaid)}</p>}
+          {totalRange > 0 && <p className="text-sm font-mono font-bold text-positive mt-1">Total payé : {formatAmount(totalRange)}</p>}
           <div className="flex items-center gap-3 mt-1 flex-wrap">
             {f.dueDate && <span className="text-xs text-ink-soft">📅 {new Date(f.dueDate).toLocaleDateString('fr-FR')}</span>}
             {lastPay && <span className="text-xs text-accent">💸 Dernier paiement : {shortDate(lastPay.paidAt)}</span>}
