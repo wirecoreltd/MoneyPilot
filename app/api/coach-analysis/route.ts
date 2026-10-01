@@ -10,6 +10,9 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
+// L'espace vient du client : on n'accepte qu'un identifiant au bon format
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 // Le client n'envoie AUCUN contexte : tout est reconstruit ici depuis la base,
 // avec le même moteur de calcul (lib/finance.ts) que l'écran.
 export async function POST(req: NextRequest) {
@@ -20,11 +23,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Trop de demandes, réessaie dans quelques minutes.' }, { status: 429 })
   }
 
+  let spaceId: string | null = null
+  try {
+    const body = await req.json()
+    if (typeof body?.spaceId === 'string' && UUID.test(body.spaceId)) spaceId = body.spaceId
+  } catch { /* pas de corps : tous les espaces */ }
+
   try {
     const month = currentYearMonth()
     const [profile, snap] = await Promise.all([
       loadProfile(auth.client, auth.user.id),
-      loadMonthSnapshot(auth.client, auth.user.id, month),
+      loadMonthSnapshot(auth.client, auth.user.id, month, spaceId),
     ])
     if (!profile) return NextResponse.json({ error: 'Profil introuvable' }, { status: 404 })
 
