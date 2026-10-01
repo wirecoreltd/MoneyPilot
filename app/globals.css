@@ -69,3 +69,9 @@
   .amount-negative { @apply font-mono font-bold text-danger; }
   .amount-neutral  { @apply font-mono font-bold text-ink; }
 }
+
+button:not(:disabled),
+select,
+[role="button"] {
+  cursor: pointer;
+}
