@@ -8,6 +8,7 @@ import {
 } from '@/lib/storage'
 import CoachTip from '../../CoachTip'
 import { supabase } from '@/lib/supabase'
+import { readSpaceId, requireWritableSpaceId } from '@/lib/activeSpace'
 import { debtEndLabel } from '@/lib/finance'
 import PeriodFilter, { usePeriod, PERIOD_LABEL } from './PeriodFilter'
 import { useCustomCategories, CategoryManager } from './categories'
@@ -50,13 +51,17 @@ async function deletePayment(id: string): Promise<void> {
   if (error) throw error
 }
 async function fetchCreditors(): Promise<{ id: string; name: string }[]> {
-  const { data, error } = await supabase.from('debt_creditors').select('*').order('name')
+  let query = supabase.from('debt_creditors').select('*')
+  const spaceId = readSpaceId()
+  if (spaceId) query = query.eq('space_id', spaceId)
+  const { data, error } = await query.order('name')
   if (error) throw error
   return (data ?? []).map(r => ({ id: r.id, name: r.name }))
 }
 async function saveCreditor(name: string): Promise<{ id: string; name: string }> {
   const { data: { user } } = await supabase.auth.getUser()
-  const { data, error } = await supabase.from('debt_creditors').insert({ name, user_id: user!.id }).select().single()
+  const spaceId = requireWritableSpaceId()
+  const { data, error } = await supabase.from('debt_creditors').insert({ name, user_id: user!.id, space_id: spaceId }).select().single()
   if (error) throw error
   return { id: data.id, name: data.name }
 }
@@ -93,8 +98,9 @@ function CreditorPicker({ value, onChange }: { value: string; onChange: (v: stri
         })
       })
       onChange(c.name); setNewName(''); setOpen(false)
-    } catch {
-      window.alert("Impossible d'ajouter le créancier. Réessaie.")
+    } catch (e) {
+      const msg = e instanceof Error && e.message.startsWith('Choisis') ? e.message : null
+      window.alert(msg ?? "Impossible d'ajouter le créancier. Réessaie.")
     }
     setAdding(false)
   }
@@ -188,7 +194,10 @@ export function DettesSection() {
   async function loadPayments(): Promise<PaymentRow[]> {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) throw new Error('Non authentifié')
-    const { data: userDebts, error: debtsError } = await supabase.from('debts').select('id').eq('user_id', user.id)
+    let debtsQuery = supabase.from('debts').select('id').eq('user_id', user.id)
+    const spaceId = readSpaceId()
+    if (spaceId) debtsQuery = debtsQuery.eq('space_id', spaceId)
+    const { data: userDebts, error: debtsError } = await debtsQuery
     if (debtsError) throw debtsError
     const ids = (userDebts ?? []).map(d => d.id)
     if (ids.length === 0) { setAllPayments([]); return [] }
@@ -346,8 +355,9 @@ export function DettesSection() {
       try {
         const newDebt = await addDebt({ ...debtData, remaining: Number(form.amount) || 0 })
         setDebts(prev => [...prev, newDebt])
-      } catch {
-        window.alert("Impossible d'ajouter la dette. Réessaie.")
+      } catch (e) {
+        const msg = e instanceof Error && e.message.startsWith('Choisis') ? e.message : null
+        window.alert(msg ?? "Impossible d'ajouter la dette. Réessaie.")
         return
       }
     }
