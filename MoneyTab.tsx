@@ -13,7 +13,7 @@ import {
 import CoachTip from './CoachTip'
 import { supabase } from '@/lib/supabase'
 import { MoneySubTab } from '@/app/page'
-import { budgetStatus, debtEndLabel, isoDate } from '@/lib/finance'
+import { budgetStatus, debtEndLabel, isoDate, estimateVariableAmount } from '@/lib/finance'
 import { useSpendingLines } from '@/lib/useSpendingLines'
 import {
   sumByCategory, sumCategory, durationLabel, BUDGET_DURATIONS,
@@ -51,7 +51,9 @@ interface SavingsDeposit {
 interface Facture {
   id: string
   name: string
-  amount: number
+  amount: number | null
+  estimate?: number
+  amountVariable: boolean
   dueDate?: string
   isRecurring: boolean
   category: string
@@ -564,8 +566,8 @@ function TransactionsSection({ transactions, onUpdate }: { transactions: Transac
   const [showMoreCategories, setShowMoreCategories] = useState<Set<string>>(new Set())
   const [budgets, setBudgets] = useState<BudgetCategory[]>([])
   const [form, setForm] = useState({
-    amount: '', category: EXPENSE_CATEGORIES[0] as any, note: '',
-    date: new Date().toISOString().slice(0, 10),
+    name: '', amount: '', category: DEFAULT_CATEGORIES[0],
+    dueDate: '', dueDayOfMonth: '', isRecurring: false, amountVariable: false, note: '',
   })
 
   // Si les budgets ne chargent pas, on perd seulement les badges « Proche / Dépassé »
@@ -1258,13 +1260,20 @@ function FacturesSection() {
       // Toutes les factures de l'utilisateur : le filtre de période se fait côté client
       const { data, error } = await supabase.from('factures').select('*').eq('user_id', user!.id).order('created_at', { ascending: true })
       if (error) throw error
-      setFactures((data ?? []).map(r => ({
-        id: r.id, name: r.name, amount: Number(r.amount),
-        dueDate: r.due_date ?? undefined, isRecurring: r.is_recurring ?? false,
-        category: r.category ?? DEFAULT_CATEGORIES[0], paid: r.paid ?? false,
-        month: r.month, note: r.note ?? undefined,
-        createdAt: r.created_at ?? undefined,
-      })))
+     const rows = data ?? []
+      const history = rows.map(r => ({ name: r.name as string, amount: r.amount == null ? null : Number(r.amount), month: r.month as string }))
+      setFactures(rows.map(r => {
+        const amount = r.amount == null ? null : Number(r.amount)
+        return {
+          id: r.id, name: r.name, amount,
+          estimate: amount === null ? estimateVariableAmount(history, r.name, r.month) : undefined,
+          amountVariable: r.amount_variable ?? false,
+          dueDate: r.due_date ?? undefined, isRecurring: r.is_recurring ?? false,
+          category: r.category ?? DEFAULT_CATEGORIES[0], paid: r.paid ?? false,
+          month: r.month, note: r.note ?? undefined,
+          createdAt: r.created_at ?? undefined,
+        }
+      }))
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : 'Erreur de chargement')
     }
@@ -1272,17 +1281,17 @@ function FacturesSection() {
   }
 
   function resetForm() {
-    setForm({ name: '', amount: '', category: DEFAULT_CATEGORIES[0], dueDate: '', dueDayOfMonth: '', isRecurring: false, note: '' })
+    setForm({ name: '', amount: '', category: DEFAULT_CATEGORIES[0], dueDate: '', dueDayOfMonth: '', isRecurring: false, amountVariable: false, note: '' })
     setEditingFacture(null)
   }
 
   function openEdit(f: Facture) {
     setEditingFacture(f)
     const dayOfMonth = f.dueDate ? new Date(f.dueDate).getDate().toString() : ''
-    setForm({
-      name: f.name, amount: String(f.amount), category: f.category,
+        setForm({
+      name: f.name, amount: f.amount === null ? '' : String(f.amount), category: f.category,
       dueDate: f.dueDate ?? '', dueDayOfMonth: f.isRecurring ? dayOfMonth : '',
-      isRecurring: f.isRecurring, note: f.note ?? '',
+      isRecurring: f.isRecurring, amountVariable: f.amountVariable, note: f.note ?? '',
     })
     setShowForm(true)
   }
