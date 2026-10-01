@@ -27,9 +27,9 @@ async function ensureFactures(c: SupabaseClient, userId: string, ym: string) {
   const rows = data ?? []
 
   const have = new Set(rows.filter(r => r.month === ym).map(r => key(r.name)))
-  const toAdd = latestMonthRows(rows, ym)
+    const toAdd = latestMonthRows(rows, ym)
     .filter(r => !have.has(key(r.name)))
-     .map(r => ({
+    .map(r => ({
       user_id: userId, name: r.name,
       // montant variable (eau, élec…) : on ne recopie PAS le montant du mois dernier
       amount: r.amount_variable ? null : r.amount, amount_variable: !!r.amount_variable, category: r.category,
@@ -52,7 +52,7 @@ async function ensureIncomes(c: SupabaseClient, userId: string, ym: string) {
   const have = new Set(rows.filter(r => r.month === ym).map(r => key(r.label)))
   const toAdd = latestMonthRows(rows, ym)
     .filter(r => !have.has(key(r.label)))
-    
+    .map(r => ({
       user_id: userId, label: r.label, amount: r.amount, is_fixed: true,
       month: ym, received_at: sameDayIn(ym, r.received_at) ?? `${ym}-01`,
     }))
