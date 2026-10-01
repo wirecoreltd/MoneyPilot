@@ -4,6 +4,7 @@ import type { UserProfile } from '@/lib/storage'
 import { getUserProfile, formatAmount } from '@/lib/storage'
 import { RefreshCw, ChevronRight, AlertTriangle, TrendingUp, Shield, Zap } from 'lucide-react'
 import { authedPost } from '@/lib/apiClient'
+import { readSpaceId } from '@/lib/activeSpace'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -247,7 +248,7 @@ export default function CoachPage() {
     setLoading(true)
     setAnalysisError(null)
     try {
-      const parsed = await authedPost<CoachAnalysis>('/api/coach-analysis')
+      const parsed = await authedPost<CoachAnalysis>('/api/coach-analysis', { spaceId: readSpaceId() })
       setAnalysis(parsed)
       setLastUpdated(new Date())
     } catch (err) {
