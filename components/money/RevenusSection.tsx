@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from 'react'
 import { Plus, Trash2, X, Pencil, ChevronDown, Check } from 'lucide-react'
 import { formatAmount } from '@/lib/storage'
 import { supabase } from '@/lib/supabase'
+import { readSpaceId, requireWritableSpaceId } from '@/lib/activeSpace'
 import PeriodFilter, { usePeriod, PERIOD_LABEL } from './PeriodFilter'
 
 interface RevenuSource {
@@ -12,6 +13,7 @@ interface RevenuSource {
   type: 'fixed' | 'variable'
   month: string
   date: string
+  spaceId: string
 }
 
 // ─── Sources prédéfinies par catégorie ───────────────────────────────────────
@@ -64,17 +66,19 @@ export function RevenusSection() {
     setLoading(true)
     setLoadError(null)
     try {
-      const { data: { user } } = await supabase.auth.getUser()
-      const [incRes, srcRes] = await Promise.all([
-        supabase.from('monthly_incomes').select('*').eq('user_id', user!.id),
-        supabase.from('income_sources').select('*').eq('user_id', user!.id).order('name'),
-      ])
+            const { data: { user } } = await supabase.auth.getUser()
+      const spaceId = readSpaceId()
+      let incQuery = supabase.from('monthly_incomes').select('*').eq('user_id', user!.id)
+      let srcQuery = supabase.from('income_sources').select('*').eq('user_id', user!.id).order('name')
+      if (spaceId) { incQuery = incQuery.eq('space_id', spaceId); srcQuery = srcQuery.eq('space_id', spaceId) }
+      const [incRes, srcRes] = await Promise.all([incQuery, srcQuery])
       if (incRes.error) throw incRes.error
       if (srcRes.error) throw srcRes.error
       const incData: RevenuSource[] = (incRes.data ?? []).map(r => ({
         id: r.id, label: r.label, amount: Number(r.amount),
         type: r.is_fixed ? 'fixed' : 'variable', month: r.month,
-        date: r.received_at ?? `${r.month}-01`,
+      date: r.received_at ?? `${r.month}-01`,
+        spaceId: r.space_id,
       }))
       setRevenus(incData)
       if (incData.length > 0) setOpen(true)
@@ -130,10 +134,10 @@ export function RevenusSection() {
         const old = revenus.find(r => r.id === editingId)
         if (old && old.type === 'fixed' && old.label !== finalLabel) {
           const { data: { user } } = await supabase.auth.getUser()
-          const { error: renameError } = await supabase.from('monthly_incomes').update({ label: finalLabel })
-            .eq('user_id', user!.id).eq('label', old.label).eq('is_fixed', true)
+           const { error: renameError } = await supabase.from('monthly_incomes').update({ label: finalLabel })
+            .eq('user_id', user!.id).eq('space_id', old.spaceId).eq('label', old.label).eq('is_fixed', true)
           if (renameError) throw renameError
-          setRevenus(prev => prev.map(r => r.type === 'fixed' && r.label === old.label ? { ...r, label: finalLabel } : r))
+          setRevenus(prev => prev.map(r => r.spaceId === old.spaceId && r.type === 'fixed' && r.label === old.label ? { ...r, label: finalLabel } : r))
         }
         setRevenus(prev => prev.map(r => r.id === editingId
           ? { ...r, label: finalLabel, amount: Number(form.amount), type: form.type,
@@ -145,13 +149,15 @@ export function RevenusSection() {
       }
 
       // Mode création
-      const { data: { user } } = await supabase.auth.getUser()
+            const { data: { user } } = await supabase.auth.getUser()
+      const spaceId = requireWritableSpaceId()
       const sourceName = (form.source || form.label).trim()
       if (form.saveSource && sourceName) {
         const alreadySaved = savedSources.some(s => s.name.toLowerCase() === sourceName.toLowerCase())
         if (!alreadySaved) {
           const { data: newSrc, error: srcError } = await supabase.from('income_sources').insert({
-            user_id: user!.id, name: sourceName, is_fixed: form.type === 'fixed',
+        user_id: user!.id, label: finalLabel,
+        amount: Number(form.amount), is_fixed: form.type === 'fixed',
           }).select().single()
           if (srcError) throw srcError
           if (newSrc) setSavedSources(prev => [...prev, { id: newSrc.id, name: newSrc.name, type: newSrc.is_fixed ? 'fixed' : 'variable' }])
@@ -167,13 +173,15 @@ export function RevenusSection() {
         setRevenus(prev => [...prev, {
           id: data.id, label: data.label, amount: Number(data.amount),
           type: data.is_fixed ? 'fixed' : 'variable', month: data.month,
-          date: data.received_at ?? form.date,
+                    date: data.received_at ?? form.date,
+          spaceId: data.space_id,
         }])
       }
       resetForm()
       setOpen(true)
-    } catch {
-      window.alert(editingId ? "Impossible de modifier le revenu. Réessaie." : "Impossible d'ajouter le revenu. Réessaie.")
+        } catch (e) {
+      const msg = e instanceof Error && e.message.startsWith('Choisis') ? e.message : null
+      window.alert(msg ?? (editingId ? "Impossible de modifier le revenu. Réessaie." : "Impossible d'ajouter le revenu. Réessaie."))
     }
     setSaving(false)
   }
@@ -184,10 +192,10 @@ export function RevenusSection() {
       if (r?.type === 'fixed') {
         if (!window.confirm(`« ${r.label} » est un revenu fixe.\nLe supprimer l'arrête : il ne sera plus recréé chaque mois (l'historique passe en « Variable »).`)) return
         const { data: { user } } = await supabase.auth.getUser()
-        const { error: stopError } = await supabase.from('monthly_incomes').update({ is_fixed: false })
-          .eq('user_id', user!.id).eq('label', r.label).eq('is_fixed', true)
+                const { error: stopError } = await supabase.from('monthly_incomes').update({ is_fixed: false })
+          .eq('user_id', user!.id).eq('space_id', r.spaceId).eq('label', r.label).eq('is_fixed', true)
         if (stopError) throw stopError
-        setRevenus(prev => prev.map(x => x.label === r.label ? { ...x, type: 'variable' } : x))
+        setRevenus(prev => prev.map(x => x.spaceId === r.spaceId && x.label === r.label ? { ...x, type: 'variable' } : x))
       }
       const { error } = await supabase.from('monthly_incomes').delete().eq('id', id)
       if (error) throw error
