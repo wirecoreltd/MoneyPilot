@@ -51,29 +51,6 @@ interface SavingsDeposit {
   depositedAt: string
 }
 
-interface Facture {
-  id: string
-  name: string
-  amount: number | null
-  estimate?: number
-  amountVariable: boolean
-  dueDate?: string
-  isRecurring: boolean
-  category: string
-  paid: boolean
-  month: string
-  note?: string
-  createdAt?: string
-}
-
-interface FacturePayment {
-  id: string
-  factureId: string
-  amount: number
-  paidAt: string
-  note?: string
-}
-
 const COLORS = ['#F59E0B','#3B82F6','#8B5CF6','#EF4444','#10B981','#F97316']
 const EMOJIS = ['🏖️','🚗','🏠','💻','📱','✈️','🎓','💍','💰','🎮','👶']
 const startLabel = (ymd: string) => new Date(ymd).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })
