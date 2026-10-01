@@ -55,8 +55,14 @@ async function deleteFacturePayment(id: string): Promise<void> {
 // ─── FacturesSection ──────────────────────────────────────────────────────────
 // Date de référence d'une facture pour le filtre de période :
 // date de création, sinon échéance, sinon 1er du mois de la facture.
-function factureRefDate(f: Facture): string {
-  return (f.createdAt ?? f.dueDate ?? `${f.month}-01`).slice(0, 10)
+// Une facture apparaît dans une période si SON échéance OU sa date de création (en heure locale) y tombe.
+// (Avant, seule la date de création comptait : une facture due le 25/09 mais créée plus tard n'apparaissait pas.)
+function factureInRange(f: Facture, from: string, to: string): boolean {
+  const dates: string[] = []
+  if (f.dueDate) dates.push(f.dueDate.slice(0, 10))
+  if (f.createdAt) { const c = new Date(f.createdAt); if (!isNaN(c.getTime())) dates.push(isoDate(c)) }
+  if (dates.length === 0) dates.push(`${f.month}-01`)
+  return dates.some(d => d >= from && d <= to)
 }
 
 // Non payées en haut, puis ordre alphabétique (accents gérés)
@@ -333,8 +339,7 @@ export function FacturesSection() {
 
   // ── Filtre de période + tri (non payées en haut, puis A→Z) ──
   const visible = factures.filter(f => {
-    const d = factureRefDate(f)
-    return d >= range.from && d <= range.to
+    return factureInRange(f, range.from, range.to)
   }).map(f => f.amount === null
     // Montant variable : "payée" seulement si un paiement est daté dans le mois de la facture
     ? { ...f, paid: (paymentsMap[f.id] ?? []).some(p => String(p.paidAt).slice(0, 7) === f.month) }
@@ -591,6 +596,7 @@ function FactureCard({
             {outMonth.length > 0 && <span className="text-[10px] bg-orange-50 text-orange-700 border border-orange-200 px-1.5 py-0.5 rounded-full font-bold">🕓 {outMonth.length} paiement{outMonth.length > 1 ? 's' : ''} hors {monthLabel(f.month).split(' ')[0]}</span>}
           </div>
           <p className={`text-sm font-semibold ${f.paid ? 'line-through text-ink-soft' : 'text-ink'}`}>{f.name}</p>
+          {totalPaid > 0 && <p className="text-sm font-mono font-bold text-positive mt-1">Total payé : {formatAmount(totalPaid)}</p>}
           <div className="flex items-center gap-3 mt-1 flex-wrap">
             {f.dueDate && <span className="text-xs text-ink-soft">📅 {new Date(f.dueDate).toLocaleDateString('fr-FR')}</span>}
             {lastPay && <span className="text-xs text-positive">💸 Dernier paiement : {shortDate(lastPay.paidAt)}</span>}
