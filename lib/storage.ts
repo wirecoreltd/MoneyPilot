@@ -627,11 +627,15 @@ export async function deleteSavingsGoal(id: string): Promise<void> {
 export async function getDebts(): Promise<Debt[]> {
   const userId = await getUserId()
 
-  const { data, error } = await supabase
+  let query = supabase
     .from('debts')
     .select('*')
     .eq('user_id', userId)
-    .order('created_at', { ascending: true })
+
+  const spaceId = readSpaceId()
+  if (spaceId) query = query.eq('space_id', spaceId)
+
+  const { data, error } = await query.order('created_at', { ascending: true })
   if (error) throw error
 
   return (data ?? []).map(r => ({
@@ -653,11 +657,13 @@ export async function getDebts(): Promise<Debt[]> {
 
 export async function addDebt(d: Omit<Debt, 'id' | 'createdAt'>): Promise<Debt> {
   const userId = await getUserId()
+  const spaceId = requireWritableSpaceId()
 
   const { data, error } = await supabase
     .from('debts')
     .insert({
       user_id:         userId,
+      space_id:        spaceId,
       type:            d.type,
       person:          d.person,
       amount:          d.amount,
