@@ -21,6 +21,7 @@ import {
 } from '@/lib/budgetPeriods'
 import PeriodFilter, { usePeriod, PERIOD_LABEL } from './components/money/PeriodFilter'
 import { DEFAULT_CATEGORIES, useCustomCategories, CategoryManager } from './components/money/categories'
+import { TransactionsSection } from './components/money/TransactionsSection'
 
 type SubTab = MoneySubTab
 
