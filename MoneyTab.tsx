@@ -564,10 +564,10 @@ function TransactionsSection({ transactions, onUpdate }: { transactions: Transac
   const [editingTx, setEditingTx] = useState<Transaction | null>(null)
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set())
   const [showMoreCategories, setShowMoreCategories] = useState<Set<string>>(new Set())
-  const [budgets, setBudgets] = useState<BudgetCategory[]>([])
+    const [budgets, setBudgets] = useState<BudgetCategory[]>([])
   const [form, setForm] = useState({
-    name: '', amount: '', category: DEFAULT_CATEGORIES[0],
-    dueDate: '', dueDayOfMonth: '', isRecurring: false, amountVariable: false, note: '',
+    amount: '', category: EXPENSE_CATEGORIES[0] as any, note: '',
+    date: new Date().toISOString().slice(0, 10),
   })
 
   // Si les budgets ne chargent pas, on perd seulement les badges « Proche / Dépassé »
