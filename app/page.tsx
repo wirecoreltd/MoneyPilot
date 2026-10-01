@@ -26,10 +26,18 @@ function PageContent() {
   const [loadError,    setLoadError]    = useState<string | null>(null)
 
   // Restaure l'onglet actif après l'hydratation
-  useEffect(() => {
+    useEffect(() => {
     const saved = localStorage.getItem('activeTab')
     if (saved) setTab(saved as Tab)
+    const savedSub = localStorage.getItem('moneySubTab')
+    const validSubs = ['transactions', 'budget', 'dettes', 'epargne', 'factures', 'revenus']
+    if (savedSub && validSubs.includes(savedSub)) setMoneySubTab(savedSub as MoneySubTab)
   }, [])
+
+  function handleSubTabChange(sub: MoneySubTab) {
+    setMoneySubTab(sub)
+    localStorage.setItem('moneySubTab', sub)
+  }
 
   const refresh = useCallback(async () => {
     try {
@@ -190,7 +198,7 @@ function PageContent() {
             transactions={transactions}
             onUpdate={refresh}
             initialSubTab={moneySubTab}
-            onSubTabChange={setMoneySubTab}
+            onSubTabChange={handleSubTabChange}
           />
         )}
 
