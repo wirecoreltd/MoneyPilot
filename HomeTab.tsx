@@ -370,22 +370,24 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
 
     const paidBy: Record<string, number> = {}
     snapshot.facturePayments.forEach(p => { paidBy[p.factureId] = (paidBy[p.factureId] || 0) + p.amount })
-    const unpaid = snapshot.factures.filter(f => f.amount - (paidBy[f.id] || 0) > 0)
-    const remainingOf = (fs: typeof unpaid) => sum(fs.map(f => f.amount - (paidBy[f.id] || 0)))
+    const eff = (f: (typeof snapshot.factures)[number]) => f.amount ?? f.estimate
+    const unpaid = snapshot.factures.filter(f => f.amount === null || f.amount - (paidBy[f.id] || 0) > 0)
+    const remainingOf = (fs: typeof unpaid) => sum(fs.map(f => eff(f) - (paidBy[f.id] || 0)))
+    const approx = (fs: typeof unpaid) => (fs.some(f => f.amount === null) ? '~' : '')
     const late = unpaid.filter(f => f.dueDate && f.dueDate.slice(0, 10) < today)
     const upcoming = unpaid.filter(f => !late.includes(f))
     if (late.length > 0) {
       items.push({
         key: 'bills-late', tone: 'danger', go: 'factures',
         title: late.length === 1 ? `Facture « ${late[0].name} » en retard` : `${late.length} factures en retard`,
-        detail: `${formatAmount(remainingOf(late))} à régler`,
+        detail: `${approx(late)}${formatAmount(remainingOf(late))} à régler`,
       })
     }
     if (upcoming.length > 0) {
       items.push({
         key: 'bills-due', tone: 'warning', go: 'factures',
         title: upcoming.length === 1 ? `Facture « ${upcoming[0].name} » à payer` : `${upcoming.length} factures à payer`,
-        detail: `${formatAmount(remainingOf(upcoming))} restant ce mois`,
+        detail: `${approx(upcoming)}${formatAmount(remainingOf(upcoming))} restant ce mois${upcoming.some(f => f.amount === null) ? ' (montant à confirmer)' : ''}`,
       })
     }
 
