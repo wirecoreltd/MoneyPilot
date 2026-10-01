@@ -97,7 +97,7 @@ export function FacturesSection() {
   // ← Catégories partagées (Supabase, table custom_categories)
   const { customCategories, addCustom, removeCustom, renameCustom } = useCustomCategories(() => { loadFactures() })
 
-    const [form, setForm] = useState({
+  const [form, setForm] = useState({
     name: '', amount: '', category: DEFAULT_CATEGORIES[0],
     dueDate: '', dueDayOfMonth: '', isRecurring: false, amountVariable: false, note: '',
   })
@@ -141,7 +141,7 @@ export function FacturesSection() {
           dueDate: r.due_date ?? undefined, isRecurring: r.is_recurring ?? false,
           category: r.category ?? DEFAULT_CATEGORIES[0], paid: r.paid ?? false,
           month: r.month, note: r.note ?? undefined,
-                    createdAt: r.created_at ?? undefined,
+          createdAt: r.created_at ?? undefined,
           spaceId: r.space_id,
         }
       }))
@@ -159,7 +159,7 @@ export function FacturesSection() {
   function openEdit(f: Facture) {
     setEditingFacture(f)
     const dayOfMonth = f.dueDate ? new Date(f.dueDate).getDate().toString() : ''
-        setForm({
+    setForm({
       name: f.name, amount: f.amount === null ? '' : String(f.amount), category: f.category,
       dueDate: f.dueDate ?? '', dueDayOfMonth: f.isRecurring ? dayOfMonth : '',
       isRecurring: f.isRecurring, amountVariable: f.amountVariable, note: f.note ?? '',
@@ -177,7 +177,7 @@ export function FacturesSection() {
     return `${month}-${String(clampedDay).padStart(2, '0')}`
   }
 
-    async function handleSave() {
+  async function handleSave() {
     if (!form.name.trim()) return
     const hasAmount = !!form.amount && Number(form.amount) > 0
     // Le montant n'est obligatoire que pour une facture ponctuelle (une récurrente peut avoir un montant variable)
@@ -204,7 +204,7 @@ export function FacturesSection() {
         // Facture récurrente renommée : on renomme aussi les autres occurrences récurrentes
         if (editing.isRecurring && editing.name !== newName) {
           const { error: renameError } = await supabase.from('factures').update({ name: newName })
-         .eq('user_id', user!.id).eq('space_id', editing.spaceId).eq('name', editing.name).eq('is_recurring', true)
+            .eq('user_id', user!.id).eq('space_id', editing.spaceId).eq('name', editing.name).eq('is_recurring', true)
           if (renameError) throw renameError
           setFactures(prev => prev.map(x =>
             x.spaceId === editing.spaceId && x.isRecurring && x.name === editing.name ? { ...x, name: newName } : x
@@ -221,14 +221,14 @@ export function FacturesSection() {
         const spaceId = requireWritableSpaceId()
         const { data, error } = await supabase.from('factures').insert({
           space_id: spaceId,
-         user_id: user!.id, name: form.name.trim(), amount: amountValue, amount_variable: amountVariable,
+          user_id: user!.id, name: form.name.trim(), amount: amountValue, amount_variable: amountVariable,
           category: form.category, due_date: dueDate, is_recurring: form.isRecurring,
           note: form.note || null, paid: false, month: ym,
         }).select().single()
         if (error) throw error
         if (data) {
           setFactures(prev => [...prev, {
-                        id: data.id, name: data.name, amount: data.amount == null ? null : Number(data.amount),
+            id: data.id, name: data.name, amount: data.amount == null ? null : Number(data.amount),
             estimate: data.amount == null
               ? estimateVariableAmount(factures.map(x => ({ name: x.name, amount: x.amount, month: x.month })), data.name, data.month)
               : undefined,
@@ -302,11 +302,10 @@ export function FacturesSection() {
     const amt = Number(payAmount)
     if (!amt || amt <= 0) return
     try {
-     await addFacturePayment(factureId, amt, payDate, payNote)
+      await addFacturePayment(factureId, amt, payDate, payNote)
       // Le paiement est enregistré à part : il ne modifie jamais le montant de la facture
       await syncPaidStatus(factureId)
-      setPayingId(null); setPayAmount(''); 
-      
+      setPayingId(null); setPayAmount('')
       setPayDate(isoDate(new Date())); setPayNote('')
     } catch {
       window.alert("Impossible d'enregistrer le paiement. Réessaie.")
@@ -344,7 +343,7 @@ export function FacturesSection() {
     : f)
 
   const paidCount = visible.filter(f => f.paid).length
-    const effective = (f: Facture) => f.amount ?? f.estimate ?? 0
+  const effective = (f: Facture) => f.amount ?? f.estimate ?? 0
   const totalAmount = visible.reduce((s, f) => s + effective(f), 0)
   const paidAmount = visible.filter(f => f.paid).reduce((s, f) => s + effective(f), 0)
   const unpaidAmount = totalAmount - paidAmount
@@ -357,7 +356,7 @@ export function FacturesSection() {
     ? `Ajoute tes factures (eau, élec, internet...) pour ne rien oublier.`
     : paidCount === visible.length
     ? `✅ Toutes tes factures sont payées sur ${PERIOD_LABEL[period]} ! Bien joué.`
-        : `⏳ ${visible.length - paidCount} facture${visible.length - paidCount > 1 ? 's' : ''} en attente · ${awaiting.length > 0 ? '~' : ''}${formatAmount(unpaidAmount)} à payer`
+    : `⏳ ${visible.length - paidCount} facture${visible.length - paidCount > 1 ? 's' : ''} en attente · ${awaiting.length > 0 ? '~' : ''}${formatAmount(unpaidAmount)} à payer`
 
   if (loading) return <div className="card text-center py-8 text-ink-soft">Chargement...</div>
   if (loadError) {
@@ -413,7 +412,7 @@ export function FacturesSection() {
         </div>
       )}
 
-            {awaiting.length > 0 && (
+      {awaiting.length > 0 && (
         <p className="text-xs text-yellow-800 bg-yellow-50 border border-yellow-200 rounded-2xl px-3 py-2">
           ⏳ {awaiting.length} facture{awaiting.length > 1 ? 's' : ''} au montant pas encore connu
           {estimatedAmount > 0 ? <> · <strong>~{formatAmount(estimatedAmount)}</strong> estimés dans le total</> : " · pas encore d'historique pour estimer"}
@@ -480,7 +479,7 @@ export function FacturesSection() {
               <label className="label">Nom de la facture</label>
               <input className="input" placeholder="Ex: Facture CEB, Abonnement Netflix..." value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))}/>
             </div>
-                        {form.isRecurring && (
+            {form.isRecurring && (
               <div className="flex items-center justify-between p-3 bg-mist rounded-2xl border border-mist-dark">
                 <div className="pr-3">
                   <p className="text-sm font-bold text-ink">📈 Montant variable</p>
@@ -554,7 +553,7 @@ export function FacturesSection() {
 }
 
 function FactureCard({
-  facture: f, onEdit, onDelete, payments, showHistory, historyLoading,
+  facture: f, onEdit, onDelete, payments, range, showHistory, historyLoading,
   onToggleHistory, payingId, payAmount, payDate, payNote,
   onSetPayingId, onPayAmountChange, onPayDateChange, onPayNoteChange,
   onPay, onEditPayment, onDeletePayment,
@@ -569,7 +568,7 @@ function FactureCard({
   onDeletePayment: (p: FacturePayment) => void
 }) {
   const isDue = f.dueDate ? new Date(f.dueDate) < new Date() && !f.paid : false
-    const totalPaid = payments.reduce((s, p) => s + p.amount, 0)
+  const totalPaid = payments.reduce((s, p) => s + p.amount, 0)
   const unknown = f.amount === null
   const amt = f.amount ?? 0
   const remaining = unknown ? (f.estimate ?? 0) : Math.max(0, amt - totalPaid)
