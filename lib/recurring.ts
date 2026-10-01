@@ -1,5 +1,5 @@
 // lib/recurring.ts
-// Recopie les factures récurrentes et revenus fixes dans le mois en cours.
+// Recopie les factures récurrentes et revenus fixes dans le mois en cours, ESPACE PAR ESPACE.
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { currentYearMonth, lastDayOf } from './finance'
 
@@ -19,23 +19,37 @@ function latestMonthRows<T extends { month: string }>(rows: T[], ym: string): T[
   return last ? rows.filter(r => r.month === last) : []
 }
 
+// Sépare les lignes par espace : chaque espace a son propre « dernier mois » et ses propres doublons
+function bySpace<T extends { space_id: string }>(rows: T[]): T[][] {
+  const map = new Map<string, T[]>()
+  for (const r of rows) {
+    const list = map.get(r.space_id) ?? []
+    list.push(r)
+    map.set(r.space_id, list)
+  }
+  return [...map.values()]
+}
+
 async function ensureFactures(c: SupabaseClient, userId: string, ym: string) {
   const { data, error } = await c.from('factures')
-        .select('name,amount,category,due_date,note,month,amount_variable')
+    .select('space_id,name,amount,category,due_date,note,month,amount_variable')
     .eq('user_id', userId).eq('is_recurring', true)
   if (error) throw new Error(`factures: ${error.message}`)
-  const rows = data ?? []
 
-  const have = new Set(rows.filter(r => r.month === ym).map(r => key(r.name)))
-    const toAdd = latestMonthRows(rows, ym)
-    .filter(r => !have.has(key(r.name)))
-    .map(r => ({
-      user_id: userId, name: r.name,
-      // montant variable (eau, élec…) : on ne recopie PAS le montant du mois dernier
-      amount: r.amount_variable ? null : r.amount, amount_variable: !!r.amount_variable, category: r.category,
-      due_date: sameDayIn(ym, r.due_date), is_recurring: true, paid: false,
-      note: r.note, month: ym, created_at: `${ym}-01T00:00:00`,
-    }))
+  const toAdd: any[] = []
+  for (const rows of bySpace(data ?? [])) {
+    const have = new Set(rows.filter(r => r.month === ym).map(r => key(r.name)))
+    for (const r of latestMonthRows(rows, ym)) {
+      if (have.has(key(r.name))) continue
+      toAdd.push({
+        user_id: userId, space_id: r.space_id, name: r.name,
+        // montant variable (eau, élec…) : on ne recopie PAS le montant du mois dernier
+        amount: r.amount_variable ? null : r.amount, amount_variable: !!r.amount_variable, category: r.category,
+        due_date: sameDayIn(ym, r.due_date), is_recurring: true, paid: false,
+        note: r.note, month: ym, created_at: `${ym}-01T00:00:00`,
+      })
+    }
+  }
   if (toAdd.length === 0) return
 
   const { error: e2 } = await c.from('factures').insert(toAdd)
@@ -44,18 +58,21 @@ async function ensureFactures(c: SupabaseClient, userId: string, ym: string) {
 
 async function ensureIncomes(c: SupabaseClient, userId: string, ym: string) {
   const { data, error } = await c.from('monthly_incomes')
-    .select('label,amount,received_at,month')
+    .select('space_id,label,amount,received_at,month')
     .eq('user_id', userId).eq('is_fixed', true)
   if (error) throw new Error(`monthly_incomes: ${error.message}`)
-  const rows = data ?? []
 
-  const have = new Set(rows.filter(r => r.month === ym).map(r => key(r.label)))
-  const toAdd = latestMonthRows(rows, ym)
-    .filter(r => !have.has(key(r.label)))
-    .map(r => ({
-      user_id: userId, label: r.label, amount: r.amount, is_fixed: true,
-      month: ym, received_at: sameDayIn(ym, r.received_at) ?? `${ym}-01`,
-    }))
+  const toAdd: any[] = []
+  for (const rows of bySpace(data ?? [])) {
+    const have = new Set(rows.filter(r => r.month === ym).map(r => key(r.label)))
+    for (const r of latestMonthRows(rows, ym)) {
+      if (have.has(key(r.label))) continue
+      toAdd.push({
+        user_id: userId, space_id: r.space_id, label: r.label, amount: r.amount, is_fixed: true,
+        month: ym, received_at: sameDayIn(ym, r.received_at) ?? `${ym}-01`,
+      })
+    }
+  }
   if (toAdd.length === 0) return
 
   const { error: e2 } = await c.from('monthly_incomes').insert(toAdd)
