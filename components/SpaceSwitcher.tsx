@@ -42,7 +42,7 @@ export default function SpaceSwitcher() {
   return (
     <div ref={ref} className="relative">
       <button type="button" onClick={() => setOpen(o => !o)}
-        className="flex items-center gap-2 px-3 py-2 rounded-2xl bg-white border border-mist-dark text-sm font-bold text-ink">
+        className="cursor-pointer flex items-center gap-2 px-3 py-2 rounded-2xl bg-white border border-mist-dark text-sm font-bold text-ink">
         <span>{isOverview ? '📊' : active?.emoji}</span>
         <span>{isOverview ? "Vue d'ensemble" : active?.name}</span>
         <ChevronDown size={16} className={`text-ink-soft transition-transform ${open ? 'rotate-180' : ''}`}/>
@@ -77,14 +77,14 @@ export default function SpaceSwitcher() {
               <div className="flex gap-1 flex-wrap">
                 {EMOJIS.map(e => (
                   <button key={e} type="button" onClick={() => setEmoji(e)}
-                    className={`text-lg p-1.5 rounded-xl ${emoji === e ? 'bg-accent-light' : 'bg-mist'}`}>{e}</button>
+                    className={`cursor-pointer text-lg p-1.5 rounded-xl ${emoji === e ? 'bg-accent-light' : 'bg-mist'}`}>{e}</button>
                 ))}
               </div>
               <div className="flex rounded-xl overflow-hidden border-2 border-mist-dark">
                 <button type="button" onClick={() => setKind('perso')}
-                  className={`flex-1 py-1.5 text-xs font-bold ${kind === 'perso' ? 'bg-accent text-white' : 'bg-white text-ink-soft'}`}>Perso</button>
+                  className={`cursor-pointer flex-1 py-1.5 text-xs font-bold ${kind === 'perso' ? 'bg-accent text-white' : 'bg-white text-ink-soft'}`}>Perso</button>
                 <button type="button" onClick={() => setKind('pro')}
-                  className={`flex-1 py-1.5 text-xs font-bold ${kind === 'pro' ? 'bg-accent text-white' : 'bg-white text-ink-soft'}`}>Pro</button>
+                  className={`cursor-pointer flex-1 py-1.5 text-xs font-bold ${kind === 'pro' ? 'bg-accent text-white' : 'bg-white text-ink-soft'}`}>Pro</button>
               </div>
               <div className="flex gap-2">
                 <button className="btn-ghost flex-1" onClick={() => setCreating(false)}>Annuler</button>
