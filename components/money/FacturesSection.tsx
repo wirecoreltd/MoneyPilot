@@ -4,6 +4,7 @@ import { Plus, Trash2, X, Pencil, History } from 'lucide-react'
 import { formatAmount, currentYearMonth } from '@/lib/storage'
 import CoachTip from '../../CoachTip'
 import { supabase } from '@/lib/supabase'
+import { readSpaceId, requireWritableSpaceId } from '@/lib/activeSpace'
 import { estimateVariableAmount } from '@/lib/finance'
 import PeriodFilter, { usePeriod, PERIOD_LABEL } from './PeriodFilter'
 import { DEFAULT_CATEGORIES, useCustomCategories, CategoryManager } from './categories'
@@ -21,6 +22,7 @@ interface Facture {
   month: string
   note?: string
   createdAt?: string
+  spaceId: string
 }
 
 interface FacturePayment {
@@ -33,7 +35,10 @@ interface FacturePayment {
 
 // ─── Facture helpers ──────────────────────────────────────────────────────────
 async function fetchFacturePayments(factureId: string): Promise<FacturePayment[]> {
-  const { data, error } = await supabase.from('facture_payment_history').select('*').eq('facture_id', factureId).order('paid_at', { ascending: false })
+        let query = supabase.from('factures').select('*').eq('user_id', user!.id)
+      const spaceId = readSpaceId()
+      if (spaceId) query = query.eq('space_id', spaceId)
+      const { data, error } = await query.order('created_at', { ascending: true })
   if (error) throw error
   return (data ?? []).map(r => ({ id: r.id, factureId: r.facture_id, amount: Number(r.amount), paidAt: r.paid_at, note: r.note ?? undefined }))
 }
@@ -118,7 +123,8 @@ export function FacturesSection() {
           dueDate: r.due_date ?? undefined, isRecurring: r.is_recurring ?? false,
           category: r.category ?? DEFAULT_CATEGORIES[0], paid: r.paid ?? false,
           month: r.month, note: r.note ?? undefined,
-          createdAt: r.created_at ?? undefined,
+                    createdAt: r.created_at ?? undefined,
+          spaceId: r.space_id,
         }
       }))
     } catch (e) {
@@ -180,10 +186,10 @@ export function FacturesSection() {
         // Facture récurrente renommée : on renomme aussi les autres occurrences récurrentes
         if (editing.isRecurring && editing.name !== newName) {
           const { error: renameError } = await supabase.from('factures').update({ name: newName })
-            .eq('user_id', user!.id).eq('name', editing.name).eq('is_recurring', true)
+         .eq('user_id', user!.id).eq('space_id', editing.spaceId).eq('name', editing.name).eq('is_recurring', true)
           if (renameError) throw renameError
           setFactures(prev => prev.map(x =>
-            x.isRecurring && x.name === editing.name ? { ...x, name: newName } : x
+            x.spaceId === editing.spaceId && x.isRecurring && x.name === editing.name ? { ...x, name: newName } : x
           ))
         }
 
@@ -194,7 +200,9 @@ export function FacturesSection() {
           dueDate: dueDate ?? undefined, isRecurring: form.isRecurring, note: form.note || undefined,
         } : f))
       } else {
+        const spaceId = requireWritableSpaceId()
         const { data, error } = await supabase.from('factures').insert({
+          space_id: spaceId,
          user_id: user!.id, name: form.name.trim(), amount: amountValue, amount_variable: amountVariable,
           category: form.category, due_date: dueDate, is_recurring: form.isRecurring,
           note: form.note || null, paid: false, month: ym,
@@ -210,12 +218,14 @@ export function FacturesSection() {
             dueDate: data.due_date ?? undefined, isRecurring: data.is_recurring,
             category: data.category, paid: data.paid, month: data.month, note: data.note ?? undefined,
             createdAt: data.created_at ?? new Date().toISOString(),
+            spaceId: data.space_id,
           }])
         }
       }
       resetForm(); setShowForm(false)
-    } catch {
-      window.alert(editingFacture ? 'Impossible de modifier la facture. Réessaie.' : "Impossible d'ajouter la facture. Réessaie.")
+    } catch (e) {
+      const msg = e instanceof Error && e.message.startsWith('Choisis') ? e.message : null
+      window.alert(msg ?? (editingFacture ? 'Impossible de modifier la facture. Réessaie.' : "Impossible d'ajouter la facture. Réessaie."))
     }
     setSaving(false)
   }
@@ -227,9 +237,9 @@ export function FacturesSection() {
         if (!window.confirm(`« ${f.name} » est récurrente.\nLa supprimer l'arrête : elle ne sera plus recréée chaque mois.`)) return
         const { data: { user } } = await supabase.auth.getUser()
         const { error: stopError } = await supabase.from('factures').update({ is_recurring: false })
-          .eq('user_id', user!.id).eq('name', f.name).eq('is_recurring', true)
+          .eq('user_id', user!.id).eq('space_id', f.spaceId).eq('name', f.name).eq('is_recurring', true)
         if (stopError) throw stopError
-        setFactures(prev => prev.map(x => x.name === f.name ? { ...x, isRecurring: false } : x))
+        setFactures(prev => prev.map(x => x.spaceId === f.spaceId && x.name === f.name ? { ...x, isRecurring: false } : x))
       }
       const { error } = await supabase.from('factures').delete().eq('id', id)
       if (error) throw error
