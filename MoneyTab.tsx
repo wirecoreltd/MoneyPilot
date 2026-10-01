@@ -1306,8 +1306,14 @@ function FacturesSection() {
     return `${month}-${String(clampedDay).padStart(2, '0')}`
   }
 
-  async function handleSave() {
-    if (!form.name.trim() || !form.amount || Number(form.amount) <= 0) return
+    async function handleSave() {
+    if (!form.name.trim()) return
+    const hasAmount = !!form.amount && Number(form.amount) > 0
+    // Le montant n'est obligatoire que pour une facture ponctuelle (une récurrente peut avoir un montant variable)
+    if (!form.isRecurring && !hasAmount) return
+    if (form.amount && Number(form.amount) < 0) return
+    const amountValue: number | null = hasAmount ? Number(form.amount) : null
+    const amountVariable = form.isRecurring && (form.amountVariable || amountValue === null)
     setSaving(true)
     try {
       const { data: { user } } = await supabase.auth.getUser()
@@ -1318,8 +1324,9 @@ function FacturesSection() {
         const newName = form.name.trim()
 
         const { error } = await supabase.from('factures').update({
-          name: newName, amount: Number(form.amount), category: form.category,
+          name: newName, amount: amountValue, amount_variable: amountVariable, category: form.category,
           due_date: dueDate, is_recurring: form.isRecurring, note: form.note || null,
+          ...(amountValue === null ? { paid: false } : {}),
         }).eq('id', editing.id)
         if (error) throw error
 
@@ -1334,19 +1341,25 @@ function FacturesSection() {
         }
 
         setFactures(prev => prev.map(f => f.id === editing.id ? {
-          ...f, name: newName, amount: Number(form.amount), category: form.category,
+          ...f, name: newName, amount: amountValue, amountVariable, category: form.category,
+          estimate: amountValue === null ? (f.estimate ?? 0) : undefined,
+          paid: amountValue === null ? false : f.paid,
           dueDate: dueDate ?? undefined, isRecurring: form.isRecurring, note: form.note || undefined,
         } : f))
       } else {
         const { data, error } = await supabase.from('factures').insert({
-          user_id: user!.id, name: form.name.trim(), amount: Number(form.amount),
+         user_id: user!.id, name: form.name.trim(), amount: amountValue, amount_variable: amountVariable,
           category: form.category, due_date: dueDate, is_recurring: form.isRecurring,
           note: form.note || null, paid: false, month: ym,
         }).select().single()
         if (error) throw error
         if (data) {
           setFactures(prev => [...prev, {
-            id: data.id, name: data.name, amount: Number(data.amount),
+                        id: data.id, name: data.name, amount: data.amount == null ? null : Number(data.amount),
+            estimate: data.amount == null
+              ? estimateVariableAmount(factures.map(x => ({ name: x.name, amount: x.amount, month: x.month })), data.name, data.month)
+              : undefined,
+            amountVariable: data.amount_variable ?? false,
             dueDate: data.due_date ?? undefined, isRecurring: data.is_recurring,
             category: data.category, paid: data.paid, month: data.month, note: data.note ?? undefined,
             createdAt: data.created_at ?? new Date().toISOString(),
@@ -1400,7 +1413,7 @@ function FacturesSection() {
     const payments = await fetchFacturePayments(factureId)
     setPaymentsMap(prev => ({ ...prev, [factureId]: payments }))
     const facture = factures.find(f => f.id === factureId)
-    if (!facture) return
+    if (!facture || facture.amount === null) return   // montant inconnu : rien à comparer
     const totalPaid = payments.reduce((s, p) => s + p.amount, 0)
     const nowPaid = totalPaid >= facture.amount
     if (nowPaid !== facture.paid) {
@@ -1414,9 +1427,21 @@ function FacturesSection() {
     const amt = Number(payAmount)
     if (!amt || amt <= 0) return
     try {
-      await addFacturePayment(factureId, amt, payDate, payNote)
-      await syncPaidStatus(factureId)
-      setPayingId(null); setPayAmount(''); setPayDate(new Date().toISOString().slice(0, 10)); setPayNote('')
+     await addFacturePayment(factureId, amt, payDate, payNote)
+      const facture = factures.find(f => f.id === factureId)
+      if (facture && facture.amount === null) {
+        // Montant inconnu jusque-là : ce premier paiement fixe le montant réel de la facture
+        const { error } = await supabase.from('factures').update({ amount: amt, paid: true }).eq('id', factureId)
+        if (error) throw error
+        setFactures(prev => prev.map(f => f.id === factureId ? { ...f, amount: amt, estimate: undefined, paid: true } : f))
+        const payments = await fetchFacturePayments(factureId)
+        setPaymentsMap(prev => ({ ...prev, [factureId]: payments }))
+      } else {
+        await syncPaidStatus(factureId)
+      }
+      setPayingId(null); setPayAmount(''); 
+      
+      setPayDate(new Date().toISOString().slice(0, 10)); setPayNote('')
     } catch {
       window.alert("Impossible d'enregistrer le paiement. Réessaie.")
     }
