@@ -7,6 +7,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { shiftMonth, isoDate, estimateVariableAmount } from './finance'
 import type { MonthSnapshot } from './finance'
+import { readSpaceId } from './activeSpace'
 
 function must(
   res: { data: any; error: { message: string } | null },
@@ -19,57 +20,85 @@ function must(
 const num = (v: unknown) => Number(v ?? 0)
 const empty = Promise.resolve({ data: [] as any[], error: null })
 
+// Filtre d'espace : null = tous les espaces (vue d'ensemble)
+function inSpace(q: any, spaceId: string | null): any {
+  return spaceId ? q.eq('space_id', spaceId) : q
+}
+
 export async function loadMonthSnapshot(
   client: SupabaseClient,
   userId: string,
-  month: string
+  month: string,
+  spaceId: string | null = readSpaceId()
 ): Promise<MonthSnapshot> {
   const firstMonth = shiftMonth(month, -3)
   const nextFirst = `${shiftMonth(month, 1)}-01`
 
   // Vague 1 : tables directement rattachées à l'utilisateur
-  const [txR, incR, facR, allFacR, debtR, goalR, budR, projR, recR] =
+    const [txR, incR, facR, allFacR, debtR, goalR, budR, projR, recR] =
     await Promise.all([
-      client
-        .from('transactions')
-        .select('id,type,amount,category,note,date')
-        .eq('user_id', userId)
-        .gte('date', `${firstMonth}-01`)
-        .lt('date', nextFirst),
+      inSpace(
+        client
+          .from('transactions')
+          .select('id,type,amount,category,note,date')
+          .eq('user_id', userId)
+          .gte('date', `${firstMonth}-01`)
+          .lt('date', nextFirst),
+        spaceId
+      ),
 
-      client
-        .from('monthly_incomes')
-        .select('id,label,amount,is_fixed,month')
-        .eq('user_id', userId)
-        .gte('month', firstMonth)
-        .lte('month', month),
+      inSpace(
+        client
+          .from('monthly_incomes')
+          .select('id,label,amount,is_fixed,month')
+          .eq('user_id', userId)
+          .gte('month', firstMonth)
+          .lte('month', month),
+        spaceId
+      ),
 
-      client
-        .from('factures')
-        .select('id,name,amount,category,due_date,is_recurring,amount_variable')
-        .eq('user_id', userId)
-        .eq('month', month),
+      inSpace(
+        client
+          .from('factures')
+          .select('id,name,amount,category,due_date,is_recurring,amount_variable')
+          .eq('user_id', userId)
+          .eq('month', month),
+        spaceId
+      ),
 
-       client
-        .from('factures')
-        .select('id,name,amount,month,category')
-        .eq('user_id', userId),
+      inSpace(
+        client
+          .from('factures')
+          .select('id,name,amount,month,category')
+          .eq('user_id', userId),
+        spaceId
+      ),
 
-      client
-        .from('debts')
-        .select(
-          'id,type,person,amount,remaining,minimum_payment,interest_rate,due_date,recurring,category'
-        )
-        .eq('user_id', userId),
+      inSpace(
+        client
+          .from('debts')
+          .select(
+            'id,type,person,amount,remaining,minimum_payment,interest_rate,due_date,recurring,category'
+          )
+          .eq('user_id', userId),
+        spaceId
+      ),
 
-      client
-        .from('savings_goals')
-        .select('id,name,target,saved,category')
-        .eq('user_id', userId),
+      inSpace(
+        client
+          .from('savings_goals')
+          .select('id,name,target,saved,category')
+          .eq('user_id', userId),
+        spaceId
+      ),
 
-      client
-        .from('budget_categories')
-        .select('id,name,limit,color,period_months,created_at'),
+      inSpace(
+        client
+          .from('budget_categories')
+          .select('id,name,limit,color,period_months,created_at')
+          .eq('user_id', userId),
+        spaceId
+      ),
 
       client
         .from('projects')
@@ -338,21 +367,25 @@ async function fetchAll(
 export async function loadSpendingLines(
   client: SupabaseClient,
   userId: string,
-  from: string,
-  to: string
+    from: string,
+  to: string,
+  spaceId: string | null = readSpaceId()
 ): Promise<SpendingLine[]> {
   const end = nextDay(to)
 
   const [txRows, facRows, debtRows] = await Promise.all([
     fetchAll(
       (a, b) =>
-        client
-          .from('transactions')
-          .select('id,date,category,amount')
-          .eq('user_id', userId)
-          .eq('type', 'expense')
-          .gte('date', from)
-          .lt('date', end)
+        inSpace(
+          client
+            .from('transactions')
+            .select('id,date,category,amount')
+            .eq('user_id', userId)
+            .eq('type', 'expense')
+            .gte('date', from)
+            .lt('date', end),
+          spaceId
+        )
           .order('id')
           .range(a, b),
       'transactions'
@@ -360,10 +393,13 @@ export async function loadSpendingLines(
 
     fetchAll(
       (a, b) =>
-        client
-          .from('factures')
-          .select('id,category')
-          .eq('user_id', userId)
+        inSpace(
+          client
+            .from('factures')
+            .select('id,category')
+            .eq('user_id', userId),
+          spaceId
+        )
           .order('id')
           .range(a, b),
       'factures'
@@ -371,11 +407,14 @@ export async function loadSpendingLines(
 
     fetchAll(
       (a, b) =>
-        client
-          .from('debts')
-          .select('id,category')
-          .eq('user_id', userId)
-          .eq('type', 'owe')
+        inSpace(
+          client
+            .from('debts')
+            .select('id,category')
+            .eq('user_id', userId)
+            .eq('type', 'owe'),
+          spaceId
+        )
           .order('id')
           .range(a, b),
       'debts'
