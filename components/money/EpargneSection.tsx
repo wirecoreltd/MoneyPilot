@@ -85,7 +85,7 @@ function suggestedMonthly(remaining: number, targetDate: string): number | null 
   return Math.ceil(remaining / months)
 }
 
-function EpargneSection() {
+export function EpargneSection() {
   const [goals, setGoals] = useState<SavingsGoal[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
