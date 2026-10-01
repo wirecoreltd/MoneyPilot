@@ -12,10 +12,12 @@ import { ensureRecurring } from '@/lib/recurring'
 import { getTransactions, Transaction, getUserProfile, UserProfile } from '@/lib/storage'
 import { supabase } from '@/lib/supabase'
 import { LogOut } from 'lucide-react'
+import { SpaceProvider } from '@/components/SpaceContext'
+import SpaceSwitcher from '@/components/SpaceSwitcher'
 
 export type MoneySubTab = 'transactions' | 'budget' | 'dettes' | 'epargne' | 'factures' | 'revenus'
 
-export default function Page() {
+function PageContent() {
   const [profile,      setProfile]      = useState<UserProfile | null>(null)
   const [tab,          setTab]          = useState<Tab>('home') // identique côté serveur ET premier rendu client
   const [moneySubTab,  setMoneySubTab]  = useState<MoneySubTab>('transactions')
@@ -167,7 +169,11 @@ export default function Page() {
       />
 
       {/* ── Contenu principal ── */}
-      <main className="md:ml-60 pb-28 md:pb-8 px-4 py-4 md:px-8 md:py-8 max-w-2xl mx-auto md:mx-0">
+            <main className="md:ml-60 pb-28 md:pb-8 px-4 py-4 md:px-8 md:py-8 max-w-2xl mx-auto md:mx-0">
+
+        <div className="mb-4">
+          <SpaceSwitcher />
+        </div>
 
         {tab === 'home' && (
           <HomeTab
@@ -195,5 +201,13 @@ export default function Page() {
 
       </main>
     </div>
+  )
+}
+
+export default function Page() {
+  return (
+    <SpaceProvider>
+      <PageContent />
+    </SpaceProvider>
   )
 }
