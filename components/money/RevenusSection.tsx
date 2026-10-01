@@ -156,15 +156,14 @@ export function RevenusSection() {
         const alreadySaved = savedSources.some(s => s.name.toLowerCase() === sourceName.toLowerCase())
         if (!alreadySaved) {
           const { data: newSrc, error: srcError } = await supabase.from('income_sources').insert({
-        user_id: user!.id, label: finalLabel,
-        amount: Number(form.amount), is_fixed: form.type === 'fixed',
+            user_id: user!.id, space_id: spaceId, name: sourceName, is_fixed: form.type === 'fixed',
           }).select().single()
           if (srcError) throw srcError
           if (newSrc) setSavedSources(prev => [...prev, { id: newSrc.id, name: newSrc.name, type: newSrc.is_fixed ? 'fixed' : 'variable' }])
         }
       }
       const { data, error } = await supabase.from('monthly_incomes').insert({
-        user_id: user!.id, label: finalLabel,
+        user_id: user!.id, space_id: spaceId, label: finalLabel,
         amount: Number(form.amount), is_fixed: form.type === 'fixed',
         month: form.date.slice(0, 7), received_at: form.date,
       }).select().single()
