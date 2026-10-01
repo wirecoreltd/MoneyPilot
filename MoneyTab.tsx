@@ -73,15 +73,6 @@ interface FacturePayment {
   note?: string
 }
 
-interface RevenuSource {
-  id: string
-  label: string
-  amount: number
-  type: 'fixed' | 'variable'
-  month: string
-  date: string
-}
-
 const COLORS = ['#F59E0B','#3B82F6','#8B5CF6','#EF4444','#10B981','#F97316']
 const EMOJIS = ['🏖️','🚗','🏠','💻','📱','✈️','🎓','💍','💰','🎮','👶']
 const startLabel = (ymd: string) => new Date(ymd).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })
