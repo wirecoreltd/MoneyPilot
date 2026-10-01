@@ -35,10 +35,7 @@ interface FacturePayment {
 
 // ─── Facture helpers ──────────────────────────────────────────────────────────
 async function fetchFacturePayments(factureId: string): Promise<FacturePayment[]> {
-        let query = supabase.from('factures').select('*').eq('user_id', user!.id)
-      const spaceId = readSpaceId()
-      if (spaceId) query = query.eq('space_id', spaceId)
-      const { data, error } = await query.order('created_at', { ascending: true })
+  const { data, error } = await supabase.from('facture_payment_history').select('*').eq('facture_id', factureId).order('paid_at', { ascending: false })
   if (error) throw error
   return (data ?? []).map(r => ({ id: r.id, factureId: r.facture_id, amount: Number(r.amount), paidAt: r.paid_at, note: r.note ?? undefined }))
 }
@@ -110,7 +107,10 @@ export function FacturesSection() {
     try {
       const { data: { user } } = await supabase.auth.getUser()
       // Toutes les factures de l'utilisateur : le filtre de période se fait côté client
-      const { data, error } = await supabase.from('factures').select('*').eq('user_id', user!.id).order('created_at', { ascending: true })
+      let query = supabase.from('factures').select('*').eq('user_id', user!.id)
+      const spaceId = readSpaceId()
+      if (spaceId) query = query.eq('space_id', spaceId)
+      const { data, error } = await query.order('created_at', { ascending: true })
       if (error) throw error
      const rows = data ?? []
       const history = rows.map(r => ({ name: r.name as string, amount: r.amount == null ? null : Number(r.amount), month: r.month as string }))
