@@ -1,26 +1,8 @@
 'use client'
-import { useState, useEffect, useRef } from 'react'
-import { Plus, Trash2, X, Pencil, History, ChevronDown, Check, ChevronUp, ChevronRight, Minus } from 'lucide-react'
-import {
-  Transaction, BudgetCategory, SavingsGoal, Debt,
-  EXPENSE_CATEGORIES,
-  addTransaction, deleteTransaction,
-  getBudgets, addBudget, updateBudget, deleteBudget,
-  getSavings, addSavingsGoal, updateSavingsGoal, deleteSavingsGoal,
-  getDebts, addDebt, updateDebt, deleteDebt,
-  formatAmount, currentYearMonth, hasStarted,
-} from '@/lib/storage'
-import CoachTip from './CoachTip'
-import { supabase } from '@/lib/supabase'
+import { useState, useEffect } from 'react'
+import { X } from 'lucide-react'
+import { Transaction } from '@/lib/storage'
 import { MoneySubTab } from '@/app/page'
-import { budgetStatus, debtEndLabel, isoDate, estimateVariableAmount } from '@/lib/finance'
-import { useSpendingLines } from '@/lib/useSpendingLines'
-import {
-  sumByCategory, sumCategory, durationLabel, BUDGET_DURATIONS,
-  computeBudgetStatuses, earliestCycleStart, budgetCycle, isCustomBudget,
-} from '@/lib/budgetPeriods'
-import PeriodFilter, { usePeriod, PERIOD_LABEL } from './components/money/PeriodFilter'
-import { DEFAULT_CATEGORIES, useCustomCategories, CategoryManager } from './components/money/categories'
 import { TransactionsSection } from './components/money/TransactionsSection'
 import { RevenusSection } from './components/money/RevenusSection'
 import { FacturesSection } from './components/money/FacturesSection'
@@ -152,5 +134,3 @@ export default function MoneyTab({ transactions, onUpdate, initialSubTab, onSubT
     </div>
   )
 }
-
-
