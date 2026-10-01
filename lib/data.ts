@@ -5,7 +5,7 @@
 // Toute erreur Supabase est LEVÉE (plus de "data ?? []" qui masque les pannes).
 
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { shiftMonth, isoDate } from './finance'
+import { shiftMonth, isoDate, estimateVariableAmount } from './finance'
 import type { MonthSnapshot } from './finance'
 
 function must(
@@ -46,13 +46,13 @@ export async function loadMonthSnapshot(
 
       client
         .from('factures')
-        .select('id,name,amount,category,due_date,is_recurring')
+        .select('id,name,amount,category,due_date,is_recurring,amount_variable')
         .eq('user_id', userId)
         .eq('month', month),
 
-      client
+       client
         .from('factures')
-        .select('id,category')
+        .select('id,name,amount,month,category')
         .eq('user_id', userId),
 
       client
@@ -181,10 +181,19 @@ export async function loadMonthSnapshot(
       month: r.month,
     })),
 
-    factures: facRows.map((r) => ({
+        factures: facRows.map((r) => ({
       id: r.id,
       name: r.name,
-      amount: num(r.amount),
+      amount: r.amount === null || r.amount === undefined ? null : num(r.amount),
+      estimate:
+        r.amount === null || r.amount === undefined
+          ? estimateVariableAmount(
+              allFacRows.map((a) => ({ name: a.name, amount: a.amount === null ? null : num(a.amount), month: a.month })),
+              r.name,
+              month
+            )
+          : 0,
+      amountVariable: !!r.amount_variable,
       category: r.category ?? 'Autre',
       dueDate: r.due_date ?? undefined,
       isRecurring: !!r.is_recurring,
