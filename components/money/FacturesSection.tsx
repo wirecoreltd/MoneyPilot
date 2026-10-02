@@ -1,11 +1,11 @@
 'use client'
 import { useState, useEffect } from 'react'
-import { Plus, Trash2, X, Pencil, History } from 'lucide-react'
+import { Plus, Trash2, X, Pencil, History, Check, ChevronDown } from 'lucide-react'
 import { formatAmount, currentYearMonth } from '@/lib/storage'
 import CoachTip from '../../CoachTip'
 import { supabase } from '@/lib/supabase'
 import { readSpaceId, requireWritableSpaceId } from '@/lib/activeSpace'
-import { estimateVariableAmount, isoDate } from '@/lib/finance'
+import { estimateVariableAmount, isoDate, monthLabel } from '@/lib/finance'
 import PeriodFilter, { usePeriod, PERIOD_LABEL } from './PeriodFilter'
 import { DEFAULT_CATEGORIES, useCustomCategories, CategoryManager } from './categories'
 
@@ -353,16 +353,23 @@ export function FacturesSection() {
   const paidAmount = visible.reduce((s, f) =>
     s + (paymentsMap[f.id] ?? []).filter(p => inPeriod(p.paidAt)).reduce((a, p) => a + p.amount, 0), 0)
   // RESTANT = ce qu'il reste à payer sur les factures non payées (estimation si le montant est inconnu)
-  const unpaidAmount = visible.filter(f => !f.paid).reduce((s, f) => {
-    if (f.amount === null) return s + (f.estimate ?? 0)
+  const remainingOf = (f: Facture) => {
+    if (f.paid) return 0
+    if (f.amount === null) return f.estimate ?? 0
     const paidSoFar = (paymentsMap[f.id] ?? []).reduce((a, p) => a + p.amount, 0)
-    return s + Math.max(0, f.amount - paidSoFar)
-  }, 0)
+    return Math.max(0, f.amount - paidSoFar)
+  }
+  const unpaidAmount = visible.reduce((s, f) => s + remainingOf(f), 0)
   const totalAmount = paidAmount + unpaidAmount
   const awaiting = visible.filter(f => f.amount === null && !f.paid)
   const estimatedAmount = awaiting.reduce((s, f) => s + (f.estimate ?? 0), 0)
-  const recurringFactures = sortFactures(visible.filter(f => f.isRecurring))
-  const ponctuellesFactures = sortFactures(visible.filter(f => !f.isRecurring))
+  // Liste : un titre par mois (le plus récent d'abord), puis « À payer » et « Payées »
+  const monthGroups = Array.from(new Set(visible.map(f => f.month))).sort().reverse().map(m => {
+    const inMonth = visible.filter(f => f.month === m)
+    const toPay = sortFactures(inMonth.filter(f => !f.paid))
+    const done = sortFactures(inMonth.filter(f => f.paid))
+    return { month: m, toPay, done, remaining: toPay.reduce((s, f) => s + remainingOf(f), 0) }
+  })
 
   const tip = visible.length === 0
     ? `Ajoute tes factures (eau, élec, internet...) pour ne rien oublier.`
@@ -455,18 +462,26 @@ export function FacturesSection() {
         </div>
       ) : (
         <>
-          {recurringFactures.length > 0 && (
-            <div className="space-y-2">
-              <p className="text-xs font-bold text-ink-soft uppercase tracking-wider">🔄 Récurrentes</p>
-              {recurringFactures.map(renderCard)}
+          {monthGroups.map(g => (
+            <div key={g.month} className="space-y-2">
+              <div className="flex items-baseline justify-between pt-1">
+                <p className="text-sm font-bold text-ink capitalize">{g.month ? monthLabel(g.month) : 'Sans mois'}</p>
+                <p className="text-xs text-ink-soft">{g.toPay.length > 0 ? `reste ${g.toPay.some(f => f.amount === null) ? '~' : ''}${formatAmount(g.remaining)}` : 'tout payé'}</p>
+              </div>
+              {g.toPay.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-bold text-ink-soft uppercase tracking-wider">À payer · {g.toPay.length}</p>
+                  {g.toPay.map(renderCard)}
+                </div>
+              )}
+              {g.done.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-bold text-ink-soft uppercase tracking-wider">Payées · {g.done.length}</p>
+                  {g.done.map(renderCard)}
+                </div>
+              )}
             </div>
-          )}
-          {ponctuellesFactures.length > 0 && (
-            <div className="space-y-2">
-              <p className="text-xs font-bold text-ink-soft uppercase tracking-wider">📄 Ponctuelles</p>
-              {ponctuellesFactures.map(renderCard)}
-            </div>
-          )}
+          ))}
         </>
       )}
 
@@ -596,25 +611,49 @@ function FactureCard({
   const isInRange = (p: FacturePayment) => String(p.paidAt).slice(0, 10) >= range.from && String(p.paidAt).slice(0, 10) <= range.to
   const shortDate = (d: string) => new Date(d).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })
 
+  // Facture payée et repliée : une seule ligne. Un clic ouvre la carte complète (historique, modifier, ajouter un paiement).
+  if (f.paid && !showHistory && !isPaying) {
+    const last = inRange[0] ?? payments[0]
+    const shownTotal = totalRange > 0 ? totalRange : totalPaid > 0 ? totalPaid : amt
+    return (
+      <button type="button" onClick={onToggleHistory}
+        className="card w-full flex items-center gap-3 text-left active:scale-[0.99] transition-all !py-2.5">
+        <span className="w-6 h-6 rounded-full bg-positive-light text-positive flex items-center justify-center flex-shrink-0"><Check size={14}/></span>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-semibold text-ink truncate">{f.name}{f.isRecurring && <span className="ml-1 text-xs" title="Récurrente">🔄</span>}</p>
+          <p className="text-xs text-ink-soft">
+            {last ? `Payé le ${shortDate(last.paidAt)}${inRange.length > 1 ? ` · ${inRange.length}×` : ''}${inRange.length === 0 ? ' (hors période)' : ''}` : 'Payée'}
+          </p>
+        </div>
+        <p className="font-mono font-bold text-sm text-ink">{formatAmount(shownTotal)}</p>
+        <ChevronDown size={16} className="text-ink-soft flex-shrink-0"/>
+      </button>
+    )
+  }
+
   return (
     <div className={`card space-y-3 transition-all border-l-4 ${isDue ? 'border-l-danger' : f.paid ? 'border-l-positive' : 'border-l-transparent'}`}>
       <div className="flex items-start justify-between gap-2">
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-1.5 flex-wrap mb-1">
-            {f.isRecurring && <span className="text-[10px] bg-yellow-50 text-yellow-700 border border-yellow-200 px-1.5 py-0.5 rounded-full font-medium">🔄 Récurrente</span>}
-            {!unknown && <span className="text-[10px] bg-yellow-50 text-yellow-700 border border-yellow-200 px-1.5 py-0.5 rounded-full font-medium">{f.category}</span>}
-            {isDue && !f.paid && <span className="text-[10px] bg-danger text-white px-1.5 py-0.5 rounded-full font-bold">En retard</span>}
-            {f.paid && !unknown && <span className="text-[10px] bg-positive-light text-positive px-1.5 py-0.5 rounded-full font-bold">✓ Payée</span>}
-            {inRange.length > 0 && <span className="text-[10px] bg-blue-50 text-accent border border-blue-200 px-1.5 py-0.5 rounded-full font-bold">💸 Payé sur la période{inRange.length > 1 ? ` · ${inRange.length}×` : ''}</span>}
-            {outRange.length > 0 && <span className="text-[10px] bg-orange-50 text-orange-700 border border-orange-200 px-1.5 py-0.5 rounded-full font-bold">🕓 {outRange.length} paiement{outRange.length > 1 ? 's' : ''} hors période</span>}
-          </div>
-          <p className={`text-sm font-semibold ${f.paid ? 'line-through text-ink-soft' : 'text-ink'}`}>{f.name}</p>
+          {((isDue && !f.paid) || outRange.length > 0) && (
+            <div className="flex items-center gap-1.5 flex-wrap mb-1">
+              {isDue && !f.paid && <span className="text-[10px] bg-danger text-white px-1.5 py-0.5 rounded-full font-bold">En retard</span>}
+              {outRange.length > 0 && <span className="text-[10px] bg-orange-50 text-orange-700 border border-orange-200 px-1.5 py-0.5 rounded-full font-bold">🕓 {outRange.length} paiement{outRange.length > 1 ? 's' : ''} hors période</span>}
+            </div>
+          )}
+          <p className={`text-sm font-semibold ${f.paid ? 'line-through text-ink-soft' : 'text-ink'}`}>{f.name}{f.isRecurring && <span className="ml-1 text-xs no-underline" title="Récurrente">🔄</span>}</p>
+          {(!unknown || f.dueDate) && (
+            <p className="text-xs text-ink-soft mt-0.5">
+              {[!unknown ? f.category : null, f.dueDate ? `échéance ${new Date(f.dueDate).toLocaleDateString('fr-FR')}` : null].filter(Boolean).join(' · ')}
+            </p>
+          )}
           {totalRange > 0 && <p className="text-sm font-mono font-bold text-positive mt-1">Total payé : {formatAmount(totalRange)}</p>}
-          <div className="flex items-center gap-3 mt-1 flex-wrap">
-            {f.dueDate && <span className="text-xs text-ink-soft">📅 {new Date(f.dueDate).toLocaleDateString('fr-FR')}</span>}
-            {lastPay && <span className="text-xs text-accent">💸 Dernier paiement : {shortDate(lastPay.paidAt)}</span>}
-            {f.note && <span className="text-xs text-ink-soft italic">{f.note}</span>}
-          </div>
+          {(lastPay || f.note) && (
+            <div className="flex items-center gap-3 mt-1 flex-wrap">
+              {lastPay && <span className="text-xs text-accent">💸 Dernier paiement : {shortDate(lastPay.paidAt)}</span>}
+              {f.note && <span className="text-xs text-ink-soft italic">{f.note}</span>}
+            </div>
+          )}
         </div>
         <div className="flex flex-col items-end gap-1 flex-shrink-0">
           {unknown ? (
@@ -632,7 +671,7 @@ function FactureCard({
         </div>
       </div>
 
-      {totalPaid > 0 && !unknown && (
+      {totalPaid > 0 && !unknown && !f.paid && (
         <div className="space-y-1">
           <div className="w-full h-2 bg-mist-dark rounded-full overflow-hidden">
             <div className="h-full bg-positive rounded-full transition-all duration-500" style={{ width: `${amt > 0 ? Math.min(100, (totalPaid / amt) * 100) : 0}%` }}/>
