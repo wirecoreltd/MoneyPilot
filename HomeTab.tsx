@@ -5,7 +5,7 @@ import {
   Transaction, TransactionType, EXPENSE_CATEGORIES, INCOME_CATEGORIES,
   BudgetCategory, addTransaction, addTransfer, getBudgets, formatAmount, UserProfile,
 } from '@/lib/storage'
-import { currentYearMonth, isoDate, monthLabel } from '@/lib/finance'
+import { currentYearMonth, isoDate } from '@/lib/finance'
 import { useMonthSummary } from '@/lib/useMonthSummary'
 import { useSpendingLines } from '@/lib/useSpendingLines'
 import { computeBudgetStatuses, earliestCycleStart } from '@/lib/budgetPeriods'
@@ -334,7 +334,7 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
   const ym = currentYearMonth()
   const { snapshot, summary, health, plan, error, reload } = useMonthSummary(ym, transactions)
 
-  // Filtre de période (1J, 5J, 1 mois, 3 mois, Perso) : pilote les 4 tuiles de flux
+  // Filtre de période (1J, 5J, 1 mois, 3 mois, Perso) : pilote les tuiles de flux ET le Reste à vivre
   const periodState = usePeriod()
   const { period, range } = periodState
   const { flows, flowsError, retryFlows } = usePeriodFlows(range.from, range.to)
@@ -346,6 +346,17 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
   const periodTxIncome = sum(txInRange.filter(tx => tx.type === 'income').map(tx => tx.amount))
   const periodIncome = flows ? flows.incomes + periodTxIncome : undefined
   const periodLabel = PERIOD_LABEL[period]
+
+  // Reste à vivre sur la période filtrée :
+  // revenus − (dépenses + factures payées + dettes remboursées)
+  const flowsReady = flows !== null && periodIncome !== undefined
+  const periodOut = periodExpenses + (flows?.bills ?? 0) + (flows?.debts ?? 0)
+  const periodFree = flowsReady ? periodIncome! - periodOut : undefined
+  const periodFreeIsNegative = periodFree !== undefined && periodFree < 0
+  const periodHasIncome = flowsReady && periodIncome! > 0
+  const periodSpentPct = periodHasIncome
+    ? Math.min(100, Math.max(0, (periodOut / periodIncome!) * 100))
+    : 0
 
   // Plafonds : même règle que l'onglet Budget (cycle courant de chaque plafond)
   useEffect(() => { getBudgets().then(setBudgets).catch(e => console.error('Budgets:', e)) }, [])
@@ -360,11 +371,8 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
   const healthColor = health?.color ?? '#8896B0'
   const healthLabel = health?.label ?? 'Chargement…'
 
-  const free = summary?.remainingToLive
-  const freeIsNegative = free !== undefined && free < 0
+  // Ratios de la situation financière : restent calés sur le mois en cours
   const hasIncome = !!summary && summary.income > 0
-  const spentPct = hasIncome ? Math.min(100, Math.max(0, (summary!.totalOut / summary!.income) * 100)) : 0
-
   const savingsRate = hasIncome ? `${Math.round((summary!.savedNet / summary!.income) * 100)}%` : '—'
   const debtRate = hasIncome ? `${Math.round((summary!.debtDue / summary!.income) * 100)}%` : '—'
   const safety = summary?.safetyMonths != null ? `${summary.safetyMonths.toFixed(1)}m` : '—'
@@ -481,6 +489,7 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
     setSaving(false)
     onUpdate()
     reload()
+    retryFlows()
   }
 
   return (
@@ -493,26 +502,28 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
         </div>
       )}
 
-      {/* ── 1. Reste à vivre : le chiffre principal ── */}
+      {/* ── 1. Reste à vivre : calé sur le filtre de période ── */}
       <div className="card-lg space-y-3">
         <div>
-          <p className="text-xs text-ink-soft capitalize">{monthLabel(ym)}</p>
+          <p className="text-xs text-ink-soft capitalize">{periodLabel}</p>
           <p className="text-xs font-bold text-ink-soft uppercase tracking-wider mt-1.5">Reste à vivre</p>
-          <p className={`text-4xl font-bold font-mono mt-1 ${freeIsNegative ? 'text-danger' : 'text-ink'}`}>{amt(free)}</p>
+          <p className={`text-4xl font-bold font-mono mt-1 ${periodFreeIsNegative ? 'text-danger' : 'text-ink'}`}>
+            {amt(periodFree)}
+          </p>
         </div>
-        {hasIncome ? (
+        {periodHasIncome ? (
           <div className="space-y-1.5">
             <div className="w-full h-2 bg-mist-dark rounded-full overflow-hidden">
-              <div className={`h-full rounded-full transition-all duration-700 ${spentPct >= 100 ? 'bg-danger' : 'bg-accent'}`}
-                style={{ width: `${spentPct}%` }} />
+              <div className={`h-full rounded-full transition-all duration-700 ${periodSpentPct >= 100 ? 'bg-danger' : 'bg-accent'}`}
+                style={{ width: `${periodSpentPct}%` }} />
             </div>
             <p className="text-xs text-ink-soft">
-              {formatAmount(summary!.totalOut)} sortis sur {formatAmount(summary!.income)} de revenus
+              {formatAmount(periodOut)} sortis sur {formatAmount(periodIncome!)} de revenus
             </p>
           </div>
-        ) : summary ? (
+        ) : flowsReady ? (
           <button onClick={() => onGoToMoney('revenus')} className="text-xs font-semibold text-accent">
-            Ajoute tes revenus pour voir où tu en es
+            Aucun revenu sur cette période, ajoute-en pour voir où tu en es
           </button>
         ) : null}
       </div>
@@ -538,7 +549,7 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
           sub={`remboursées sur ${periodLabel}`} onClick={() => onGoToMoney('dettes')} />
       </div>
 
-      {/* ── 2. À faire : seulement s'il y a quelque chose ── */}
+      {/* ── 3. À faire : seulement s'il y a quelque chose ── */}
       {todos.length > 0 && (
         <div className="card">
           <p className="text-xs font-bold text-ink-soft uppercase tracking-wider mb-1">À faire</p>
