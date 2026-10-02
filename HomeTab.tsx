@@ -520,6 +520,13 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
       {/* ── 2. Filtre de période + chiffres ── */}
       <PeriodFilter {...periodState} activeClass="bg-accent text-white" />
 
+      <div className="flex justify-end -mt-1">
+        <button onClick={() => setShowForm(true)}
+          className="inline-flex items-center gap-1.5 text-xs font-bold text-accent bg-accent-light rounded-full px-3 py-1.5 active:scale-95 transition-all">
+          <Plus size={14} /> Ajouter une transaction
+        </button>
+      </div>
+
       <div className="grid grid-cols-2 gap-3">
         <Tile icon="💰" label="Revenus" value={amt(periodIncome)}
           sub={`reçus sur ${periodLabel}`} onClick={() => onGoToMoney('revenus')} />
@@ -623,10 +630,6 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
       {/* ── 6. Coach + action ── */}
       <CoachTip message={buildTip()} />
 
-      <button onClick={() => setShowForm(true)} className="btn-primary w-full gap-2 text-base py-4">
-        <Plus size={20} /> Ajouter une transaction
-      </button>
-
       {/* ── 7. Récentes (3) ── */}
       {recent.length > 0 && (
         <button onClick={() => onGoToMoney('transactions')} className="card w-full text-left active:scale-[0.99] transition-all">
@@ -691,9 +694,10 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
                       <option value="">— Espace de destination —</option>
                       {otherSpaces.map(sp => <option key={sp.id} value={sp.id}>{sp.emoji} {sp.name}</option>)}
                     </select>
-                    <p className="text-[11px] text-ink-soft leading-snug">
-                      Une dépense sera ajoutée dans {active.name} et un revenu dans l'espace de destination.
-                    </p>
+                    <div className="rounded-xl bg-accent-light border border-accent/30 px-3 py-2 text-xs leading-snug text-accent">
+                      <span className="font-bold text-danger">Une dépense</span> sera ajoutée dans <strong>{active.name}</strong> et{' '}
+                      <span className="font-bold text-positive">un revenu</span> dans l'espace de destination.
+                    </div>
                   </>
                 )}
               </div>
