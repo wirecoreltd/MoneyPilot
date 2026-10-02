@@ -11,7 +11,7 @@ export const PERIODS: { id: Period; label: string }[] = [
 
 export const PERIOD_LABEL: Record<Period, string> = {
   '1j': "aujourd'hui", '5j': 'les 5 derniers jours',
-  '1m': 'le dernier mois', '3m': 'les 3 derniers mois', custom: 'la période choisie',
+  '1m': 'ce mois-ci', '3m': 'les 3 derniers mois', custom: 'la période choisie',
 }
 
 export function toYMD(d: Date): string {
@@ -21,11 +21,29 @@ export function toYMD(d: Date): string {
 export function getPeriodRange(p: Period, customFrom: string, customTo: string) {
   if (p === 'custom') return { from: customFrom || '0000-01-01', to: customTo || '9999-12-31' }
   const today = new Date(); today.setHours(0, 0, 0, 0)
+  // « 1 mois » = le mois calendaire en cours (du 1er au dernier jour), pas les 30 derniers jours
+  if (p === '1m') {
+    const first = new Date(today.getFullYear(), today.getMonth(), 1)
+    const last  = new Date(today.getFullYear(), today.getMonth() + 1, 0)
+    return { from: toYMD(first), to: toYMD(last) }
+  }
   const from = new Date(today)
   if (p === '5j') from.setDate(from.getDate() - 4)
-  if (p === '1m') { from.setMonth(from.getMonth() - 1); from.setDate(from.getDate() + 1) }
   if (p === '3m') { from.setMonth(from.getMonth() - 3); from.setDate(from.getDate() + 1) }
   return { from: toYMD(from), to: toYMD(today) }
+}
+
+// « 01 sept. au 30 sept. 2026 » · « 02 oct. 2026 » si un seul jour
+export function formatRange(from: string, to: string): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) return null
+  if (from.startsWith('0000') || to.startsWith('9999')) return null
+  const parse = (ymd: string) => { const [y, m, d] = ymd.split('-').map(Number); return new Date(y, m - 1, d) }
+  const a = parse(from), b = parse(to)
+  const fmt = (d: Date, withYear: boolean) =>
+    d.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', ...(withYear ? { year: 'numeric' } : {}) })
+  if (from === to) return fmt(b, true)
+  const sameYear = a.getFullYear() === b.getFullYear()
+  return `${fmt(a, !sameYear)} au ${fmt(b, true)}`
 }
 
 export function usePeriod(initial: Period = '1m') {
@@ -53,6 +71,14 @@ export default function PeriodFilter({
           </button>
         ))}
       </div>
+
+      {(() => {
+        const r = getPeriodRange(period, customFrom, customTo)
+        const label = formatRange(r.from, r.to)
+        return label ? (
+          <p className="text-center text-xs font-semibold text-ink-soft">📅 {label}</p>
+        ) : null
+      })()}
 
       {period === 'custom' && (
         <div className="grid grid-cols-2 gap-2">
