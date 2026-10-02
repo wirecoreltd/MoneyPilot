@@ -28,6 +28,7 @@ export interface Transaction {
   note: string
   date: string
   createdAt: string
+  transferId?: string | null   // non nul = ligne d'un transfert entre espaces
 }
 
 export interface BudgetCategory {
@@ -419,6 +420,7 @@ export async function getTransactions(): Promise<Transaction[]> {
     note:      r.note ?? '',
     date:      r.date,
     createdAt: r.created_at,
+    transferId: r.transfer_id ?? null,
   }))
 }
 
@@ -453,8 +455,53 @@ export async function addTransaction(tx: Omit<Transaction, 'id' | 'createdAt'>):
   }
 }
 
+// Si la ligne fait partie d'un transfert, on supprime les deux côtés (dépense + revenu).
 export async function deleteTransaction(id: string): Promise<void> {
-  const { error } = await supabase.from('transactions').delete().eq('id', id)
+  const { data: row, error: readErr } = await supabase
+    .from('transactions').select('transfer_id').eq('id', id).maybeSingle()
+  if (readErr) throw readErr
+
+  const q = supabase.from('transactions').delete()
+  const { error } = row?.transfer_id
+    ? await q.eq('transfer_id', row.transfer_id)
+    : await q.eq('id', id)
+  if (error) throw error
+}
+
+// Transfert entre deux espaces (ex. Pro → Perso) :
+//  • dépense « Transfert » dans l'espace actif (source)
+//  • revenu  « Transfert » dans l'espace de destination
+// Les deux lignes sont créées dans UN SEUL insert (tout ou rien) et liées par transfer_id.
+export const TRANSFER_CATEGORY = 'Transfert'
+
+export async function addTransfer(p: {
+  toSpaceId: string
+  toSpaceName: string
+  fromSpaceName: string
+  amount: number
+  note: string
+  date: string
+}): Promise<void> {
+  const userId = await getUserId()
+  const fromSpaceId = requireWritableSpaceId()
+  if (!p.toSpaceId || p.toSpaceId === fromSpaceId) throw new Error('Choisis un autre espace de destination.')
+  if (!(p.amount > 0)) throw new Error('Montant invalide.')
+
+  const transferId = crypto.randomUUID()
+  const userNote = p.note.trim()
+
+  const { error } = await supabase.from('transactions').insert([
+    {
+      user_id: userId, space_id: fromSpaceId, transfer_id: transferId,
+      type: 'expense', amount: p.amount, category: TRANSFER_CATEGORY, date: p.date,
+      note: userNote || `Transfert vers ${p.toSpaceName}`,
+    },
+    {
+      user_id: userId, space_id: p.toSpaceId, transfer_id: transferId,
+      type: 'income', amount: p.amount, category: TRANSFER_CATEGORY, date: p.date,
+      note: userNote || `Transfert depuis ${p.fromSpaceName}`,
+    },
+  ])
   if (error) throw error
 }
 
