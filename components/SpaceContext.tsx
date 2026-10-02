@@ -2,6 +2,7 @@
 import { createContext, useCallback, useContext, useEffect, useState, ReactNode } from 'react'
 import { Space, fetchSpaces, createSpace } from '@/lib/spaces'
 import { OVERVIEW, getActiveSpaceId, setActiveSpaceId } from '@/lib/activeSpace'
+import { supabase } from '@/lib/supabase'
 
 interface SpaceCtx {
   spaces: Space[]
@@ -27,6 +28,11 @@ export function SpaceProvider({ children }: { children: ReactNode }) {
 
   const load = useCallback(async () => {
     try {
+      // Pas de session (déconnecté / session expirée) : on renvoie vers la connexion
+      // au lieu d'essayer de charger ou de créer des espaces sans utilisateur.
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) { window.location.href = '/login'; return }
+
       let list = await fetchSpaces()
       // Nouveau compte créé après la migration : aucun espace, on crée « Perso »
       if (list.length === 0) list = [await createSpace('Perso', '👤', 'perso')]
@@ -39,6 +45,7 @@ export function SpaceProvider({ children }: { children: ReactNode }) {
       setActiveId(id)
       setError(null)
     } catch (e) {
+      if (e instanceof Error && e.message === 'Non authentifié') { window.location.href = '/login'; return }
       setError(e instanceof Error ? e.message : 'Erreur de chargement des espaces')
     }
   }, [])
