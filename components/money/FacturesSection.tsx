@@ -366,12 +366,16 @@ export function FacturesSection() {
   const totalAmount = paidAmount + unpaidAmount
   const awaiting = visible.filter(f => f.amount === null && !f.paid)
   const estimatedAmount = awaiting.reduce((s, f) => s + (f.estimate ?? 0), 0)
-  // Liste : un titre par mois (le plus récent d'abord), puis « À payer » et « Payées »
-  const monthGroups = Array.from(new Set(visible.map(f => f.month))).sort().reverse().map(m => {
-    const inMonth = visible.filter(f => f.month === m)
-    const toPay = inMonth.filter(f => !f.paid)
-    return { month: m, items: sortFactures(inMonth), toPay, remaining: toPay.reduce((s, f) => s + remainingOf(f), 0) }
-  })
+  // Liste unique (payées et à payer mélangées), rangée par échéance
+  const sortedFactures = sortFactures(visible)
+  // Le mois n'est affiché dans le nom que si la période en couvre plusieurs (pour distinguer deux « CEB »)
+  const monthsShown = new Set(visible.map(f => f.month))
+  const yearsShown = new Set(visible.map(f => (f.month ?? '').slice(0, 4)))
+  const monthTag = (f: Facture): string | null => {
+    if (monthsShown.size < 2 || !f.month) return null
+    const label = monthLabel(f.month)            // « octobre 2026 »
+    return yearsShown.size > 1 ? label : label.split(' ')[0]
+  }
 
   const tip = visible.length === 0
     ? `Ajoute tes factures (eau, élec, internet...) pour ne rien oublier.`
@@ -391,7 +395,7 @@ export function FacturesSection() {
 
   function renderCard(f: Facture) {
     return (
-      <FactureCard key={f.id} facture={f} onEdit={openEdit} onDelete={handleDelete}
+      <FactureCard key={f.id} facture={f} monthTag={monthTag(f)} onEdit={openEdit} onDelete={handleDelete}
         payments={paymentsMap[f.id] ?? []} range={range} showHistory={openHistoryId === f.id}
         historyLoading={historyLoading && openHistoryId === f.id && !paymentsMap[f.id]}
         onToggleHistory={() => toggleHistory(f.id)} payingId={payingId}
@@ -464,15 +468,7 @@ export function FacturesSection() {
         </div>
       ) : (
         <>
-          {monthGroups.map(g => (
-            <div key={g.month} className="space-y-2">
-              <div className="flex items-baseline justify-between pt-1">
-                <p className="text-sm font-bold text-ink capitalize">{g.month ? monthLabel(g.month) : 'Sans mois'}</p>
-                <p className="text-xs text-ink-soft">{g.toPay.length > 0 ? `reste ${g.toPay.some(f => f.amount === null) ? '~' : ''}${formatAmount(g.remaining)}` : 'tout payé'}</p>
-              </div>
-              {g.items.map(renderCard)}
-            </div>
-          ))}
+          {sortedFactures.map(renderCard)}
         </>
       )}
 
@@ -571,12 +567,12 @@ export function FacturesSection() {
 }
 
 function FactureCard({
-  facture: f, onEdit, onDelete, payments, range, showHistory, historyLoading,
+  facture: f, monthTag, onEdit, onDelete, payments, range, showHistory, historyLoading,
   onToggleHistory, payingId, payAmount, payDate, payNote,
   onSetPayingId, onPayAmountChange, onPayDateChange, onPayNoteChange,
   onPay, onEditPayment, onDeletePayment,
 }: {
-  facture: Facture; onEdit: (f: Facture) => void; onDelete: (id: string) => void
+  facture: Facture; monthTag: string | null; onEdit: (f: Facture) => void; onDelete: (id: string) => void
   payments: FacturePayment[]; range: { from: string; to: string }; showHistory: boolean; historyLoading: boolean
   onToggleHistory: () => void; payingId: string | null
   payAmount: string; payDate: string; payNote: string
@@ -619,7 +615,7 @@ function FactureCard({
               {outRange.length > 0 && <span className="text-[10px] bg-orange-50 text-orange-700 border border-orange-200 px-1.5 py-0.5 rounded-full font-bold">🕓 {outRange.length} paiement{outRange.length > 1 ? 's' : ''} hors période</span>}
             </div>
           )}
-          <p className={`text-sm font-semibold ${f.paid ? 'line-through text-ink-soft' : 'text-ink'}`}>{f.name}{f.isRecurring && <span className="ml-1 text-xs no-underline" title="Récurrente">🔄</span>}</p>
+          <p className={`text-sm font-semibold ${f.paid ? 'line-through text-ink-soft' : 'text-ink'}`}>{f.name}{monthTag && <span className="ml-1 text-xs font-normal text-ink-soft"> · {monthTag}</span>}{f.isRecurring && <span className="ml-1 text-xs no-underline" title="Récurrente">🔄</span>}</p>
           {(!unknown || f.dueDate) && (
             <p className={`text-xs mt-0.5 ${isSoon ? 'text-orange-700 font-semibold' : isDue ? 'text-danger font-semibold' : 'text-ink-soft'}`}>
               {[!unknown ? f.category : null, f.dueDate ? `échéance ${new Date(f.dueDate).toLocaleDateString('fr-FR')}` : null].filter(Boolean).join(' · ')}
