@@ -640,8 +640,14 @@ function FactureCard({
           )}
           <p className={`text-sm font-semibold ${f.paid ? 'line-through text-ink-soft' : 'text-ink'}`}>{f.name}{monthTag && <span className="ml-1 text-xs font-normal text-ink-soft"> · {monthTag}</span>}{f.isRecurring && <span className="ml-1 text-xs no-underline" title="Récurrente">🔄</span>}</p>
           {(!unknown || f.dueDate) && (
-            <p className={`text-xs mt-0.5 ${isSoon ? 'text-orange-700 font-semibold' : isDue ? 'text-danger font-semibold' : 'text-ink-soft'}`}>
-              {[!unknown ? f.category : null, f.dueDate ? `échéance ${new Date(f.dueDate).toLocaleDateString('fr-FR')}` : null].filter(Boolean).join(' · ')}
+            <p className="text-xs mt-0.5 text-ink-soft">
+              {!unknown && f.category}
+              {!unknown && f.dueDate && ' · '}
+              {f.dueDate && (
+                <span className={f.paid ? '' : 'text-danger font-semibold'}>
+                  échéance {new Date(f.dueDate).toLocaleDateString('fr-FR')}
+                </span>
+              )}
             </p>
           )}
           {lastPay && (
