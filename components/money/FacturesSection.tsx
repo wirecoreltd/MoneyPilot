@@ -347,10 +347,18 @@ export function FacturesSection() {
     : f)
 
   const paidCount = visible.filter(f => f.paid).length
-  const effective = (f: Facture) => f.amount ?? ((f.rangePaid ?? 0) > 0 ? f.rangePaid! : (f.estimate ?? 0))
-  const totalAmount = visible.reduce((s, f) => s + effective(f), 0)
-  const paidAmount = visible.filter(f => f.paid).reduce((s, f) => s + effective(f), 0)
-  const unpaidAmount = totalAmount - paidAmount
+  // PAYÉ = somme des paiements réellement datés dans la période (même règle que la tuile « Factures » de l'Accueil).
+  // Avant : on additionnait le montant entier des factures marquées payées, d'où des chiffres différents.
+  const inPeriod = (d: unknown) => { const x = String(d).slice(0, 10); return x >= range.from && x <= range.to }
+  const paidAmount = visible.reduce((s, f) =>
+    s + (paymentsMap[f.id] ?? []).filter(p => inPeriod(p.paidAt)).reduce((a, p) => a + p.amount, 0), 0)
+  // RESTANT = ce qu'il reste à payer sur les factures non payées (estimation si le montant est inconnu)
+  const unpaidAmount = visible.filter(f => !f.paid).reduce((s, f) => {
+    if (f.amount === null) return s + (f.estimate ?? 0)
+    const paidSoFar = (paymentsMap[f.id] ?? []).reduce((a, p) => a + p.amount, 0)
+    return s + Math.max(0, f.amount - paidSoFar)
+  }, 0)
+  const totalAmount = paidAmount + unpaidAmount
   const awaiting = visible.filter(f => f.amount === null && !f.paid)
   const estimatedAmount = awaiting.reduce((s, f) => s + (f.estimate ?? 0), 0)
   const recurringFactures = sortFactures(visible.filter(f => f.isRecurring))
