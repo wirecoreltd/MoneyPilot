@@ -3,7 +3,7 @@ import { useState, useRef, useEffect } from 'react'
 import { Plus, X, MessageCircle, Send, ChevronRight, AlertCircle, Clock, Target } from 'lucide-react'
 import {
   Transaction, TransactionType, EXPENSE_CATEGORIES, INCOME_CATEGORIES,
-  BudgetCategory, addTransaction, getBudgets, formatAmount, UserProfile,
+  BudgetCategory, addTransaction, addTransfer, getBudgets, formatAmount, UserProfile,
 } from '@/lib/storage'
 import { currentYearMonth, isoDate, monthLabel } from '@/lib/finance'
 import { useMonthSummary } from '@/lib/useMonthSummary'
@@ -14,6 +14,7 @@ import CoachTip from './CoachTip'
 import PeriodFilter, { usePeriod, PERIOD_LABEL } from './components/money/PeriodFilter'
 import { supabase } from '@/lib/supabase'
 import { readSpaceId } from '@/lib/activeSpace'
+import { useSpaces } from '@/components/SpaceContext'
 
 export type MoneySubTab = 'transactions' | 'revenus' | 'factures' | 'dettes' | 'epargne' | 'budget'
 
@@ -322,6 +323,10 @@ function CoachChat({ onClose }: { onClose: () => void }) {
 export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, onGoToProjects }: Props) {
   const [showForm, setShowForm] = useState(false)
   const [saving, setSaving] = useState(false)
+  const { spaces, active, isOverview } = useSpaces()
+  const [isTransfer, setIsTransfer] = useState(false)
+  const [toSpaceId, setToSpaceId] = useState('')
+  const otherSpaces = spaces.filter(sp => sp.id !== active?.id)
   const [showChat, setShowChat] = useState(false)
   const [form, setForm] = useState(emptyForm)
   const [budgets, setBudgets] = useState<BudgetCategory[]>([])
@@ -448,9 +453,21 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
 
   async function handleSubmit() {
     if (saving || !form.amount || Number(form.amount) <= 0) return
+    if (isTransfer) {
+      const dest = otherSpaces.find(sp => sp.id === toSpaceId)
+      if (!active || !dest) { window.alert('Choisis un espace de destination.'); return }
+    }
     setSaving(true)
     try {
-      await addTransaction({ ...form, amount: Number(form.amount) })
+      if (isTransfer && active) {
+        const dest = otherSpaces.find(sp => sp.id === toSpaceId)!
+        await addTransfer({
+          toSpaceId: dest.id, toSpaceName: dest.name, fromSpaceName: active.name,
+          amount: Number(form.amount), note: form.note, date: form.date,
+        })
+      } else {
+        await addTransaction({ ...form, amount: Number(form.amount) })
+      }
     } catch (e) {
       console.error('Ajout de transaction échoué :', e)
       window.alert("Impossible d'enregistrer la transaction. Réessaie.")
@@ -458,6 +475,8 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
       return
     }
     setForm(emptyForm)
+    setIsTransfer(false)
+    setToSpaceId('')
     setShowForm(false)
     setSaving(false)
     onUpdate()
@@ -619,7 +638,7 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
             <div key={tx.id} className="flex items-center justify-between py-2.5 border-b border-mist last:border-0">
               <div className="flex items-center gap-3 min-w-0">
                 <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${tx.type === 'income' ? 'bg-positive-light' : 'bg-danger-light'}`}>
-                  <span className="text-base">{tx.type === 'income' ? '💰' : '💸'}</span>
+                  <span className="text-base">{tx.transferId ? '🔁' : tx.type === 'income' ? '💰' : '💸'}</span>
                 </div>
                 <div className="min-w-0">
                   <p className="text-sm font-semibold text-ink truncate">{tx.note || tx.category}</p>
@@ -645,22 +664,47 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
               <button className="btn-icon bg-mist" onClick={() => setShowForm(false)}><X size={20} /></button>
             </div>
             <div className="flex rounded-2xl overflow-hidden border-2 border-mist-dark">
-              <button className={`flex-1 py-3 text-sm font-bold ${form.type === 'expense' ? 'bg-danger text-white' : 'bg-white text-ink-soft'}`}
-                onClick={() => setForm(f => ({ ...f, type: 'expense', category: EXPENSE_CATEGORIES[0] }))}>💸 Dépense</button>
-              <button className={`flex-1 py-3 text-sm font-bold ${form.type === 'income' ? 'bg-positive text-white' : 'bg-white text-ink-soft'}`}
-                onClick={() => setForm(f => ({ ...f, type: 'income', category: INCOME_CATEGORIES[0] as any }))}>💰 Revenu</button>
+              <button className={`flex-1 py-3 text-sm font-bold ${!isTransfer && form.type === 'expense' ? 'bg-danger text-white' : 'bg-white text-ink-soft'}`}
+                onClick={() => { setIsTransfer(false); setForm(f => ({ ...f, type: 'expense', category: EXPENSE_CATEGORIES[0] })) }}>💸 Dépense</button>
+              <button className={`flex-1 py-3 text-sm font-bold ${!isTransfer && form.type === 'income' ? 'bg-positive text-white' : 'bg-white text-ink-soft'}`}
+                onClick={() => { setIsTransfer(false); setForm(f => ({ ...f, type: 'income', category: INCOME_CATEGORIES[0] as any })) }}>💰 Revenu</button>
+              {spaces.length > 1 && (
+                <button className={`flex-1 py-3 text-sm font-bold ${isTransfer ? 'bg-accent text-white' : 'bg-white text-ink-soft'}`}
+                  onClick={() => setIsTransfer(true)}>🔁 Transfert</button>
+              )}
             </div>
             <div>
               <label className="label">Montant (Rs)</label>
               <input className="input text-2xl font-bold" type="number" placeholder="0"
                 value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))} />
             </div>
-            <div>
-              <label className="label">Catégorie</label>
-              <select className="input" value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value as any }))}>
-                {categories.map(c => <option key={c}>{c}</option>)}
-              </select>
-            </div>
+            {isTransfer ? (
+              <div className="space-y-2">
+                {isOverview || !active ? (
+                  <p className="text-xs text-danger">Choisis d'abord un espace de départ (pas la vue d'ensemble).</p>
+                ) : (
+                  <>
+                    <p className="text-xs text-ink-soft">
+                      De <strong>{active.emoji} {active.name}</strong> vers :
+                    </p>
+                    <select className="input" value={toSpaceId} onChange={e => setToSpaceId(e.target.value)}>
+                      <option value="">— Espace de destination —</option>
+                      {otherSpaces.map(sp => <option key={sp.id} value={sp.id}>{sp.emoji} {sp.name}</option>)}
+                    </select>
+                    <p className="text-[11px] text-ink-soft leading-snug">
+                      Une dépense sera ajoutée dans {active.name} et un revenu dans l'espace de destination.
+                    </p>
+                  </>
+                )}
+              </div>
+            ) : (
+              <div>
+                <label className="label">Catégorie</label>
+                <select className="input" value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value as any }))}>
+                  {categories.map(c => <option key={c}>{c}</option>)}
+                </select>
+              </div>
+            )}
             <div>
               <label className="label">Note (optionnel)</label>
               <input className="input" placeholder="Ex: Courses Jumbo" value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} />
