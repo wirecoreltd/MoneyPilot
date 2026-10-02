@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
 import { Plus, Trash2, X, Pencil, ChevronDown, Check } from 'lucide-react'
-import { formatAmount } from '@/lib/storage'
+import { formatAmount, deleteTransfer } from '@/lib/storage'
 import { supabase } from '@/lib/supabase'
 import { readSpaceId, requireWritableSpaceId } from '@/lib/activeSpace'
 import PeriodFilter, { usePeriod, PERIOD_LABEL } from './PeriodFilter'
@@ -14,6 +14,7 @@ interface RevenuSource {
   month: string
   date: string
   spaceId: string
+  transferId?: string | null
 }
 
 // ─── Sources prédéfinies par catégorie ───────────────────────────────────────
@@ -79,6 +80,7 @@ export function RevenusSection() {
         type: r.is_fixed ? 'fixed' : 'variable', month: r.month,
       date: r.received_at ?? `${r.month}-01`,
         spaceId: r.space_id,
+        transferId: r.transfer_id ?? null,
       }))
       setRevenus(incData)
       if (incData.length > 0) setOpen(true)
@@ -188,6 +190,12 @@ export function RevenusSection() {
   async function handleDelete(id: string) {
     const r = revenus.find(x => x.id === id)
     try {
+      if (r?.transferId) {
+        if (!window.confirm('Ce transfert sera supprimé des deux espaces (dépense et revenu). Continuer ?')) return
+        await deleteTransfer(r.transferId)
+        setRevenus(prev => prev.filter(x => x.transferId !== r.transferId))
+        return
+      }
       if (r?.type === 'fixed') {
         if (!window.confirm(`« ${r.label} » est un revenu fixe.\nLe supprimer l'arrête : il ne sera plus recréé chaque mois (l'historique passe en « Variable »).`)) return
         const { data: { user } } = await supabase.auth.getUser()
@@ -281,7 +289,9 @@ export function RevenusSection() {
               </div>
               <div className="flex items-center gap-2">
                 <span className="font-mono text-sm font-bold text-positive">+{formatAmount(r.amount)}</span>
-                <button onClick={() => openEdit(r)} className="w-7 h-7 rounded-lg bg-mist hover:bg-accent-light text-ink-soft hover:text-accent flex items-center justify-center"><Pencil size={12}/></button>
+                {!r.transferId && (
+                  <button onClick={() => openEdit(r)} className="w-7 h-7 rounded-lg bg-mist hover:bg-accent-light text-ink-soft hover:text-accent flex items-center justify-center"><Pencil size={12}/></button>
+                )}
                 <button onClick={() => handleDelete(r.id)} className="w-7 h-7 rounded-lg bg-mist hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center"><Trash2 size={12}/></button>
               </div>
             </div>
