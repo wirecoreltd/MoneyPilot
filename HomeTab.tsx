@@ -170,14 +170,14 @@ function usePeriodFlows(from: string, to: string) {
 
         // Même règle que l'onglet Revenus : date de réception, sinon 1er du mois
         const incomes = sum((incR.data ?? [])
-          .filter(r => {
+          .filter((r: any) => {
             const d = String(r.received_at ?? `${r.month}-01`).slice(0, 10)
             return d >= from && d <= to
           })
-          .map(r => Number(r.amount)))
+          .map((r: any) => Number(r.amount)))
 
-        const facIds = (facR.data ?? []).map(f => f.id)
-        const oweIds = (debtR.data ?? []).filter(d => d.type === 'owe').map(d => d.id)
+        const facIds: string[] = (facR.data ?? []).map((f: any) => f.id as string)
+        const oweIds: string[] = (debtR.data ?? []).filter((d: any) => d.type === 'owe').map((d: any) => d.id as string)
 
         const [facPays, debtPays] = await Promise.all([
           Promise.all(chunk(facIds).map(ids =>
