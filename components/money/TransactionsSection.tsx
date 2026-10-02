@@ -118,6 +118,8 @@ export function TransactionsSection({ transactions, onUpdate }: { transactions: 
     setLoading(false)
   }
   async function handleDelete(id: string) {
+    const tx = transactions.find(t => t.id === id)
+    if (tx?.transferId && !window.confirm('Ce transfert sera supprimé des deux espaces (dépense et revenu). Continuer ?')) return
     try { await deleteTransaction(id); onUpdate() }
     catch { window.alert('Impossible de supprimer la dépense. Réessaie.') }
   }
@@ -228,7 +230,7 @@ export function TransactionsSection({ transactions, onUpdate }: { transactions: 
                       <div key={tx.id} className="flex items-center justify-between px-4 py-3 border-b border-mist last:border-0">
                         <div className="flex items-center gap-3 min-w-0">
                           <div className="w-8 h-8 rounded-xl bg-danger-light flex items-center justify-center flex-shrink-0">
-                            <span className="text-sm">💸</span>
+                            <span className="text-sm">{tx.transferId ? '🔁' : '💸'}</span>
                           </div>
                           <div className="min-w-0">
                             <p className="text-sm font-semibold text-ink truncate">{tx.note || tx.category}</p>
@@ -237,7 +239,9 @@ export function TransactionsSection({ transactions, onUpdate }: { transactions: 
                         </div>
                         <div className="flex items-center gap-1 flex-shrink-0">
                           <span className="font-mono text-sm font-bold text-danger">−{formatAmount(tx.amount)}</span>
-                          <button className="w-8 h-8 rounded-xl bg-mist hover:bg-accent-light text-ink-soft hover:text-accent flex items-center justify-center active:scale-95" onClick={() => openEdit(tx)}><Pencil size={13}/></button>
+                          {!tx.transferId && (
+                            <button className="w-8 h-8 rounded-xl bg-mist hover:bg-accent-light text-ink-soft hover:text-accent flex items-center justify-center active:scale-95" onClick={() => openEdit(tx)}><Pencil size={13}/></button>
+                          )}
                           <button className="w-8 h-8 rounded-xl bg-mist hover:bg-danger-light text-ink-soft hover:text-danger flex items-center justify-center active:scale-95" onClick={() => handleDelete(tx.id)}><Trash2 size={13}/></button>
                         </div>
                       </div>
