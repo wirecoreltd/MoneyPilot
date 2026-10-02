@@ -455,23 +455,33 @@ export async function addTransaction(tx: Omit<Transaction, 'id' | 'createdAt'>):
   }
 }
 
-// Si la ligne fait partie d'un transfert, on supprime les deux côtés (dépense + revenu).
+// Supprime les deux côtés d'un transfert (dépense dans transactions + revenu dans monthly_incomes).
+export async function deleteTransfer(transferId: string): Promise<void> {
+  const [tx, inc] = await Promise.all([
+    supabase.from('transactions').delete().eq('transfer_id', transferId),
+    supabase.from('monthly_incomes').delete().eq('transfer_id', transferId),
+  ])
+  if (tx.error) throw tx.error
+  if (inc.error) throw inc.error
+}
+
+// Si la ligne fait partie d'un transfert, on supprime les deux côtés.
 export async function deleteTransaction(id: string): Promise<void> {
   const { data: row, error: readErr } = await supabase
     .from('transactions').select('transfer_id').eq('id', id).maybeSingle()
   if (readErr) throw readErr
 
-  const q = supabase.from('transactions').delete()
-  const { error } = row?.transfer_id
-    ? await q.eq('transfer_id', row.transfer_id)
-    : await q.eq('id', id)
+  if (row?.transfer_id) return deleteTransfer(row.transfer_id)
+
+  const { error } = await supabase.from('transactions').delete().eq('id', id)
   if (error) throw error
 }
 
 // Transfert entre deux espaces (ex. Pro → Perso) :
-//  • dépense « Transfert » dans l'espace actif (source)
-//  • revenu  « Transfert » dans l'espace de destination
-// Les deux lignes sont créées dans UN SEUL insert (tout ou rien) et liées par transfer_id.
+//  • dépense « Transfert » dans l'espace actif (source)         → table transactions
+//  • revenu « Transfert depuis … » dans l'espace de destination → table monthly_incomes
+//    (c'est là que l'onglet Revenus et les totaux le lisent)
+// Les deux écritures sont faites par la fonction SQL create_transfer : tout ou rien.
 export const TRANSFER_CATEGORY = 'Transfert'
 
 export async function addTransfer(p: {
@@ -482,26 +492,19 @@ export async function addTransfer(p: {
   note: string
   date: string
 }): Promise<void> {
-  const userId = await getUserId()
   const fromSpaceId = requireWritableSpaceId()
   if (!p.toSpaceId || p.toSpaceId === fromSpaceId) throw new Error('Choisis un autre espace de destination.')
   if (!(p.amount > 0)) throw new Error('Montant invalide.')
 
-  const transferId = crypto.randomUUID()
   const userNote = p.note.trim()
-
-  const { error } = await supabase.from('transactions').insert([
-    {
-      user_id: userId, space_id: fromSpaceId, transfer_id: transferId,
-      type: 'expense', amount: p.amount, category: TRANSFER_CATEGORY, date: p.date,
-      note: userNote || `Transfert vers ${p.toSpaceName}`,
-    },
-    {
-      user_id: userId, space_id: p.toSpaceId, transfer_id: transferId,
-      type: 'income', amount: p.amount, category: TRANSFER_CATEGORY, date: p.date,
-      note: userNote || `Transfert depuis ${p.fromSpaceName}`,
-    },
-  ])
+  const { error } = await supabase.rpc('create_transfer', {
+    p_from_space: fromSpaceId,
+    p_to_space:   p.toSpaceId,
+    p_amount:     p.amount,
+    p_date:       p.date,
+    p_from_note:  userNote || `Transfert vers ${p.toSpaceName}`,
+    p_to_note:    userNote ? `Transfert depuis ${p.fromSpaceName} · ${userNote}` : `Transfert depuis ${p.fromSpaceName}`,
+  })
   if (error) throw error
 }
 
