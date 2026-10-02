@@ -520,9 +520,9 @@ export default function HomeTab({ transactions, onUpdate, profile, onGoToMoney, 
       {/* ── 2. Filtre de période + chiffres ── */}
       <PeriodFilter {...periodState} activeClass="bg-accent text-white" />
 
-      <div className="flex justify-end -mt-1">
+      <div className="flex justify-center">
         <button onClick={() => setShowForm(true)}
-          className="inline-flex items-center gap-1.5 text-xs font-bold text-accent bg-accent-light rounded-full px-3 py-1.5 active:scale-95 transition-all">
+          className="inline-flex items-center gap-1.5 px-5 py-2 rounded-xl text-xs font-bold border-2 border-orange-400 bg-orange-400 text-white active:scale-95 transition-all">
           <Plus size={14} /> Ajouter une transaction
         </button>
       </div>
