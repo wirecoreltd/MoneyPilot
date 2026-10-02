@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useSyncExternalStore } from 'react'
 
 export type Period = '1j' | '5j' | '1m' | '3m' | 'custom'
 
@@ -46,10 +46,31 @@ export function formatRange(from: string, to: string): string | null {
   return `${fmt(a, !sameYear)} au ${fmt(b, true)}`
 }
 
-export function usePeriod(initial: Period = '1m') {
-  const [period, setPeriod] = useState<Period>(initial)
-  const [customFrom, setCustomFrom] = useState(toYMD(new Date()))
-  const [customTo, setCustomTo] = useState(toYMD(new Date()))
+// ─── État partagé ─────────────────────────────────────────────────────────────
+// Un seul état pour toute l'appli : la période choisie (Accueil, Dépenses, Revenus,
+// Factures, Dettes, Budget) reste la même quand on change d'onglet ou d'espace.
+// Il est gardé en mémoire : un rechargement de la page revient sur « 1 mois ».
+interface PeriodStore { period: Period; customFrom: string; customTo: string }
+
+const todayYMD = () => toYMD(new Date())
+const DEFAULT_STORE: PeriodStore = { period: '1m', customFrom: '', customTo: '' }
+let store: PeriodStore = { period: '1m', customFrom: todayYMD(), customTo: todayYMD() }
+const listeners = new Set<() => void>()
+
+function update(patch: Partial<PeriodStore>) {
+  store = { ...store, ...patch }
+  listeners.forEach(l => l())
+}
+function subscribe(l: () => void) { listeners.add(l); return () => { listeners.delete(l) } }
+const getSnapshot = () => store
+const getServerSnapshot = () => DEFAULT_STORE
+
+const setPeriod     = (period: Period)    => update({ period })
+const setCustomFrom = (customFrom: string) => update({ customFrom })
+const setCustomTo   = (customTo: string)   => update({ customTo })
+
+export function usePeriod() {
+  const { period, customFrom, customTo } = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot)
   const range = getPeriodRange(period, customFrom, customTo)
   return { period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo, range }
 }
