@@ -349,7 +349,29 @@ export function FacturesSection() {
       })()
     : f)
 
-  const paidCount = visible.filter(f => f.paid).length
+  // Une facture récurrente = UNE carte (pas une par mois) :
+  // on garde ses mois encore à payer ; si tout est payé, seulement le mois le plus récent.
+  // L'historique des paiements de toute la série est rattaché à la carte la plus récente.
+  const displayed: Facture[] = []
+  const historyOf: Record<string, FacturePayment[]> = {}
+  const series = new Map<string, Facture[]>()
+  for (const f of visible) {
+    if (!f.isRecurring) { displayed.push(f); continue }
+    const key = `${f.spaceId ?? ''}|${f.name.trim().toLowerCase()}`
+    series.set(key, [...(series.get(key) ?? []), f])
+  }
+  const latest = (rows: Facture[]) => rows.reduce((a, b) => (a.month >= b.month ? a : b))
+  series.forEach(rows => {
+    const unpaid = rows.filter(r => !r.paid)
+    const kept = unpaid.length > 0 ? unpaid : [latest(rows)]
+    const target = latest(kept)
+    const allPays = rows.flatMap(r => paymentsMap[r.id] ?? [])
+      .sort((a, b) => String(b.paidAt).localeCompare(String(a.paidAt)))
+    kept.forEach(k => { historyOf[k.id] = k.id === target.id ? allPays : (paymentsMap[k.id] ?? []) })
+    displayed.push(...kept)
+  })
+
+  const paidCount = displayed.filter(f => f.paid).length
   // PAYÉ = somme des paiements réellement datés dans la période (même règle que la tuile « Factures » de l'Accueil).
   // Avant : on additionnait le montant entier des factures marquées payées, d'où des chiffres différents.
   const inPeriod = (d: unknown) => { const x = String(d).slice(0, 10); return x >= range.from && x <= range.to }
@@ -367,21 +389,21 @@ export function FacturesSection() {
   const awaiting = visible.filter(f => f.amount === null && !f.paid)
   const estimatedAmount = awaiting.reduce((s, f) => s + (f.estimate ?? 0), 0)
   // Liste unique (payées et à payer mélangées), rangée par échéance
-  const sortedFactures = sortFactures(visible)
+  const sortedFactures = sortFactures(displayed)
   // Le mois n'est affiché dans le nom que si la période en couvre plusieurs (pour distinguer deux « CEB »)
-  const monthsShown = new Set(visible.map(f => f.month))
-  const yearsShown = new Set(visible.map(f => (f.month ?? '').slice(0, 4)))
+  const monthsShown = new Set(displayed.map(f => f.month))
+  const yearsShown = new Set(displayed.map(f => (f.month ?? '').slice(0, 4)))
   const monthTag = (f: Facture): string | null => {
     if (monthsShown.size < 2 || !f.month) return null
     const label = monthLabel(f.month)            // « octobre 2026 »
     return yearsShown.size > 1 ? label : label.split(' ')[0]
   }
 
-  const tip = visible.length === 0
+  const tip = displayed.length === 0
     ? `Ajoute tes factures (eau, élec, internet...) pour ne rien oublier.`
-    : paidCount === visible.length
+    : paidCount === displayed.length
     ? `✅ Toutes tes factures sont payées sur ${PERIOD_LABEL[period]} ! Bien joué.`
-    : `⏳ ${visible.length - paidCount} facture${visible.length - paidCount > 1 ? 's' : ''} en attente · ${awaiting.length > 0 ? '~' : ''}${formatAmount(unpaidAmount)} à payer`
+    : `⏳ ${displayed.length - paidCount} facture${displayed.length - paidCount > 1 ? 's' : ''} en attente · ${awaiting.length > 0 ? '~' : ''}${formatAmount(unpaidAmount)} à payer`
 
   if (loading) return <div className="card text-center py-8 text-ink-soft">Chargement...</div>
   if (loadError) {
@@ -396,7 +418,7 @@ export function FacturesSection() {
   function renderCard(f: Facture) {
     return (
       <FactureCard key={f.id} facture={f} monthTag={monthTag(f)} onEdit={openEdit} onDelete={handleDelete}
-        payments={paymentsMap[f.id] ?? []} range={range} showHistory={openHistoryId === f.id}
+        payments={paymentsMap[f.id] ?? []} historyPayments={historyOf[f.id] ?? paymentsMap[f.id] ?? []} range={range} showHistory={openHistoryId === f.id}
         historyLoading={historyLoading && openHistoryId === f.id && !paymentsMap[f.id]}
         onToggleHistory={() => toggleHistory(f.id)} payingId={payingId}
         payAmount={payAmount} payDate={payDate} payNote={payNote}
@@ -447,11 +469,11 @@ export function FacturesSection() {
       {visible.length > 0 && (
         <div className="space-y-1">
           <div className="flex justify-between text-xs text-ink-soft">
-            <span>{paidCount}/{visible.length} payées</span>
-            <span>{Math.round((paidCount / visible.length) * 100)}%</span>
+            <span>{paidCount}/{displayed.length} payées</span>
+            <span>{Math.round((paidCount / displayed.length) * 100)}%</span>
           </div>
           <div className="w-full h-2.5 bg-mist-dark rounded-full overflow-hidden">
-            <div className="h-full bg-positive rounded-full transition-all duration-500" style={{ width: `${(paidCount / visible.length) * 100}%` }}/>
+            <div className="h-full bg-positive rounded-full transition-all duration-500" style={{ width: `${(paidCount / displayed.length) * 100}%` }}/>
           </div>
         </div>
       )}
@@ -567,11 +589,12 @@ export function FacturesSection() {
 }
 
 function FactureCard({
-  facture: f, monthTag, onEdit, onDelete, payments, range, showHistory, historyLoading,
+  facture: f, monthTag, onEdit, onDelete, payments, historyPayments, range, showHistory, historyLoading,
   onToggleHistory, payingId, payAmount, payDate, payNote,
   onSetPayingId, onPayAmountChange, onPayDateChange, onPayNoteChange,
   onPay, onEditPayment, onDeletePayment,
 }: {
+  historyPayments: FacturePayment[]
   facture: Facture; monthTag: string | null; onEdit: (f: Facture) => void; onDelete: (id: string) => void
   payments: FacturePayment[]; range: { from: string; to: string }; showHistory: boolean; historyLoading: boolean
   onToggleHistory: () => void; payingId: string | null
@@ -595,11 +618,11 @@ function FactureCard({
   const isPaying = payingId === f.id
   const overpaid = !unknown && totalPaid > amt ? totalPaid - amt : 0
   // Distinction : paiements datés dans le mois de la facture vs. hors de ce mois
-  const inRange = payments.filter(p => String(p.paidAt).slice(0, 10) >= range.from && String(p.paidAt).slice(0, 10) <= range.to)
-  const outRange = payments.filter(p => !(String(p.paidAt).slice(0, 10) >= range.from && String(p.paidAt).slice(0, 10) <= range.to))
+  const inRange = historyPayments.filter(p => String(p.paidAt).slice(0, 10) >= range.from && String(p.paidAt).slice(0, 10) <= range.to)
+  const outRange = historyPayments.filter(p => !(String(p.paidAt).slice(0, 10) >= range.from && String(p.paidAt).slice(0, 10) <= range.to))
   const totalRange = inRange.reduce((s, p) => s + p.amount, 0)
-  const lastPay = inRange[0] ?? payments[0] // trié du plus récent au plus ancien
-  const shownPayments = showAllHistory ? payments : inRange
+  const lastPay = inRange[0] ?? historyPayments[0] // trié du plus récent au plus ancien
+  const shownPayments = showAllHistory ? historyPayments : inRange
   const isInRange = (p: FacturePayment) => String(p.paidAt).slice(0, 10) >= range.from && String(p.paidAt).slice(0, 10) <= range.to
   const shortDate = (d: string) => new Date(d).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })
 
@@ -665,7 +688,7 @@ function FactureCard({
           {historyLoading ? (
             <p className="text-xs text-ink-soft text-center py-4">Chargement...</p>
           ) : shownPayments.length === 0 ? (
-            <p className="text-xs text-ink-soft text-center italic py-4">{payments.length === 0 ? 'Aucun paiement enregistré' : 'Aucun paiement sur cette période'}</p>
+            <p className="text-xs text-ink-soft text-center italic py-4">{historyPayments.length === 0 ? 'Aucun paiement enregistré' : 'Aucun paiement sur cette période'}</p>
           ) : shownPayments.map(p => (
             <div key={p.id} className="flex items-center justify-between px-3 py-2.5 border-b border-mist-dark last:border-0 hover:bg-white transition-colors">
               <div className="flex-1 min-w-0">
