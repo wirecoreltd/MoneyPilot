@@ -13,6 +13,7 @@ import { authedPost } from '@/lib/apiClient'
 import CoachTip from './CoachTip'
 import PeriodFilter, { usePeriod, PERIOD_LABEL } from './components/money/PeriodFilter'
 import { supabase } from '@/lib/supabase'
+import { readSpaceId } from '@/lib/activeSpace'
 
 export type MoneySubTab = 'transactions' | 'revenus' | 'factures' | 'dettes' | 'epargne' | 'budget'
 
@@ -153,10 +154,15 @@ function usePeriodFlows(from: string, to: string) {
         if (!user) throw new Error('Non authentifié')
         const end = nextDay(to)
 
+        // Espace actif : sans ce filtre, les tuiles mélangeaient Perso et Pro.
+        // null = « Vue d'ensemble » (tous les espaces).
+        const spaceId = readSpaceId()
+        const scoped = (q: any) => (spaceId ? q.eq('space_id', spaceId) : q)
+
         const [incR, facR, debtR] = await Promise.all([
-          supabase.from('monthly_incomes').select('amount,received_at,month').eq('user_id', user.id),
-          supabase.from('factures').select('id').eq('user_id', user.id),
-          supabase.from('debts').select('id,type').eq('user_id', user.id),
+          scoped(supabase.from('monthly_incomes').select('amount,received_at,month').eq('user_id', user.id)),
+          scoped(supabase.from('factures').select('id').eq('user_id', user.id)),
+          scoped(supabase.from('debts').select('id,type').eq('user_id', user.id)),
         ])
         if (incR.error) throw incR.error
         if (facR.error) throw facR.error
